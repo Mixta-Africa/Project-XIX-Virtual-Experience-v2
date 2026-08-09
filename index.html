@@ -2,7 +2,17 @@
 <html>
 <head>
   <title>Project XIX</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:,">
+  <style>
+    body { margin: 0; overflow: hidden; }
+    #ui {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 10;
+    }
+    button { padding: 10px; }
+  </style>
 </head>
 <body>
 
@@ -12,9 +22,15 @@
 
 <canvas id="canvas"></canvas>
 
-<script src="https://cdn.jsdelivr.net/npm/three@0.158/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.158/examples/js/controls/OrbitControls.js"></script>
-<script src="main.js"></script>
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.158/build/three.module.js';
+import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.158/examples/jsm/controls/OrbitControls.js';
+
+window.THREE = THREE;
+window.OrbitControls = OrbitControls;
+
+import('./main.js');
+</script>
 
 </body>
 </html>
