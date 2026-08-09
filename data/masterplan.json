@@ -1,0 +1,41 @@
+{
+  "fields": [
+    {
+      "name": "main_polo",
+      "position": [0, 0],
+      "width": 300,
+      "height": 180
+    },
+    {
+      "name": "training_field",
+      "position": [-350, 0],
+      "width": 220,
+      "height": 160
+    }
+  ],
+  "buildings": [
+    {
+      "type": "clubhouse",
+      "position": [0, -120],
+      "width": 80,
+      "height": 40
+    },
+    {
+      "type": "apartments",
+      "position": [150, -50],
+      "width": 60,
+      "height": 40
+    }
+  ],
+  "roads": [
+    {
+      "points": [
+        [-200, -200],
+        [200, -200],
+        [200, 200],
+        [-200, 200],
+        [-200, -200]
+      ]
+    }
+  ]
+}
