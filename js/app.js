@@ -4,7 +4,7 @@
  */
 
 import { VIEWPOINTS, ZONES, WORLD } from "./data.js";
-import { initScene, getRenderer, getScene, getCamera, getClock } from "./scene.js";
+import { initScene, getRenderer, getScene, getCamera, getClock, tickScene } from "./scene.js";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR
@@ -411,10 +411,13 @@ function startRenderLoop() {
   const camera   = getCamera();
   const clock    = getClock();
 
+  const startTime = performance.now();
   function frame() {
     animFrameId = requestAnimationFrame(frame);
-    const delta = Math.min(clock.getDelta(), 0.05);
+    const delta   = Math.min(clock.getDelta(), 0.05);
+    const elapsed = (performance.now() - startTime) / 1000;
     updateControls(delta);
+    tickScene(elapsed, camera);
     updateMinimap(camera.position.x, camera.position.z, getYaw());
     updateSpatialAudio(camera.position.x, camera.position.z);
     renderer.render(scene, camera);
