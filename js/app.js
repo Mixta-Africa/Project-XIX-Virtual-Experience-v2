@@ -36,10 +36,14 @@ const AERIAL_HEIGHT = 200;
 
 //           WEATHER / TIME PRESETS                                                                                                                                                       
 const TIME_PRESETS = {
-  morning:   { sky:["#1a3a5c","#e87a30","#3a6a28"], sunCol:0xffa040, sunInt:2.8, sunPos:[-80,60,-80],  fog:"#c4a870", fogD:0.009,  exp:1.1  },
-  afternoon: { sky:["#1a3a5c","#7ab4d4","#4a7a38"], sunCol:0xffe4a0, sunInt:3.5, sunPos:[-180,200,120], fog:"#9ac5d4", fogD:0.006,  exp:1.18 },
-  sunset:    { sky:["#0a1830","#e85020","#5a3a20"], sunCol:0xff6020, sunInt:2.2, sunPos:[-100,30,60],  fog:"#e07040", fogD:0.012,  exp:1.3  },
-  night:     { sky:["#000810","#050d1a","#050a08"], sunCol:0x6080c0, sunInt:0.2, sunPos:[0,50,-80],    fog:"#050d18", fogD:0.018,  exp:0.6  },
+  // Morning: soft blue-gold dawn, moderate exposure
+  morning:   { sky:["#203060","#6090c0","#4a7a38"], sunCol:0xffd080, sunInt:2.2, sunPos:[-80,55,-80],   fog:"#88a8c0", fogD:0.007, exp:0.95 },
+  // Afternoon: clear blue sky, full sun
+  afternoon: { sky:["#1a3a6a","#5a9acc","#3a6a30"], sunCol:0xffe8b0, sunInt:2.8, sunPos:[-160,180,100], fog:"#8ab8cc", fogD:0.005, exp:1.05 },
+  // Sunset: warm golden-red
+  sunset:    { sky:["#0a1830","#c84818","#4a2a10"], sunCol:0xff8030, sunInt:1.8, sunPos:[-100,28,60],   fog:"#c06040", fogD:0.010, exp:1.1  },
+  // Night: deep dark, villa lights glow
+  night:     { sky:["#000508","#020a14","#050a08"], sunCol:0x304870, sunInt:0.15,sunPos:[0,40,-80],     fog:"#020810", fogD:0.016, exp:0.55 },
 };
 
 function applyTimePreset(name) {
