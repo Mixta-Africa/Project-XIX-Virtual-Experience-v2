@@ -726,3 +726,4 @@ export function getRenderer() { return renderer; }
 export function getScene()    { return scene;    }
 export function getCamera()   { return camera;   }
 export function getClock()    { return clock;    }
+
