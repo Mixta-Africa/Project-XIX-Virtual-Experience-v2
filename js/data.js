@@ -1,7 +1,7 @@
 /**
- * Project XIX — Estate Data Layer
+ * Project XIX     Estate Data Layer
  * Single source of truth for all zone data, viewpoints, and building specs.
- * Orientation: Field runs EAST–WEST (long axis = X). North = -Z. South = +Z.
+ * Orientation: Field runs EAST   WEST (long axis = X). North = -Z. South = +Z.
  * Origin = centre of polo field.
  */
 
@@ -36,69 +36,33 @@ export const WORLD = {
  * Named viewpoints. pos = [x, y, z], yaw = radians (0 = face +Z south, Math.PI/2 = face +X east)
  */
 export const VIEWPOINTS = {
-  intro: {
-    label: "Arrival", pos: [0, 60, 280], yaw: Math.PI, pitch: -0.45,
-    caption: "Project XIX — Lakowe, Ibeju-Lekki",
-  },
-  field_centre: {
-    label: "Centre Field", pos: [0, 1.65, 0], yaw: 0, pitch: 0,
-    caption: "Halfway line — facing north toward the lake", icon: "pitch",
-  },
-  field_south: {
-    label: "South Goal", pos: [0, 1.65, 100], yaw: Math.PI, pitch: 0,
-    caption: "South goal line — Clubhouse directly behind", icon: "pitch",
-  },
-  clubhouse: {
-    label: "Clubhouse", pos: [0, 4, 148], yaw: Math.PI, pitch: -0.05,
-    caption: "Clubhouse terrace — looking north over the polo field", icon: "clubhouse", zoneKey: "clubhouse",
-  },
-  lake_north: {
-    label: "The Lake", pos: [0, 1.65, -160], yaw: 0, pitch: 0,
-    caption: "Crescent lake — north of the polo ring", icon: "lake", zoneKey: "lake",
-  },
-  villa_west: {
-    label: "Villa Row", pos: [-90, 4, 0], yaw: Math.PI/2, pitch: 0,
-    caption: "West villa row — pony line side, facing the field", icon: "villa", zoneKey: "villas",
-  },
-  villa_north: {
-    label: "North Villa", pos: [0, 4, -120], yaw: Math.PI, pitch: 0,
-    caption: "North arc villa — lakefront address, facing south", icon: "villa", zoneKey: "villas",
-  },
-  stables: {
-    label: "Stables", pos: [-220, 1.65, 80], yaw: Math.PI/2, pitch: 0,
-    caption: "Horse stables — equestrian compound", icon: "stables", zoneKey: "stables",
-  },
-  training: {
-    label: "Training Field", pos: [-175, 1.65, 0], yaw: Math.PI/2, pitch: 0,
-    caption: "Training field — polo academy, perpendicular to main field", icon: "pitch", zoneKey: "training",
-  },
-  lofts: {
-    label: "Loft Terrace", pos: [-80, 1.65, -228], yaw: Math.PI, pitch: 0,
-    caption: "Crescent road loft terraces — north of the lake", icon: "loft", zoneKey: "lofts",
-  },
-  paddock: {
-    label: "Paddock", pos: [155, 1.65, -60], yaw: -Math.PI/2, pitch: 0,
-    caption: "Northeast paddock — post and rail enclosed", icon: "pitch", zoneKey: "paddock",
-  },
-  aerial: {
-    label: "Aerial View", pos: [0, 120, 0], yaw: 0, pitch: -Math.PI/2,
-    caption: "Estate overview — 18.8 hectares, Lakowe", icon: "aerial",
-  },
+  intro:        { label:"Arrival",          pos:[0,60,280],    yaw:Math.PI,     pitch:-0.45, caption:"Project XIX - Lakowe, Ibeju-Lekki" },
+  field_centre: { label:"Centre Field",     pos:[0,1.65,0],    yaw:0,           pitch:0,     caption:"Halfway line - facing north toward the lake",      icon:"pitch"    },
+  field_south:  { label:"South Goal",       pos:[0,1.65,100],  yaw:Math.PI,     pitch:0,     caption:"South goal line - Clubhouse behind you",            icon:"pitch"    },
+  clubhouse:    { label:"Clubhouse",        pos:[0,4,148],     yaw:Math.PI,     pitch:-0.05, caption:"Clubhouse terrace - looking north over the field",   icon:"clubhouse", zoneKey:"clubhouse" },
+  lake_north:   { label:"The Lake",         pos:[0,1.65,-108], yaw:0,           pitch:0,     caption:"Crescent lake - between safety zone and villas",     icon:"lake",    zoneKey:"lake"     },
+  villa_west:   { label:"Villa Row",        pos:[-92,4,0],     yaw:Math.PI/2,   pitch:0,     caption:"West villa row - pony line side, facing the field",  icon:"villa",   zoneKey:"villas"   },
+  villa_north:  { label:"North Villa",      pos:[0,4,-132],    yaw:Math.PI,     pitch:0,     caption:"North arc villa - lake behind, field ahead",         icon:"villa",   zoneKey:"villas"   },
+  stables:      { label:"Stables",          pos:[-220,1.65,80],yaw:Math.PI/2,   pitch:0,     caption:"Horse stables - equestrian compound, southwest",     icon:"stables", zoneKey:"stables"  },
+  training:     { label:"Training Field",   pos:[-175,1.65,0], yaw:Math.PI/2,   pitch:0,     caption:"Training field - polo academy, perpendicular axis",   icon:"pitch",   zoneKey:"training" },
+  lofts:        { label:"Loft Terrace",     pos:[-80,1.65,-196],yaw:Math.PI,    pitch:0,     caption:"North crescent loft terraces - outside villa ring",  icon:"loft",    zoneKey:"lofts"    },
+  paddock:      { label:"Paddock",          pos:[155,1.65,-60],yaw:-Math.PI/2,  pitch:0,     caption:"Northeast paddock - post and rail enclosed",         icon:"pitch",   zoneKey:"paddock"  },
+  aerial:       { label:"Aerial View",      pos:[0,200,0],     yaw:0,           pitch:-Math.PI/2, caption:"Estate overview - 18.8 hectares, Lakowe",       icon:"aerial"  },
 };
 
 /**
  * Zone definitions for masterplan hotspots.
  * Positions are % of the plan-2d.png image (left, top, width, height).
  * Read directly from visual inspection of plan-2d.png:
- *   Image is landscape ~1400×592px. North is top.
- *   Polo field occupies roughly x:32%–87%, y:20%–82%.
+ *   Image is landscape ~1400  592px. North is top.
+ *   Polo field occupies roughly x:32%   87%, y:20%   82%.
  */
 export const ZONES = {
   polo: {
     label: "Polo Field",
     type: "Signature Experience",
-    tagline: "FIP international standard. 274m × 146m.",
-    description: "The central east–west polo field is the gravitational core of the estate. 30, 40, and 60-yard markings from both goal lines define international match standard. The Safety Zone surrounds all four sides.",
+    tagline: "FIP international standard. 274m    146m.",
+    description: "The central east   west polo field is the gravitational core of the estate. 30, 40, and 60-yard markings from both goal lines define international match standard. The Safety Zone surrounds all four sides.",
     clientLens: "Prestige, spectacle, and a clear centre of value for every surrounding property.",
     // Hotspot: % left, % top, % width, % height
     hot: { l: 32, t: 20, w: 55, h: 62 },
@@ -118,8 +82,8 @@ export const ZONES = {
   villas: {
     label: "Premium Villas",
     type: "Residential Offer",
-    tagline: "43 units × 330 sqm. 3 bedrooms. Polo-facing.",
-    description: "Premium Villas wrap the polo field on all four sides — north arc, south strip, and both east and west columns — creating an oval colosseum of private residences. Each villa has a two-car undercroft, full-height glazing, and direct polo views.",
+    tagline: "43 units    330 sqm. 3 bedrooms. Polo-facing.",
+    description: "Premium Villas wrap the polo field on all four sides     north arc, south strip, and both east and west columns     creating an oval colosseum of private residences. Each villa has a two-car undercroft, full-height glazing, and direct polo views.",
     clientLens: "Polo-front living, family retreat, status, long-term capital value.",
     hot: { l: 30, t: 18, w: 59, h: 66 },
     viewpoint: "villa_west",
@@ -138,8 +102,8 @@ export const ZONES = {
   lofts: {
     label: "Loft Apartments",
     type: "Residential Offer",
-    tagline: "96 units × 125 sqm. 2 bedrooms. South precinct.",
-    description: "Two rows of 2-Bedroom Loft Terrace blocks occupy the south precinct west of the Clubhouse. Ground floors in natural gabion stone, upper floors in vertical timber slats and glazing — terrace architecture designed for tropical living.",
+    tagline: "96 units    125 sqm. 2 bedrooms. South precinct.",
+    description: "Two rows of 2-Bedroom Loft Terrace blocks occupy the south precinct west of the Clubhouse. Ground floors in natural gabion stone, upper floors in vertical timber slats and glazing     terrace architecture designed for tropical living.",
     clientLens: "Yield potential, lock-up-and-leave convenience, polo estate address.",
     hot: { l: 32, t: 79, w: 14, h: 14 },
     viewpoint: "lofts",
@@ -148,7 +112,7 @@ export const ZONES = {
   flats: {
     label: "Block of Flats",
     type: "Residential Offer",
-    tagline: "48 units × 204 sqm. 2 bedrooms. South zone.",
+    tagline: "48 units    204 sqm. 2 bedrooms. South zone.",
     description: "Two large apartment blocks south of the Loft Terrace precinct house the 2-Bedroom Flat typology. Seven-storey towers with the signature wave-shaped roofline canopy, dark louvre fins, and piloti ground floor parking.",
     clientLens: "Higher-density investment, estate address, community living.",
     hot: { l: 34, t: 88, w: 20, h: 8 },
@@ -158,8 +122,8 @@ export const ZONES = {
   training: {
     label: "Training Field",
     type: "Sporting Depth",
-    tagline: "5,000 sqm. North–south orientation. Polo academy.",
-    description: "The Training Field is a separate full-size practice field on the south-west of the estate, oriented north–south perpendicular to the main field. It has its own 30/40/60-yard markings for structured coaching and youth polo programmes.",
+    tagline: "5,000 sqm. North   south orientation. Polo academy.",
+    description: "The Training Field is a separate full-size practice field on the south-west of the estate, oriented north   south perpendicular to the main field. It has its own 30/40/60-yard markings for structured coaching and youth polo programmes.",
     clientLens: "Operational credibility, sporting culture, future polo academy value.",
     hot: { l: 8, t: 73, w: 18, h: 22 },
     viewpoint: "training",
@@ -179,7 +143,7 @@ export const ZONES = {
     label: "Paddock & Recreation",
     type: "Family Amenity",
     tagline: "Main paddock. Game park. Play ground.",
-    description: "The east precinct contains the main paddock (1,645 sqm), a landscaped green area, and a Game Park & Play Ground — creating a family and recreation edge distinct from the equestrian compound on the west.",
+    description: "The east precinct contains the main paddock (1,645 sqm), a landscaped green area, and a Game Park & Play Ground     creating a family and recreation edge distinct from the equestrian compound on the west.",
     clientLens: "Family dwell time, lifestyle appeal, community programming.",
     hot: { l: 88, t: 15, w: 10, h: 45 },
     viewpoint: "lake_north",
