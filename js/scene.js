@@ -86,7 +86,6 @@ function buildLighting() {
   sunLight.shadow.radius = 3.5;
   scene.add(sunLight);
 
-  scene.add(Object.assign(new THREE.DirectionalLight(0xb8d0e8, 0.7), { position: { set(){ return this; } } }));
   const fill = new THREE.DirectionalLight(0xb8d0e8, 0.7);
   fill.position.set(120, 80, -100); scene.add(fill);
 
@@ -259,14 +258,15 @@ function addLake() {
   const wm = MAT_WATER();
   // Main oval body
   const lakeGeo = new THREE.CylinderGeometry(0, 0, 0.3, 4); // unused
+  // Lake offset east (x=+20) to match plan. Asymmetric: west cap smaller.
   const parts = [
-    new THREE.Mesh(new THREE.BoxGeometry(180, 0.3, 18), wm),    // central body
-    new THREE.Mesh(new THREE.SphereGeometry(12, 16, 4), wm),   // west end cap
-    new THREE.Mesh(new THREE.SphereGeometry(12, 16, 4), wm),   // east end cap
+    new THREE.Mesh(new THREE.BoxGeometry(175, 0.3, 18), wm),
+    new THREE.Mesh(new THREE.SphereGeometry(10, 16, 4), wm),   // west cap (smaller)
+    new THREE.Mesh(new THREE.SphereGeometry(13, 16, 4), wm),   // east cap (larger)
   ];
-  parts[0].position.set(0, 0.15, -112);
-  parts[1].position.set(-90, 0.05, -112); parts[1].scale.set(1, 0.25, 1.1);
-  parts[2].position.set( 90, 0.05, -112); parts[2].scale.set(1, 0.25, 1.1);
+  parts[0].position.set(20, 0.15, -112);
+  parts[1].position.set(-68, 0.05, -112); parts[1].scale.set(1, 0.22, 1.0);
+  parts[2].position.set(108, 0.05, -112); parts[2].scale.set(1, 0.25, 1.2);
   parts.forEach(p => { p.receiveShadow = true; scene.add(p); waterMeshes.push(p); });
 
   // Shore trim (dirt/grass edge on both sides of lake)
@@ -490,13 +490,13 @@ function createVilla() {
 function addLoftTerraces() {
   //        NORTH ROW 1 (z~-196, inner) - 10 units spanning full width       
   for (let x = -108; x <= 108; x += 22) {
-    if (Math.abs(x) < 15) continue; // gap at link road
+    if (Math.abs(x) < 80) continue; // gap for lake zone
     s(createLoftUnit(x, -196, Math.PI)); // face south toward field
   }
 
   //        NORTH ROW 2 (z~-218, outer, at crescent road) - 12 units       
   for (let x = -121; x <= 121; x += 22) {
-    if (Math.abs(x) < 15) continue;
+    if (Math.abs(x) < 80) continue;
     s(createLoftUnit(x, -218, Math.PI));
   }
 
@@ -726,4 +726,3 @@ export function getRenderer() { return renderer; }
 export function getScene()    { return scene;    }
 export function getCamera()   { return camera;   }
 export function getClock()    { return clock;    }
-
