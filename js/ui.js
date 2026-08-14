@@ -27,56 +27,129 @@ export function setLoadingProgress(pct) {
 // ─── MINIMAP ─────────────────────────────────────────────────────────────────
 
 let minimapCanvas, minimapCtx, minimapPlanImage;
+let minimapReady = false;
+
+// ── MINIMAP WORLD → CANVAS CALIBRATION ────────────────────────
+// The plan-2d.png image maps to the scene as follows:
+//   Image LEFT edge  = world X ≈ -252 (west perimeter)
+//   Image RIGHT edge = world X ≈ +252 (east perimeter)
+//   Image TOP edge   = world Z ≈ -200 (north / lake side)
+//   Image BOTTOM edge= world Z ≈ +210 (south / Lagos Road)
+// These are tuned to the actual scene geometry in scene.js.
+const MAP = {
+  xMin: -252, xMax: 252,
+  zMin: -200, zMax: 210,
+};
 
 export function initMinimap(planImageSrc) {
   minimapCanvas = document.getElementById("minimap-canvas");
   if (!minimapCanvas) return;
+
+  // ── CRITICAL: set canvas pixel dimensions to match its CSS display size
+  // CSS: width=200px height=130px (updated below). Canvas must match exactly
+  // so coordinate math is pixel-perfect.
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  minimapCanvas.width  = 200 * dpr;
+  minimapCanvas.height = 130 * dpr;
   minimapCtx = minimapCanvas.getContext("2d");
+  minimapCtx.scale(dpr, dpr);  // scale for HiDPI
 
   minimapPlanImage = new Image();
+  minimapPlanImage.onload = () => { minimapReady = true; };
   minimapPlanImage.src = planImageSrc;
 }
 
 export function updateMinimap(worldX, worldZ, yawRad) {
-  if (!minimapCtx || !minimapPlanImage) return;
+  if (!minimapCtx) return;
 
-  const W = minimapCanvas.width;
-  const H = minimapCanvas.height;
+  // Display size (matches CSS)
+  const W = 200;
+  const H = 130;
+
   minimapCtx.clearRect(0, 0, W, H);
 
-  // Draw plan-2d as background
-  if (minimapPlanImage.complete) {
-    minimapCtx.globalAlpha = 0.85;
+  // ── Background: plan image
+  if (minimapReady && minimapPlanImage.complete) {
+    minimapCtx.globalAlpha = 0.9;
     minimapCtx.drawImage(minimapPlanImage, 0, 0, W, H);
     minimapCtx.globalAlpha = 1;
+  } else {
+    // Fallback: dark green fill with field outline
+    minimapCtx.fillStyle = "#0d2018";
+    minimapCtx.fillRect(0, 0, W, H);
+    minimapCtx.strokeStyle = "#3a7a50";
+    minimapCtx.lineWidth = 1;
+    // Field rectangle approx (centre of map)
+    minimapCtx.strokeRect(W*0.28, H*0.25, W*0.44, H*0.50);
   }
 
-  // World → canvas mapping
-  const rx = ((worldX - WORLD.mapXMin) / (WORLD.mapXMax - WORLD.mapXMin)) * W;
-  const ry = ((worldZ - WORLD.mapZMin) / (WORLD.mapZMax - WORLD.mapZMin)) * H;
+  // ── World → canvas pixel mapping (clamped)
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const px = clamp(
+    ((worldX - MAP.xMin) / (MAP.xMax - MAP.xMin)) * W,
+    4, W - 4
+  );
+  const py = clamp(
+    ((worldZ - MAP.zMin) / (MAP.zMax - MAP.zMin)) * H,
+    4, H - 4
+  );
 
-  // Player dot
+  // ── Accuracy ring (shows approx position area)
+  minimapCtx.beginPath();
+  minimapCtx.arc(px, py, 10, 0, Math.PI * 2);
+  minimapCtx.fillStyle = "rgba(201,168,76,0.15)";
+  minimapCtx.fill();
+
+  // ── Direction wedge (facing direction)
   minimapCtx.save();
-  minimapCtx.translate(rx, ry);
-  minimapCtx.rotate(yawRad + Math.PI / 2);
-
-  // Gold arrow
-  minimapCtx.fillStyle = "#c9a84c";
-  minimapCtx.strokeStyle = "#0a1008";
-  minimapCtx.lineWidth = 1.5;
-  minimapCtx.shadowColor = "#c9a84c";
-  minimapCtx.shadowBlur = 6;
+  minimapCtx.translate(px, py);
+  minimapCtx.rotate(yawRad + Math.PI); // +PI because yaw 0 = facing south (+Z) in scene
 
   minimapCtx.beginPath();
-  minimapCtx.moveTo(0, -8);
-  minimapCtx.lineTo(4.5, 5);
-  minimapCtx.lineTo(0, 2);
-  minimapCtx.lineTo(-4.5, 5);
+  minimapCtx.moveTo(0, -14);
+  minimapCtx.lineTo(6, 4);
+  minimapCtx.lineTo(0, 0);
+  minimapCtx.lineTo(-6, 4);
   minimapCtx.closePath();
+  minimapCtx.fillStyle = "#ffffff";
+  minimapCtx.strokeStyle = "#0a0f0c";
+  minimapCtx.lineWidth = 1.5;
+  minimapCtx.shadowColor = "#ffffff";
+  minimapCtx.shadowBlur = 8;
   minimapCtx.fill();
   minimapCtx.stroke();
 
   minimapCtx.restore();
+
+  // ── Bright position dot (always visible)
+  minimapCtx.beginPath();
+  minimapCtx.arc(px, py, 4.5, 0, Math.PI * 2);
+  minimapCtx.fillStyle = "#ff4444";
+  minimapCtx.strokeStyle = "#ffffff";
+  minimapCtx.lineWidth = 1.5;
+  minimapCtx.shadowColor = "#ff4444";
+  minimapCtx.shadowBlur = 10;
+  minimapCtx.fill();
+  minimapCtx.stroke();
+
+  // ── Crosshair lines through dot
+  minimapCtx.shadowBlur = 0;
+  minimapCtx.strokeStyle = "rgba(255,255,255,0.5)";
+  minimapCtx.lineWidth = 0.5;
+  minimapCtx.beginPath();
+  minimapCtx.moveTo(px - 8, py); minimapCtx.lineTo(px + 8, py);
+  minimapCtx.moveTo(px, py - 8); minimapCtx.lineTo(px, py + 8);
+  minimapCtx.stroke();
+
+  // ── Coordinates readout (bottom-left of minimap)
+  minimapCtx.font = "bold 8px monospace";
+  minimapCtx.fillStyle = "rgba(201,168,76,0.9)";
+  minimapCtx.shadowColor = "#000";
+  minimapCtx.shadowBlur = 3;
+  minimapCtx.fillText(
+    `${Math.round(worldX)}m E  ${Math.round(-worldZ)}m N`,
+    4, H - 4
+  );
 }
 
 // ─── VIEWPOINT STRIP ──────────────────────────────────────────────────────────
