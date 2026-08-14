@@ -642,3 +642,4 @@ function buildVillaStrip() {
     strip.appendChild(btn);
   });
 }
+
