@@ -284,42 +284,126 @@ function addUmbrella(parent, pos) {
 /* ── VILLAS ───────────────────────────────────────────────────── */
 
 function addVillaRing() {
-  const s = 18;
+  // ── SPACING RULES (from 3D brief) ────────────────────────────
+  // Each villa is a STANDALONE dwelling on its own plot:
+  //   Plot width: 22m (14m building + 4m side setback each side)
+  //   Front setback: 7m (perimeter road → undercroft gate)
+  //   Rear setback: 5m (garden to outer road)
+  // Correct density: ~42–48 units total, breathing space between each
 
-  // North arc: villas set back BEHIND lake (~z=-145), forming a crescent
-  // Lake spans z=-102 to z=-128. Villas sit at z=-145 to -165.
-  // 7 NW of lake centrepoint, 7 NE — slight curve following lake edge.
-  const northCount = 7;
+  const PLOT   = 24;   // centre-to-centre spacing (22m plot + 2m gap = generously spaced)
+  const SETBK  = 7;    // front setback from perimeter track edge
+
+  // ── NORTH ARC — 6 NW + 6 NE, behind lake, slight crescent curve ──
+  // Lake back edge ≈ z=-128. Villas behind at z ≈ -148 to -168 (curving back)
   for (let side = -1; side <= 1; side += 2) {
-    for (let i = 0; i < northCount; i++) {
-      const t     = (i + 0.5) / northCount;
-      const xBase = side * (20 + i * 18);          // spread left or right of centre
-      const zBase = -148 - Math.abs(xBase) * 0.08; // slight curve: corners further back
-      const v = createVilla();
-      v.position.set(xBase, 0, zBase);
-      v.rotation.y = Math.PI + side * 0.08; // face south (toward field), slight inward toe-in
+    for (let i = 0; i < 6; i++) {
+      const x    = side * (PLOT * 0.6 + i * PLOT);        // start close to centre
+      const z    = -150 - Math.abs(x) * 0.055;            // crescent: outer units further back
+      const toIn = Math.atan2(-x * 0.15, 1) * side * 0.5; // slight toe-in toward field centre
+      const v    = createVilla();
+      v.position.set(x, 0, z);
+      v.rotation.y = Math.PI + toIn;
       scene.add(v);
+      addVillaLandscaping(v.position.x, v.position.z, Math.PI + toIn);
     }
   }
 
-  // South strip
-  for (let i=0;i<10;i++) {
-    const v=createVilla(); v.position.set(-81+i*s,0,102); scene.add(v);
+  // ── SOUTH ARC — 5 SW + 5 SE, fanning outward from clubhouse ──
+  for (let side = -1; side <= 1; side += 2) {
+    for (let i = 0; i < 5; i++) {
+      const x    = side * (PLOT * 0.7 + i * PLOT);
+      const z    = 105 + Math.abs(x) * 0.04;              // slight outward fan
+      const toIn = Math.atan2(-x * 0.1, 1) * side * 0.35;
+      const v    = createVilla();
+      v.position.set(x, 0, z);
+      v.rotation.y = toIn;   // face north (toward field)
+      scene.add(v);
+      addVillaLandscaping(v.position.x, v.position.z, toIn);
+    }
   }
 
-  // West — inner + outer staggered columns per Brief
-  for (let i=0;i<7;i++) {
-    const zi=-72+i*s;
-    const vi=createVilla(); vi.position.set(-162,0,zi); vi.rotation.y=Math.PI/2; scene.add(vi);
-    const vo=createVilla(); vo.position.set(-182,0,zi+s/2); vo.rotation.y=Math.PI/2; scene.add(vo);
+  // ── WEST SIDE — 2 staggered columns, inner + outer ──
+  // Inner column: x=-168 (immediately beside perimeter road)
+  // Outer column: x=-192 (behind a private lane between the two rows)
+  // Staggered: outer row offset by PLOT/2 so driveways don't align
+  for (let i = 0; i < 6; i++) {
+    const zi   = -80 + i * PLOT;
+    const ry   = Math.PI / 2;  // face east (toward field)
+
+    const vi = createVilla();
+    vi.position.set(-168, 0, zi);
+    vi.rotation.y = ry;
+    scene.add(vi);
+    addVillaLandscaping(-168, zi, ry);
+
+    const zo   = zi + PLOT / 2;
+    const vo   = createVilla();
+    vo.position.set(-196, 0, zo);
+    vo.rotation.y = ry;
+    scene.add(vo);
+    addVillaLandscaping(-196, zo, ry);
   }
 
-  // East — inner + outer staggered columns
-  for (let i=0;i<8;i++) {
-    const zi=-81+i*s;
-    const vi=createVilla(); vi.position.set(162,0,zi); vi.rotation.y=-Math.PI/2; scene.add(vi);
-    const vo=createVilla(); vo.position.set(182,0,zi+s/2); vo.rotation.y=-Math.PI/2; scene.add(vo);
+  // ── EAST SIDE — 2 staggered columns ──
+  for (let i = 0; i < 6; i++) {
+    const zi   = -80 + i * PLOT;
+    const ry   = -Math.PI / 2;  // face west (toward field)
+
+    const vi = createVilla();
+    vi.position.set(168, 0, zi);
+    vi.rotation.y = ry;
+    scene.add(vi);
+    addVillaLandscaping(168, zi, ry);
+
+    const zo   = zi + PLOT / 2;
+    const vo   = createVilla();
+    vo.position.set(196, 0, zo);
+    vo.rotation.y = ry;
+    scene.add(vo);
+    addVillaLandscaping(196, zo, ry);
   }
+}
+
+// Per-villa landscaping: low boundary hedge + perimeter path + gate post
+function addVillaLandscaping(vx, vz, ry) {
+  const hedgeMat = new THREE.MeshStandardMaterial({ color: 0x2a5a20, roughness: 0.95 });
+  const gateMat  = new THREE.MeshStandardMaterial({ color: 0x8a7050, roughness: 0.7, metalness: 0.2 });
+  const pathMat  = new THREE.MeshStandardMaterial({ color: 0xd0c8b4, roughness: 0.8 });
+
+  // Plot boundary hedge (left + right sides, front strip)
+  const g = new THREE.Group();
+  g.position.set(vx, 0, vz);
+  g.rotation.y = ry;
+
+  // Left boundary hedge
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.4, 16), hedgeMat));
+  new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.4, 16), hedgeMat).position.set(-11, 0.7, 0);
+  const hl = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.4, 16), hedgeMat);
+  hl.position.set(-11, 0.7, 0); g.add(hl);
+
+  // Right boundary hedge
+  const hr = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.4, 16), hedgeMat);
+  hr.position.set(11, 0.7, 0); g.add(hr);
+
+  // Front low hedge strip (between road and undercroft)
+  const hf = new THREE.Mesh(new THREE.BoxGeometry(20, 0.8, 0.5), hedgeMat);
+  hf.position.set(0, 0.4, -9); g.add(hf);
+
+  // Gate posts
+  for (const gx of [-3.5, 3.5]) {
+    const gp = new THREE.Mesh(new THREE.BoxGeometry(0.4, 1.8, 0.4), gateMat);
+    gp.position.set(gx, 0.9, -9.5); g.add(gp);
+    gp.castShadow = true;
+  }
+
+  // Driveway path (short slab from road to undercroft)
+  const dp = new THREE.Mesh(new THREE.PlaneGeometry(6.5, 5), pathMat);
+  dp.rotation.x = -Math.PI / 2;
+  dp.position.set(0, 0.05, -7.5);
+  dp.receiveShadow = true; g.add(dp);
+
+  scene.add(g);
 }
 
 function createVilla() {
