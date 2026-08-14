@@ -4,6 +4,7 @@
  */
 
 import { VIEWPOINTS, ZONES, WORLD } from "./data.js";
+import { buildVillaInterior, VILLA_VIEWPOINTS } from "./villa-interior.js";
 import { initScene, getRenderer, getScene, getCamera, getClock, tickScene } from "./scene.js";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
@@ -21,6 +22,9 @@ import {
 // ─── STATE ────────────────────────────────────────────────────────────────────
 
 let sceneReady = false;
+let villaInteriorActive = false;
+let villaScene = null;
+let villaRenderer = null;
 let introPlaying = false;
 let currentViewKey = "field_centre";
 let animFrameId = null;
@@ -33,6 +37,7 @@ document.addEventListener("DOMContentLoaded", () => {
   bindNav();
   bindExitButton();
   bindSectionScrollAnim();
+  bindVillaInteriorBtn();
   initAudio();
 });
 
@@ -447,4 +452,136 @@ function bindSectionScrollAnim() {
     });
   }, { threshold: 0.12 });
   document.querySelectorAll(".anim-fade").forEach(el => io.observe(el));
+}
+
+// ─── VILLA INTERIOR ───────────────────────────────────────────────────────────
+
+function bindVillaInteriorBtn() {
+  // Open from any "Walk through" button on villa cards
+  document.addEventListener("click", e => {
+    // Villa enter buttons
+    const enterBtn = e.target.closest(".residence-card-btn");
+    const card = enterBtn?.closest(".residence-card");
+    if (enterBtn && card?.querySelector(".residence-card-type")?.textContent?.includes("3 Bed")) {
+      openVillaInterior(); return;
+    }
+
+    // Plan tab switching
+    const tab = e.target.closest(".plan-tab");
+    if (tab) {
+      document.querySelectorAll(".plan-tab").forEach(t => t.classList.remove("active"));
+      tab.classList.add("active");
+      const plan = tab.dataset.plan;
+      document.querySelectorAll(".plan-rooms").forEach(r => r.classList.add("hidden"));
+      document.getElementById("plan-" + plan)?.classList.remove("hidden");
+      return;
+    }
+
+    // Room click -> teleport
+    const room = e.target.closest(".plan-room");
+    if (room?.dataset.key) {
+      teleportVillaTo(room.dataset.key);
+      document.querySelectorAll(".plan-room").forEach(r => r.classList.remove("active"));
+      room.classList.add("active");
+      return;
+    }
+  });
+
+  document.getElementById("btn-close-villa")?.addEventListener("click", closeVillaInterior);
+}
+
+function openVillaInterior() {
+  const overlay = document.getElementById("villa-overlay");
+  if (!overlay) return;
+  overlay.classList.add("open");
+  document.body.style.overflow = "hidden";
+
+  if (!villaScene) {
+    // Build interior scene on demand
+    const canvas = document.getElementById("villa-canvas");
+    if (!canvas) return;
+
+    villaRenderer = new (THREE.WebGLRenderer)({ canvas, antialias: true, powerPreference: "high-performance" });
+    villaRenderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
+    villaRenderer.shadowMap.enabled  = true;
+    villaRenderer.shadowMap.type     = THREE.PCFSoftShadowMap;
+    villaRenderer.toneMapping        = THREE.ACESFilmicToneMapping;
+    villaRenderer.toneMappingExposure = 1.1;
+    villaRenderer.outputColorSpace   = THREE.SRGBColorSpace;
+
+    villaScene = new THREE.Scene();
+    villaScene.background = new THREE.Color(0x7ab4d4);
+    villaScene.fog = new THREE.FogExp2(0x9ac5d4, 0.025);
+
+    buildVillaInterior(villaScene);
+  }
+
+  // Start at approach viewpoint
+  teleportVillaTo("approach");
+  activate();
+  resizeVilla();
+  window.addEventListener("resize", resizeVilla);
+  startVillaLoop();
+
+  // Populate viewpoint strip
+  buildVillaStrip();
+}
+
+function closeVillaInterior() {
+  document.getElementById("villa-overlay")?.classList.remove("open");
+  document.body.style.overflow = "";
+  deactivate();
+  window.removeEventListener("resize", resizeVilla);
+  if (villaAnimId) { cancelAnimationFrame(villaAnimId); villaAnimId = null; }
+}
+
+let villaAnimId = null;
+
+function startVillaLoop() {
+  if (villaAnimId) cancelAnimationFrame(villaAnimId);
+  const cam = getCamera();
+  function frame() {
+    villaAnimId = requestAnimationFrame(frame);
+    const delta = Math.min(getClock().getDelta(), 0.05);
+    updateControls(delta);
+    if (villaRenderer && villaScene) villaRenderer.render(villaScene, cam);
+  }
+  frame();
+}
+
+function resizeVilla() {
+  const canvas = document.getElementById("villa-canvas");
+  if (!canvas || !villaRenderer) return;
+  const w = canvas.parentElement.clientWidth;
+  const h = canvas.parentElement.clientHeight;
+  villaRenderer.setSize(w, h);
+  const cam = getCamera();
+  cam.aspect = w / h;
+  cam.updateProjectionMatrix();
+}
+
+function teleportVillaTo(key) {
+  const vp = VILLA_VIEWPOINTS.find(v => v.key === key);
+  if (!vp) return;
+  setView(vp.pos, vp.yaw, 0);
+  setCaption(vp.caption || vp.label);
+
+  // Update floor plan highlight
+  document.querySelectorAll(".vp-floor-btn").forEach(b => {
+    b.classList.toggle("active", b.dataset.key === key);
+  });
+}
+
+function buildVillaStrip() {
+  const strip = document.getElementById("villa-vp-strip");
+  if (!strip) return;
+  strip.innerHTML = "";
+  VILLA_VIEWPOINTS.forEach(vp => {
+    const btn = document.createElement("button");
+    btn.className = "vp-btn vp-floor-btn";
+    btn.dataset.key = vp.key;
+    btn.innerHTML = `<span class="vp-label">\${vp.label}</span>`;
+    btn.addEventListener("click", () => teleportVillaTo(vp.key));
+    strip.appendChild(btn);
+  });
 }
