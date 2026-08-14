@@ -1,7 +1,7 @@
 /**
- * Project XIX — PBR Materials Library
+ * Project XIX     PBR Materials Library
  * Loads all 24 texture maps, builds MeshStandardMaterial for every surface.
- * Stone/Timber are 1024×512 — UV repeat set accordingly.
+ * Stone/Timber are 1024  512     UV repeat set accordingly.
  */
 
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
@@ -9,7 +9,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
 const T = "assets/textures/";
 const loader = new THREE.TextureLoader();
 
-// ─── TEXTURE LOADER HELPER ───────────────────────────────────────────────────
+//           TEXTURE LOADER HELPER                                                                                                                                                          
 
 function tex(name, repeatX = 4, repeatY = 4, encoding = true) {
   const t = loader.load(T + name);
@@ -33,7 +33,7 @@ function rgh(name, repeatX = 4, repeatY = 4) {
   return t;
 }
 
-// ─── PBR MATERIAL FACTORY ────────────────────────────────────────────────────
+//           PBR MATERIAL FACTORY                                                                                                                                                             
 
 function pbr({ color, normal, roughness, rx = 4, ry = 4,
                roughVal = 0.8, metalVal = 0, color2 = null,
@@ -52,7 +52,7 @@ function pbr({ color, normal, roughness, rx = 4, ry = 4,
   });
 }
 
-// ─── EXPORTED MATERIAL SETS ──────────────────────────────────────────────────
+//           EXPORTED MATERIAL SETS                                                                                                                                                       
 
 // Ground surfaces
 export const MAT_GRASS_FIELD = () => pbr({
@@ -70,7 +70,7 @@ export const MAT_DIRT = () => pbr({
 export const MAT_ASPHALT = () => pbr({
   color: "asphalt-color.png", normal: "asphalt-normal.png",
   roughness: "asphalt-roughness.png",
-  rx: 12, ry: 40, roughVal: 0.88, normalScale: 0.9,
+  rx: 8, ry: 8, roughVal: 0.88, normalScale: 0.9,
 });
 
 // Building skins
@@ -89,7 +89,7 @@ export const MAT_CONCRETE = () => pbr({
 export const MAT_TIMBER = () => pbr({
   color: "timber-color.png", normal: "timber-normal.png",
   roughness: "timber-roughness.png",
-  rx: 2, ry: 6, roughVal: 0.65, normalScale: 1.2,
+  rx: 3, ry: 3, roughVal: 0.65, normalScale: 1.2,
 });
 
 export const MAT_STONE = () => pbr({
@@ -104,7 +104,7 @@ export const MAT_TILE_ROOF = () => pbr({
   rx: 8, ry: 4, roughVal: 0.82, normalScale: 1.1,
 });
 
-// Specials — procedural (no texture file needed)
+// Specials     procedural (no texture file needed)
 export function MAT_GLASS(opacity = 0.46) {
   return new THREE.MeshStandardMaterial({
     color: 0x8fcce0, roughness: 0.04, metalness: 0.08,
@@ -142,7 +142,7 @@ export function MAT_DARK_METAL() {
 }
 
 export function MAT_WATER() {
-  // Water uses scrolling normal maps — animated in scene.js tick
+  // Water uses scrolling normal maps     animated in scene.js tick
   const mat = new THREE.MeshStandardMaterial({
     color: 0x2a7fa8, roughness: 0.06, metalness: 0.45,
     transparent: true, opacity: 0.88,
