@@ -45,7 +45,7 @@ export const VIEWPOINTS = {
   villa_north:  { label:"North Villa",      pos:[0,4,-132],    yaw:Math.PI,     pitch:0,     caption:"North arc villa - lake behind, field ahead",         icon:"villa",   zoneKey:"villas"   },
   stables:      { label:"Stables",          pos:[-220,1.65,80],yaw:Math.PI/2,   pitch:0,     caption:"Horse stables - equestrian compound, southwest",     icon:"stables", zoneKey:"stables"  },
   training:     { label:"Training Field",   pos:[-175,1.65,0], yaw:Math.PI/2,   pitch:0,     caption:"Training field - polo academy, perpendicular axis",   icon:"pitch",   zoneKey:"training" },
-  lofts:        { label:"Loft Terrace",     pos:[-80,1.65,-196],yaw:Math.PI,    pitch:0,     caption:"North crescent loft terraces - outside villa ring",  icon:"loft",    zoneKey:"lofts"    },
+  lofts:        { label:"Loft Terrace",     pos:[-218,1.65,-5], yaw:-Math.PI/2, pitch:0,     caption:"West compound loft terraces - beside training field", icon:"loft",    zoneKey:"lofts"    },
   paddock:      { label:"Paddock",          pos:[155,1.65,-60],yaw:-Math.PI/2,  pitch:0,     caption:"Northeast paddock - post and rail enclosed",         icon:"pitch",   zoneKey:"paddock"  },
   aerial:       { label:"Aerial View",      pos:[0,200,0],     yaw:0,           pitch:-Math.PI/2, caption:"Estate overview - 18.8 hectares, Lakowe",       icon:"aerial"  },
 };
@@ -105,7 +105,7 @@ export const ZONES = {
     tagline: "96 units    125 sqm. 2 bedrooms. South precinct.",
     description: "Two rows of 2-Bedroom Loft Terrace blocks occupy the south precinct west of the Clubhouse. Ground floors in natural gabion stone, upper floors in vertical timber slats and glazing     terrace architecture designed for tropical living.",
     clientLens: "Yield potential, lock-up-and-leave convenience, polo estate address.",
-    hot: { l: 32, t: 79, w: 14, h: 14 },
+    hot: { l: 14, t: 3,  w: 72, h: 7  }, // north crescent road
     viewpoint: "lofts",
     color: "#8c7a5e",
   },
@@ -115,7 +115,7 @@ export const ZONES = {
     tagline: "48 units    204 sqm. 2 bedrooms. South zone.",
     description: "Two large apartment blocks south of the Loft Terrace precinct house the 2-Bedroom Flat typology. Seven-storey towers with the signature wave-shaped roofline canopy, dark louvre fins, and piloti ground floor parking.",
     clientLens: "Higher-density investment, estate address, community living.",
-    hot: { l: 34, t: 88, w: 20, h: 8 },
+    hot: { l: 8,  t: 28, w: 10, h: 42 }, // west compound
     viewpoint: "lofts",
     color: "#6e8096",
   },
@@ -170,4 +170,3 @@ export const ZONES = {
     color: "#4a4a4a",
   },
 };
-
