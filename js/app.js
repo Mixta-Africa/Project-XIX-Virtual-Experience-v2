@@ -1,12 +1,12 @@
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
 /**
- * Project XIX — Main Application Entry Point
+ * Project XIX     Main Application Entry Point
  * Orchestrates: landing, masterplan, 3D walkthrough, VR.
  */
 
 import { VIEWPOINTS, ZONES, WORLD } from "./data.js";
 import { buildVillaInterior, VILLA_VIEWPOINTS } from "./villa-interior.js";
-import { initScene, getRenderer, getScene, getCamera, getClock, tickScene } from "./scene.js";
+import { initScene, getRenderer, getScene, getCamera, getClock, tickScene, updateSky } from "./scene.js";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR
@@ -20,7 +20,7 @@ import {
   enableAudio, updateSpatialAudio, initAudio
 } from "./ui.js";
 
-// ─── STATE ────────────────────────────────────────────────────────────────────
+//           STATE                                                                                                                                                                                                             
 
 let sceneReady = false;
 let villaInteriorActive = false;
@@ -29,8 +29,42 @@ let villaRenderer = null;
 let introPlaying = false;
 let currentViewKey = "field_centre";
 let animFrameId = null;
+let aerialOrbit = false;
+let aerialAngle = 0;
+const AERIAL_RADIUS = 220;
+const AERIAL_HEIGHT = 200;
 
-// ─── BOOT ─────────────────────────────────────────────────────────────────────
+//           WEATHER / TIME PRESETS                                                                                                                                                       
+const TIME_PRESETS = {
+  morning:   { sky:["#1a3a5c","#e87a30","#3a6a28"], sunCol:0xffa040, sunInt:2.8, sunPos:[-80,60,-80],  fog:"#c4a870", fogD:0.009,  exp:1.1  },
+  afternoon: { sky:["#1a3a5c","#7ab4d4","#4a7a38"], sunCol:0xffe4a0, sunInt:3.5, sunPos:[-180,200,120], fog:"#9ac5d4", fogD:0.006,  exp:1.18 },
+  sunset:    { sky:["#0a1830","#e85020","#5a3a20"], sunCol:0xff6020, sunInt:2.2, sunPos:[-100,30,60],  fog:"#e07040", fogD:0.012,  exp:1.3  },
+  night:     { sky:["#000810","#050d1a","#050a08"], sunCol:0x6080c0, sunInt:0.2, sunPos:[0,50,-80],    fog:"#050d18", fogD:0.018,  exp:0.6  },
+};
+
+function applyTimePreset(name) {
+  const p = TIME_PRESETS[name]; if (!p) return;
+  document.querySelectorAll(".wx-time-btn").forEach(b => b.classList.toggle("active", b.dataset.time === name));
+  updateSky(...p.sky);
+  const s = getScene(); if (!s) return;
+  s.fog.color.set(p.fog); s.fog.density = p.fogD;
+  const sun = s.children.find(o => o.isDirectionalLight && o.castShadow);
+  if (sun) { sun.color.setHex(p.sunCol); sun.intensity = p.sunInt; sun.position.set(...p.sunPos); }
+  getRenderer().toneMappingExposure = p.exp;
+}
+
+function applyWeather(w) {
+  document.querySelectorAll(".wx-weather-btn").forEach(b => b.classList.toggle("active", b.dataset.weather === w));
+  const s = getScene(); if (!s) return;
+  if (w === "rain")   s.fog.density = 0.025;
+  if (w === "cloudy") s.fog.density = 0.012;
+  if (w === "clear")  s.fog.density = TIME_PRESETS.afternoon.fogD;
+}
+
+window.applyTimePreset = applyTimePreset;
+window.applyWeather    = applyWeather;
+
+//           BOOT                                                                                                                                                                                                                
 
 document.addEventListener("DOMContentLoaded", () => {
   bootLandingCanvas();
@@ -42,7 +76,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initAudio();
 });
 
-// ─── HERO CANVAS ANIMATION ────────────────────────────────────────────────────
+//           HERO CANVAS ANIMATION                                                                                                                                                             
 
 function bootLandingCanvas() {
   const canvas = document.getElementById("hero-canvas");
@@ -100,7 +134,7 @@ function bootLandingCanvas() {
     ctx.closePath();
     ctx.fill();
 
-    // Polo field — mowed stripe perspective
+    // Polo field     mowed stripe perspective
     ctx.save();
     const fW = w * 0.56, fH = h * 0.26;
     const fX = (w - fW) / 2, fY = h * 0.55;
@@ -180,7 +214,7 @@ function drawPalmSilhouette(ctx, x, base, scale, phase) {
   }
 }
 
-// ─── MASTERPLAN ───────────────────────────────────────────────────────────────
+//           MASTERPLAN                                                                                                                                                                                              
 
 function bindMasterplan() {
   const planImg  = document.getElementById("plan-image");
@@ -243,7 +277,7 @@ function bindMasterplan() {
   zoneLayer.appendChild(svg);
 }
 
-// ─── NAV ──────────────────────────────────────────────────────────────────────
+//           NAV                                                                                                                                                                                                                   
 
 function bindNav() {
   document.querySelectorAll("[data-section]").forEach(link => {
@@ -254,7 +288,7 @@ function bindNav() {
     });
   });
 
-  // Explore button → masterplan section
+  // Explore button     masterplan section
   document.querySelectorAll(".btn-explore").forEach(btn => {
     btn.addEventListener("click", () => {
       document.getElementById("masterplan").scrollIntoView({ behavior: "smooth" });
@@ -267,7 +301,7 @@ function bindNav() {
   });
 }
 
-// ─── WORLD ENTRY ──────────────────────────────────────────────────────────────
+//           WORLD ENTRY                                                                                                                                                                                           
 
 async function openWorldAt(viewKey) {
   currentViewKey = viewKey;
@@ -328,9 +362,9 @@ async function openWorldAt(viewKey) {
 
   if (isMobile()) {
     showJoystick();
-    showEnterPrompt("Drag right to look · Left joystick to walk");
+    showEnterPrompt("Drag right to look    Left joystick to walk");
   } else {
-    showEnterPrompt("Click to lock cursor · WASD / arrows to walk · Shift to sprint");
+    showEnterPrompt("Click to lock cursor    WASD / arrows to walk    Shift to sprint");
   }
 
   // Enable audio on user gesture
@@ -377,6 +411,20 @@ async function cinematicIntro() {
   setCaption(targetVp.caption);
 }
 
+function toggleAerial(btn) {
+  aerialOrbit = !aerialOrbit;
+  if (aerialOrbit) {
+    btn && btn.classList.add("active");
+    deactivate();
+    setCaption("Aerial orbit - 200m above estate");
+  } else {
+    btn && btn.classList.remove("active");
+    activate();
+    teleportTo("field_centre", VIEWPOINTS.field_centre);
+  }
+}
+window.toggleAerial = toggleAerial;
+
 function teleportTo(key, vp) {
   setView(vp.pos, vp.yaw, vp.pitch || 0);
   setCaption(vp.caption);
@@ -384,7 +432,7 @@ function teleportTo(key, vp) {
   else hideZonePanel();
 }
 
-// ─── EXIT WORLD ───────────────────────────────────────────────────────────────
+//           EXIT WORLD                                                                                                                                                                                              
 
 function bindExitButton() {
   document.getElementById("btn-close-world")?.addEventListener("click", closeWorld);
@@ -408,7 +456,7 @@ function closeWorld() {
   window.removeEventListener("resize", resizeWorld);
 }
 
-// ─── RENDER LOOP ──────────────────────────────────────────────────────────────
+//           RENDER LOOP                                                                                                                                                                                           
 
 function startRenderLoop() {
   if (animFrameId) cancelAnimationFrame(animFrameId);
@@ -422,7 +470,15 @@ function startRenderLoop() {
     animFrameId = requestAnimationFrame(frame);
     const delta   = Math.min(clock.getDelta(), 0.05);
     const elapsed = (performance.now() - startTime) / 1000;
-    updateControls(delta);
+    if (aerialOrbit) {
+      aerialAngle += delta * 0.18;
+      camera.position.x = Math.sin(aerialAngle) * AERIAL_RADIUS;
+      camera.position.z = Math.cos(aerialAngle) * AERIAL_RADIUS;
+      camera.position.y = AERIAL_HEIGHT;
+      camera.lookAt(0, 0, 0);
+    } else {
+      updateControls(delta);
+    }
     tickScene(elapsed, camera);
     updateMinimap(camera.position.x, camera.position.z, getYaw());
     updateSpatialAudio(camera.position.x, camera.position.z);
@@ -444,7 +500,7 @@ function resizeWorld() {
   camera.updateProjectionMatrix();
 }
 
-// ─── SCROLL ANIMATIONS ────────────────────────────────────────────────────────
+//           SCROLL ANIMATIONS                                                                                                                                                                         
 
 function bindSectionScrollAnim() {
   const io = new IntersectionObserver((entries) => {
@@ -455,7 +511,7 @@ function bindSectionScrollAnim() {
   document.querySelectorAll(".anim-fade").forEach(el => io.observe(el));
 }
 
-// ─── VILLA INTERIOR ───────────────────────────────────────────────────────────
+//           VILLA INTERIOR                                                                                                                                                                                  
 
 function bindVillaInteriorBtn() {
   // Open from any "Walk through" button on villa cards
