@@ -1,11 +1,11 @@
 /**
- * Project XIX — UI Module
+ * Project XIX     UI Module
  * Minimap, loading screen, viewpoint strip, zone info panel, spatial audio stubs.
  */
 
 import { WORLD, VIEWPOINTS, ZONES } from "./data.js";
 
-// ─── LOADING SCREEN ───────────────────────────────────────────────────────────
+//           LOADING SCREEN                                                                                                                                                                                  
 
 export function showLoading() {
   const el = document.getElementById("loading-screen");
@@ -24,17 +24,17 @@ export function setLoadingProgress(pct) {
   if (bar) bar.style.width = `${Math.min(100, pct)}%`;
 }
 
-// ─── MINIMAP ─────────────────────────────────────────────────────────────────
+//           MINIMAP                                                                                                                                                                                                    
 
 let minimapCanvas, minimapCtx, minimapPlanImage;
 let minimapReady = false;
 
-// ── MINIMAP WORLD → CANVAS CALIBRATION ────────────────────────
+//        MINIMAP WORLD     CANVAS CALIBRATION                                                                         
 // The plan-2d.png image maps to the scene as follows:
-//   Image LEFT edge  = world X ≈ -252 (west perimeter)
-//   Image RIGHT edge = world X ≈ +252 (east perimeter)
-//   Image TOP edge   = world Z ≈ -200 (north / lake side)
-//   Image BOTTOM edge= world Z ≈ +210 (south / Lagos Road)
+//   Image LEFT edge  = world X     -252 (west perimeter)
+//   Image RIGHT edge = world X     +252 (east perimeter)
+//   Image TOP edge   = world Z     -200 (north / lake side)
+//   Image BOTTOM edge= world Z     +210 (south / Lagos Road)
 // These are tuned to the actual scene geometry in scene.js.
 // Bounds calibrated to corrected scene.js geometry:
 // North (lake side) = z=-260, South (Lagos Road) = z=+225
@@ -48,7 +48,7 @@ export function initMinimap(planImageSrc) {
   minimapCanvas = document.getElementById("minimap-canvas");
   if (!minimapCanvas) return;
 
-  // ── CRITICAL: set canvas pixel dimensions to match its CSS display size
+  //        CRITICAL: set canvas pixel dimensions to match its CSS display size
   // CSS: width=200px height=130px (updated below). Canvas must match exactly
   // so coordinate math is pixel-perfect.
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -71,7 +71,7 @@ export function updateMinimap(worldX, worldZ, yawRad) {
 
   minimapCtx.clearRect(0, 0, W, H);
 
-  // ── Background: plan image
+  //        Background: plan image
   if (minimapReady && minimapPlanImage.complete) {
     minimapCtx.globalAlpha = 0.9;
     minimapCtx.drawImage(minimapPlanImage, 0, 0, W, H);
@@ -86,7 +86,7 @@ export function updateMinimap(worldX, worldZ, yawRad) {
     minimapCtx.strokeRect(W*0.28, H*0.25, W*0.44, H*0.50);
   }
 
-  // ── World → canvas pixel mapping (clamped)
+  //        World     canvas pixel mapping (clamped)
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
   const px = clamp(
     ((worldX - MAP.xMin) / (MAP.xMax - MAP.xMin)) * W,
@@ -97,16 +97,16 @@ export function updateMinimap(worldX, worldZ, yawRad) {
     4, H - 4
   );
 
-  // ── Accuracy ring (shows approx position area)
+  //        Accuracy ring (shows approx position area)
   minimapCtx.beginPath();
   minimapCtx.arc(px, py, 10, 0, Math.PI * 2);
   minimapCtx.fillStyle = "rgba(201,168,76,0.15)";
   minimapCtx.fill();
 
-  // ── Direction wedge (facing direction)
+  //        Direction wedge (facing direction)
   minimapCtx.save();
   minimapCtx.translate(px, py);
-  minimapCtx.rotate(yawRad + Math.PI); // +PI because yaw 0 = facing south (+Z) in scene
+  minimapCtx.rotate(yawRad); // yaw 0 = north (-Z) = arrow up; yaw PI/2 = east (+X) = arrow right
 
   minimapCtx.beginPath();
   minimapCtx.moveTo(0, -14);
@@ -124,7 +124,7 @@ export function updateMinimap(worldX, worldZ, yawRad) {
 
   minimapCtx.restore();
 
-  // ── Bright position dot (always visible)
+  //        Bright position dot (always visible)
   minimapCtx.beginPath();
   minimapCtx.arc(px, py, 4.5, 0, Math.PI * 2);
   minimapCtx.fillStyle = "#ff4444";
@@ -135,7 +135,7 @@ export function updateMinimap(worldX, worldZ, yawRad) {
   minimapCtx.fill();
   minimapCtx.stroke();
 
-  // ── Crosshair lines through dot
+  //        Crosshair lines through dot
   minimapCtx.shadowBlur = 0;
   minimapCtx.strokeStyle = "rgba(255,255,255,0.5)";
   minimapCtx.lineWidth = 0.5;
@@ -144,7 +144,7 @@ export function updateMinimap(worldX, worldZ, yawRad) {
   minimapCtx.moveTo(px, py - 8); minimapCtx.lineTo(px, py + 8);
   minimapCtx.stroke();
 
-  // ── Coordinates readout (bottom-left of minimap)
+  //        Coordinates readout (bottom-left of minimap)
   minimapCtx.font = "bold 8px monospace";
   minimapCtx.fillStyle = "rgba(201,168,76,0.9)";
   minimapCtx.shadowColor = "#000";
@@ -155,7 +155,7 @@ export function updateMinimap(worldX, worldZ, yawRad) {
   );
 }
 
-// ─── VIEWPOINT STRIP ──────────────────────────────────────────────────────────
+//           VIEWPOINT STRIP                                                                                                                                                                               
 
 const viewpointIcons = {
   pitch:    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="8" width="18" height="10" rx="1"/><line x1="12" y1="8" x2="12" y2="18"/></svg>`,
@@ -189,7 +189,7 @@ export function buildViewpointStrip(container, onSelect) {
   });
 }
 
-// ─── ZONE INFO PANEL ──────────────────────────────────────────────────────────
+//           ZONE INFO PANEL                                                                                                                                                                               
 
 export function showZonePanel(zoneKey) {
   const zone = ZONES[zoneKey];
@@ -210,7 +210,7 @@ export function hideZonePanel() {
   if (panel) panel.classList.remove("visible");
 }
 
-// ─── SPATIAL AUDIO ────────────────────────────────────────────────────────────
+//           SPATIAL AUDIO                                                                                                                                                                                     
 
 let audioCtx;
 const audioSources = {};
@@ -223,7 +223,7 @@ export async function enableAudio() {
   if (audioCtx) return;
   try {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    // Ambient wind / birds — synthesised
+    // Ambient wind / birds     synthesised
     addAmbientLoop(220, 0.018, "wind");
     addAmbientLoop(880, 0.005, "birds", true);
   } catch (_) {}
@@ -258,14 +258,14 @@ export function updateSpatialAudio(worldX, worldZ) {
   audioSources.wind.gainNode.gain.setTargetAtTime(windGain, audioCtx.currentTime, 0.3);
 }
 
-// ─── HUD: CAPTION & STATUS ────────────────────────────────────────────────────
+//           HUD: CAPTION & STATUS                                                                                                                                                             
 
 export function setCaption(text) {
   const el = document.getElementById("scene-caption");
   if (el) el.textContent = text;
 }
 
-export function showEnterPrompt(text = "Click or tap to look around · WASD to walk") {
+export function showEnterPrompt(text = "Click or tap to look around    WASD to walk") {
   const el = document.getElementById("enter-prompt");
   if (el) { el.textContent = text; el.style.opacity = "1"; }
 }
@@ -275,7 +275,7 @@ export function hideEnterPrompt() {
   if (el) el.style.opacity = "0";
 }
 
-// ─── VR BUTTON ────────────────────────────────────────────────────────────────
+//           VR BUTTON                                                                                                                                                                                                 
 
 export function showVRButton(onClick) {
   if (!("xr" in navigator)) return;
@@ -288,7 +288,7 @@ export function showVRButton(onClick) {
   });
 }
 
-// ─── TOUCH JOYSTICK OVERLAY ───────────────────────────────────────────────────
+//           TOUCH JOYSTICK OVERLAY                                                                                                                                                          
 
 export function showJoystick() {
   const el = document.getElementById("joystick-overlay");
