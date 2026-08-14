@@ -377,6 +377,117 @@
   </div>
 </div>
 
+
+<!-- ═══ VILLA INTERIOR OVERLAY ════════════════════════════════ -->
+<div id="villa-overlay" role="dialog" aria-modal="true" aria-label="Villa interior walkthrough">
+
+  <div class="world-topbar">
+    <div class="world-brand">
+      <span class="world-brand-mark">XIX</span>
+      <div id="scene-caption" class="world-caption">3 Bedroom Premium Villa — Interior</div>
+    </div>
+    <div class="world-controls">
+      <button class="world-btn world-btn-close" id="btn-close-villa" aria-label="Return to estate">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        Exit Villa
+      </button>
+    </div>
+  </div>
+
+  <div class="world-body">
+    <canvas id="villa-canvas" aria-label="Villa interior 3D walkthrough"></canvas>
+    <div class="crosshair" aria-hidden="true"></div>
+    <div id="enter-prompt" aria-live="polite">Click to look around · WASD to walk</div>
+
+    <!-- Floor plan side panel -->
+    <aside class="villa-plan-panel" aria-label="Villa floor plans">
+      <div class="villa-plan-header">
+        <span class="eyebrow">3 Bedroom Villa</span>
+        <h3>Floor Plans</h3>
+      </div>
+
+      <div class="villa-plan-tabs">
+        <button class="plan-tab active" data-plan="undercroft">Undercroft</button>
+        <button class="plan-tab" data-plan="ground">Ground</button>
+        <button class="plan-tab" data-plan="first">First</button>
+      </div>
+
+      <!-- Room list by floor -->
+      <div class="plan-rooms" id="plan-undercroft">
+        <div class="plan-room" data-key="undercroft">
+          <span class="room-name">Undercroft Parking</span>
+          <span class="room-area">2.4m clear</span>
+        </div>
+        <div class="plan-room" data-key="approach">
+          <span class="room-name">Street Approach</span>
+          <span class="room-area">Ramp entry</span>
+        </div>
+      </div>
+
+      <div class="plan-rooms hidden" id="plan-ground">
+        <div class="plan-room" data-key="ante_room">
+          <span class="room-name">Ante Room</span>
+          <span class="room-area">12 m²</span>
+        </div>
+        <div class="plan-room" data-key="living">
+          <span class="room-name">Living / Dining</span>
+          <span class="room-area">42 m²</span>
+        </div>
+        <div class="plan-room" data-key="terrace_gf">
+          <span class="room-name">Front Terrace</span>
+          <span class="room-area">Polo view</span>
+        </div>
+        <div class="plan-room" data-key="kitchen">
+          <span class="room-name">Kitchen</span>
+          <span class="room-area">26 m²</span>
+        </div>
+      </div>
+
+      <div class="plan-rooms hidden" id="plan-first">
+        <div class="plan-room" data-key="family_lounge">
+          <span class="room-name">Family Lounge</span>
+          <span class="room-area">23 m²</span>
+        </div>
+        <div class="plan-room" data-key="master">
+          <span class="room-name">Master Bedroom</span>
+          <span class="room-area">27 m²</span>
+        </div>
+        <div class="plan-room" data-key="master_bath">
+          <span class="room-name">Master Bathroom</span>
+          <span class="room-area">7 m²</span>
+        </div>
+        <div class="plan-room" data-key="bedroom2">
+          <span class="room-name">Bedroom 2</span>
+          <span class="room-area">16 m²</span>
+        </div>
+        <div class="plan-room" data-key="bedroom3">
+          <span class="room-name">Bedroom 3</span>
+          <span class="room-area">17 m²</span>
+        </div>
+        <div class="plan-room" data-key="terrace_ff">
+          <span class="room-name">First Floor Terrace</span>
+          <span class="room-area">South-facing</span>
+        </div>
+      </div>
+
+      <div class="villa-level-info">
+        <div class="level-row"><span class="level-label">Level 0</span><span class="level-desc">Garden grade</span></div>
+        <div class="level-row"><span class="level-label">Level 5 / 2100mm</span><span class="level-desc">Undercroft parking</span></div>
+        <div class="level-row"><span class="level-label">Level 2 / 2850mm</span><span class="level-desc">Ground floor living</span></div>
+        <div class="level-row"><span class="level-label">Level 3 / 6150mm</span><span class="level-desc">First floor bedrooms</span></div>
+        <div class="level-row"><span class="level-label">Level 4 / 9450mm</span><span class="level-desc">Roof eave</span></div>
+      </div>
+
+      <a class="villa-enquire-btn" href="mailto:o.olasunkanmi@mixtafrica.com?subject=Project XIX — 3 Bedroom Villa Enquiry">
+        Enquire About This Villa
+      </a>
+    </aside>
+
+    <!-- Villa viewpoint strip -->
+    <div id="villa-vp-strip" role="toolbar" aria-label="Villa viewpoints"></div>
+  </div>
+</div>
+
 <!-- ═══ SCRIPTS ═══════════════════════════════════════════════════ -->
 <script type="importmap">
   {
