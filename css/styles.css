@@ -880,17 +880,18 @@ footer {
   position: absolute;
   bottom: 100px;
   right: 1.4rem;
-  width: 160px;
-  border-radius: 3px;
+  width: 200px;
+  border-radius: 4px;
   overflow: hidden;
-  border: 1px solid rgba(201,168,76,0.35);
-  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  border: 1.5px solid rgba(201,168,76,0.55);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.7), 0 0 0 1px rgba(0,0,0,0.4);
   background: #0a1008;
 }
 
 #minimap-canvas {
-  width: 160px;
-  height: 100px;
+  /* MUST match initMinimap display dimensions exactly */
+  width: 200px;
+  height: 130px;
   display: block;
 }
 
@@ -898,16 +899,16 @@ footer {
   font-size: 0.6rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--gold-500);
+  color: var(--gold-300);
   text-align: center;
-  padding: 0.3rem;
-  background: rgba(6,18,8,0.9);
-  border-top: 1px solid rgba(201,168,76,0.12);
+  padding: 0.28rem;
+  background: rgba(6,18,8,0.95);
+  border-top: 1px solid rgba(201,168,76,0.2);
 }
 
 @media (max-width: 480px) {
-  #minimap { width: 120px; }
-  #minimap-canvas { width: 120px; height: 75px; }
+  #minimap { width: 150px; }
+  #minimap-canvas { width: 150px; height: 98px; }
 }
 
 /* ─── HUD PROMPTS ────────────────────────────────────────────── */
