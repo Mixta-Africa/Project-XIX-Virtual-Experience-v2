@@ -1286,3 +1286,59 @@ button.residence-card-btn {
 
 /* ─── PLAN ROOM CLICK JS BINDING ─────────────────────────────── */
 /* Handled in app.js via data-key delegation */
+
+/* ─── WEATHER / TIME CONTROLS IN WORLD ─────────────────────────── */
+
+.wx-group {
+  display: flex;
+  gap: 0.25rem;
+  align-items: center;
+  padding: 0 0.3rem;
+  border-right: 1px solid rgba(255,255,255,0.1);
+}
+
+.wx-btn {
+  padding: 0.28rem 0.65rem;
+  font-size: 0.62rem;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  border-radius: 2px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(0,0,0,0.35);
+  color: rgba(240,236,224,0.65);
+  cursor: pointer;
+  transition: all 0.18s;
+  white-space: nowrap;
+}
+.wx-btn:hover { border-color: rgba(201,168,76,0.5); color: var(--gold-300); }
+.wx-btn.active {
+  background: rgba(201,168,76,0.18);
+  border-color: rgba(201,168,76,0.6);
+  color: var(--gold-300);
+}
+
+/* Aerial button */
+.world-btn-aerial {
+  border: 1px solid rgba(201,168,76,0.3);
+  color: rgba(240,236,224,0.7);
+}
+.world-btn-aerial.active {
+  background: rgba(201,168,76,0.18);
+  border-color: var(--gold-500);
+  color: var(--gold-300);
+}
+
+/* Make topbar scroll on small screens */
+.world-topbar {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  gap: 0.5rem;
+}
+.world-topbar::-webkit-scrollbar { display: none; }
+
+/* World zone panel (inside 3D world) ─────────────────────── */
+#world-zone-panel {
+  max-height: 300px;
+  overflow-y: auto;
+}
