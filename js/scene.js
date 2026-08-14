@@ -40,7 +40,7 @@ export function initScene(canvas) {
 
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x8ab8cc);
-  scene.fog = new THREE.FogExp2(0x9ac5d4, 0.0016);
+  scene.fog = new THREE.FogExp2(0x8ab8cc, 0.0012);
 
   camera = new THREE.PerspectiveCamera(65, 1, 0.1, 1400);
 
@@ -132,6 +132,7 @@ function buildSky() {
 }
 
 export function updateSky(topCol, horCol, gndCol) {
+  if (!skyMesh) return; // guard: called before scene init
   const sc = document.createElement("canvas"); sc.width = 4; sc.height = 256;
   const sx = sc.getContext("2d");
   const g = sx.createLinearGradient(0, 0, 0, 256);
@@ -175,6 +176,7 @@ function buildEnvironment() {
   addLoftTerraces();  // North exterior + west clusters
   addWestCompound();  // Training field + flats
   addStables();
+  addEastLake();
   addPaddockEast();
   addGamePark();
   addCommercialBlock();
@@ -285,23 +287,65 @@ function addLake() {
 function addRoads() {
   const am = MAT_ASPHALT();
   const lm = new THREE.MeshStandardMaterial({ color: 0xf5f0d0, roughness: 0.5 });
+  const Y = 0.12; // road level (above ground plane)
 
-  // Lagos Road (south boundary)
-  s(plane(600, 18, am, [0, 0.13, 210]));
-  for (let x = -270; x <= 270; x += 18) s(box(8, 0.15, 0.38, lm, [x, 0.26, 210], 0, false));
+  //        LAGOS ROAD (south boundary)                                                                                                                
+  s(plane(600, 18, am, [0, Y, 210]));
+  for (let x = -270; x <= 270; x += 18)
+    s(box(8, .04, .35, lm, [x, Y+.04, 210], 0, false));
 
-  // Crescent road (north, behind lofts)
-  s(plane(500, 10, am, [0, 0.13, -235]));
-  s(plane(10, 60, am,  [0, 0.13, -260])); // north link road
+  //        CRESCENT ROAD (north, outside loft rows)                                                                         
+  s(plane(520, 12, am, [0, Y, -232]));
+  // North link road to golf estate
+  s(plane(10, 55, am,  [0, Y, -258]));
 
-  // Internal south connector
-  s(plane(380, 10, am, [0, 0.13, 190]));
-  // West internal road
-  s(plane(10, 320, am, [-200, 0.13, 30]));
-  // East internal road
-  s(plane(10, 280, am, [210, 0.13, 20]));
-  // Clubhouse access
-  s(plane(20, 50, am,  [0, 0.13, 172]));
+  //        RING ROAD AROUND THE POLO OVAL                                                                                                       
+  // This is the primary internal circulation running around the safety zone.
+  // It reads as dark asphalt in the layout between safety zone and villa columns.
+  // North ring road segment (between safety zone and north villas)
+  s(plane(310, 8, am, [0, Y, -100]));
+  // South ring road segment (between safety zone and clubhouse/south villas)
+  s(plane(310, 8, am, [0, Y, 100]));
+  // West ring road (between safety zone W edge and inner villa column)
+  s(plane(8, 200, am, [-137, Y, 0]));
+  // East ring road
+  s(plane(8, 200, am, [137, Y, 0]));
+  // NW curve segment
+  s(plane(25, 25, am, [-130, Y, -95]));
+  // NE curve
+  s(plane(25, 25, am, [130, Y, -95]));
+  // SW curve
+  s(plane(25, 25, am, [-130, Y, 95]));
+  // SE curve
+  s(plane(25, 25, am, [130, Y, 95]));
+
+  //        VILLA INNER ACCESS LANE (between inner and outer villa columns)       
+  // West side: between x=-162 (inner) and x=-188 (outer)
+  s(plane(8, 210, am, [-175, Y, -5]));
+  // East side: between x=+162 and x=+188
+  s(plane(8, 210, am, [175, Y, -5]));
+  // North arc access behind Tier1 villas (between Tier1 and lake)
+  s(plane(240, 7, am, [20, Y, -122]));
+  // North Tier2/3 access road
+  s(plane(240, 7, am, [20, Y, -165]));
+
+  //        SOUTH INTERNAL EAST-WEST CONNECTOR                                                                                        
+  s(plane(420, 10, am, [0, Y, 190]));
+  // Clubhouse approach/forecourt
+  s(plane(130, 30, am, [0, Y, 180]));
+
+  //        WEST COMPOUND INTERNAL ROADS                                                                                                          
+  // Main N-S road through west compound
+  s(plane(10, 280, am, [-205, Y, 20]));
+  // Access road beside training field (east side of compound)
+  s(plane(10, 200, am, [-170, Y, 10]));
+  // Access road to stables/services (south of compound)
+  s(plane(200, 10, am, [-175, Y, 160]));
+
+  //        EAST COMPOUND INTERNAL ROAD                                                                                                             
+  s(plane(10, 250, am, [210, Y, 10]));
+  // East parking access
+  s(plane(60, 10, am, [205, Y, 140]));
 }
 
 //           CLUBHOUSE                                                                                                                                                                               
@@ -818,6 +862,14 @@ function createStableBlock(x, z) {
 }
 
 //           PADDOCK & RECREATION                                                                                                                                                 
+
+function addEastLake() {
+  const wm = MAT_WATER();
+  const el = new THREE.Mesh(new THREE.BoxGeometry(12, 0.25, 45), wm);
+  el.position.set(205, 0.12, -150); el.receiveShadow = true;
+  scene.add(el); waterMeshes.push(el);
+  s(plane(16, 49, new THREE.MeshStandardMaterial({color:0x4a7a38,roughness:.9}), [205, 0.11, -150]));
+}
 
 function addPaddockEast() {
   const gm=MAT_GRASS_FIELD();
