@@ -1,923 +1,528 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Project XIX — The Clubhouse | Mixta Africa</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{background:#000;overflow:hidden;font-family:'Segoe UI',system-ui,sans-serif}
-#canvas-container{width:100vw;height:100vh}
-
-/* ── LOADING ──────────────────────────────────── */
-#loading{
-  position:fixed;inset:0;background:#080a06;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:100;
-}
-#loading .logo{color:#c9a84c;font-size:2.5rem;font-weight:200;letter-spacing:.35em;margin-bottom:.4rem}
-#loading .sub{color:rgba(255,255,255,.35);font-size:.7rem;letter-spacing:.18em;text-transform:uppercase;margin-bottom:2.5rem}
-#loading-bar-wrap{width:220px;height:1px;background:rgba(255,255,255,.1)}
-#loading-bar{height:1px;background:#c9a84c;width:0;transition:width .3s}
-#start-btn{
-  margin-top:2rem;padding:12px 36px;background:transparent;
-  border:1px solid rgba(201,168,76,.45);color:#c9a84c;font-size:.72rem;
-  letter-spacing:.14em;text-transform:uppercase;cursor:pointer;border-radius:2px;
-  transition:all .2s;display:none;
-}
-#start-btn:hover{background:rgba(201,168,76,.08);border-color:#c9a84c}
-
-/* ── HUD ──────────────────────────────────────── */
-#ui{position:fixed;inset:0;pointer-events:none;z-index:10}
-#hud-top{
-  position:absolute;top:0;left:0;right:0;
-  padding:1rem 1.4rem;
-  background:linear-gradient(to bottom,rgba(0,0,0,.65),transparent);
-  display:flex;justify-content:space-between;align-items:flex-start;
-}
-#room-label{color:#fff;font-size:.82rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase}
-#room-sub{color:rgba(255,255,255,.45);font-size:.68rem;margin-top:.2rem;letter-spacing:.05em}
-#brand{color:rgba(255,255,255,.4);font-size:.65rem;text-align:right;letter-spacing:.08em;text-transform:uppercase;line-height:1.7}
-
-/* ── WEATHER / TIME BADGE ─────────────────────── */
-#weather-badge{
-  position:absolute;top:3.8rem;right:1.4rem;pointer-events:all;
-  display:flex;gap:.4rem;flex-wrap:wrap;justify-content:flex-end;
-}
-.wx-btn{
-  background:rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.15);
-  color:rgba(255,255,255,.7);font-size:.62rem;padding:.3rem .65rem;
-  border-radius:3px;cursor:pointer;letter-spacing:.05em;transition:all .15s;
-}
-.wx-btn:hover,.wx-btn.active{background:rgba(201,168,76,.2);border-color:rgba(201,168,76,.6);color:#c9a84c}
-
-/* ── ROOM NAV ─────────────────────────────────── */
-#controls-panel{
-  pointer-events:all;
-  position:absolute;bottom:0;left:0;right:0;
-  background:linear-gradient(to top,rgba(0,0,0,.85) 0%,rgba(0,0,0,.5) 60%,transparent 100%);
-  padding:1.1rem 1.4rem 1.3rem;
-}
-#rooms-label{color:rgba(255,255,255,.3);font-size:.6rem;letter-spacing:.12em;text-transform:uppercase;margin-bottom:.6rem}
-#room-buttons{display:flex;gap:.4rem;flex-wrap:wrap}
-.room-btn{
-  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);
-  color:rgba(255,255,255,.75);font-size:.68rem;padding:.45rem .9rem;
-  border-radius:3px;cursor:pointer;transition:all .15s;letter-spacing:.03em;
-}
-.room-btn:hover{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.35)}
-.room-btn.active{background:rgba(201,168,76,.18);border-color:rgba(201,168,76,.6);color:#c9a84c}
-.room-btn .floor-tag{font-size:.58rem;opacity:.55;margin-left:.3rem}
-
-/* ── CROSSHAIR ────────────────────────────────── */
-#crosshair{
-  position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
-  width:14px;height:14px;
-}
-#crosshair::before,#crosshair::after{content:'';position:absolute;background:rgba(255,255,255,.65)}
-#crosshair::before{width:1.5px;height:14px;left:6.25px;top:0}
-#crosshair::after{height:1.5px;width:14px;top:6.25px;left:0}
-
-/* ── MOVE HINT ────────────────────────────────── */
-#move-hint{
-  position:absolute;bottom:6.5rem;right:1.4rem;
-  color:rgba(255,255,255,.28);font-size:.62rem;text-align:right;line-height:1.9;letter-spacing:.05em;
-}
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Project XIX — A luxury polo and equestrian estate at Lakowe, Ibeju-Lekki, Lagos. 18.8 hectares. 223 residences. Developed by Mixta Africa." />
+  <meta name="theme-color" content="#061208" />
+  <meta property="og:title" content="Project XIX | Mixta Africa" />
+  <meta property="og:description" content="A polo and equestrian lifestyle estate at Lakowe, Ibeju-Lekki. Walk the grounds virtually." />
+  <meta property="og:image" content="assets/plan-2d.png" />
+  <title>Project XIX | Mixta Africa — High Fidelity</title>
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
+  <link rel="stylesheet" href="css/styles.css" />
 </head>
 <body>
 
-<div id="loading">
-  <div class="logo">XIX</div>
-  <div class="sub">The Clubhouse · Lakowe · Lagos State</div>
-  <div id="loading-bar-wrap"><div id="loading-bar"></div></div>
-  <button id="start-btn" onclick="startExperience()">Enter Clubhouse</button>
+<!-- ═══ LOADING SCREEN ═══════════════════════════════════════════ -->
+<div id="loading-screen" style="display:none;">
+  <div class="loading-mark">XIX</div>
+  <div class="loading-title">Preparing Estate Experience</div>
+  <div class="loading-bar"><div id="loading-bar-fill"></div></div>
+  <div class="loading-sub">Lakowe · Ibeju-Lekki · Lagos</div>
 </div>
 
-<div id="canvas-container"></div>
+<!-- ═══ NAV ══════════════════════════════════════════════════════ -->
+<header class="topbar" role="banner">
+  <a class="brand" href="#" aria-label="Project XIX home">
+    <span class="brand-mark">XIX</span>
+    <span class="brand-name">Project XIX</span>
+  </a>
+  <nav class="nav-links" aria-label="Primary navigation">
+    <a href="#" data-section="masterplan">Masterplan</a>
+    <a href="#" data-section="residences">Residences</a>
+    <a href="#" data-section="investment">Investors</a>
+    <a href="#" data-section="contact">Enquire</a>
+  </nav>
+</header>
 
-<div id="ui">
-  <div id="crosshair"></div>
-  <div id="hud-top">
-    <div>
-      <div id="room-label">Ground Floor — Arrival Court</div>
-      <div id="room-sub">Lakowe Crossings Polo Clubhouse · Project XIX</div>
+<!-- ═══ HERO ══════════════════════════════════════════════════════ -->
+<section class="hero" id="hero" aria-label="Project XIX hero">
+  <canvas id="hero-canvas" aria-hidden="true"></canvas>
+
+  <div class="hero-content">
+    <div class="hero-copy">
+      <p class="eyebrow">Lakowe · Ibeju-Lekki · Lagos State</p>
+      <h1 class="display">Project<br>XIX</h1>
+      <p class="hero-sub">A polo estate unlike any other in West Africa</p>
+      <p class="hero-desc">
+        18.8 hectares of polo fields, private residences, and equestrian facilities
+        set among royal palms at Lakowe. Developed by Mixta Africa.
+      </p>
+      <div class="hero-actions">
+        <button class="btn btn-gold btn-explore">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M12 3l9 9-9 9"/></svg>
+          Explore the Estate
+        </button>
+        <button class="btn btn-outline btn-enter-3d">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+          Enter Virtual Estate
+        </button>
+      </div>
     </div>
-    <div id="brand">Mixta Africa<br>Project XIX</div>
+
+    <aside class="hero-stats" aria-label="Estate highlights">
+      <div class="stat">
+        <div class="stat-value">18.8<span style="font-size:0.55em">ha</span></div>
+        <div class="stat-label">Site Area</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value">223</div>
+        <div class="stat-label">Residences</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value">56</div>
+        <div class="stat-label">Stable Stalls</div>
+      </div>
+    </aside>
   </div>
 
-  <div id="weather-badge">
-    <button class="wx-btn active" onclick="setTime('morning')">🌅 Morning</button>
-    <button class="wx-btn" onclick="setTime('afternoon')">☀️ Afternoon</button>
-    <button class="wx-btn" onclick="setTime('sunset')">🌇 Sunset</button>
-    <button class="wx-btn" onclick="setTime('night')">🌙 Night</button>
-    <button class="wx-btn" onclick="setWeather('clear')">Clear</button>
-    <button class="wx-btn" onclick="setWeather('cloudy')">Cloudy</button>
-    <button class="wx-btn" onclick="setWeather('rain')">Rain</button>
+  <div class="hero-scroll-cue" aria-hidden="true">
+    <span class="scroll-label">Explore</span>
+    <div class="scroll-line"></div>
+  </div>
+</section>
+
+<!-- ═══ INTRO FACTS STRIP ════════════════════════════════════════ -->
+<section class="intro-strip" aria-label="Estate facts">
+  <div class="intro-strip-inner">
+    <div class="intro-fact anim-fade">
+      <div class="intro-fact-value">FIP</div>
+      <div class="intro-fact-label">International Standard</div>
+    </div>
+    <div class="intro-divider" aria-hidden="true"></div>
+    <div class="intro-fact anim-fade">
+      <div class="intro-fact-value">274m</div>
+      <div class="intro-fact-label">Main Polo Field</div>
+    </div>
+    <div class="intro-divider" aria-hidden="true"></div>
+    <div class="intro-fact anim-fade">
+      <div class="intro-fact-value">43</div>
+      <div class="intro-fact-label">Premium Villas</div>
+    </div>
+    <div class="intro-divider" aria-hidden="true"></div>
+    <div class="intro-fact anim-fade">
+      <div class="intro-fact-value">3,419<span style="font-size:0.55em">m²</span></div>
+      <div class="intro-fact-label">Clubhouse</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ MASTERPLAN ════════════════════════════════════════════════ -->
+<section class="masterplan-section" id="masterplan" aria-label="Interactive masterplan">
+  <div class="section-header anim-fade">
+    <p class="eyebrow">Guided Discovery</p>
+    <h2>Interactive<br><em>Masterplan</em></h2>
+    <p>Hover or tap any zone to learn more. Click to enter the virtual walkthrough of that area.</p>
   </div>
 
-  <div id="move-hint">WASD / Arrow keys · Click to look<br>ESC to release mouse · Shift to sprint</div>
+  <div class="masterplan-shell">
+    <div class="plan-frame anim-fade">
+      <img
+        id="plan-image"
+        src="assets/plan-2d.png"
+        alt="Project XIX masterplan: polo field (east-west), crescent lake to the north, clubhouse to the south, premium villas surrounding the field, training field and stables to the south-west, paddock and recreation to the east."
+      />
+      <div id="zone-layer" aria-label="Clickable estate zones" role="region"></div>
+    </div>
 
-  <div id="controls-panel">
-    <div id="rooms-label">Navigate to room</div>
-    <div id="room-buttons"></div>
+    <!-- Zone info panel -->
+    <aside id="zone-panel" aria-live="polite" aria-label="Zone details">
+      <span class="zone-type">Select a zone</span>
+      <span class="zone-label">Project XIX</span>
+      <span class="zone-tagline">Hover or tap a zone on the masterplan</span>
+      <p class="zone-desc">Each zone on this masterplan is individually clickable. Hover to preview; click to open the 3D virtual walkthrough of that area.</p>
+      <p class="zone-client-label">Client lens</p>
+      <p class="zone-client">Hover over any zone to see the buyer or investor story for that part of the estate.</p>
+      <button class="zone-enter-btn btn-enter-3d">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+        Enter Virtual Estate
+      </button>
+    </aside>
+  </div>
+</section>
+
+<!-- ═══ RESIDENCES ════════════════════════════════════════════════ -->
+<section class="residences-section section" id="residences" aria-label="Residences">
+  <div class="container">
+    <div class="section-header anim-fade">
+      <p class="eyebrow">Buyer Journey</p>
+      <h2>Six residence<br><em>typologies</em></h2>
+      <p>From the polo-front 3-bedroom villa to the lock-up loft terrace — each typology is designed for a distinct ownership story.</p>
+    </div>
+
+    <div class="residence-grid">
+      <!-- 3-bed Villa -->
+      <article class="residence-card anim-fade">
+        <img class="residence-card-img" src="assets/villa-3-bedroom.png" alt="3 Bedroom Villa exterior — flat roof, timber louvres, undercroft parking" loading="lazy" />
+        <div class="residence-card-body">
+          <div class="residence-card-type">3 Bed Villa</div>
+          <div class="residence-card-name">Premium Villa</div>
+          <div class="residence-card-meta">43 units · 330 m² · Polo-facing</div>
+          <button class="residence-card-btn btn-enter-3d">
+            Walk through
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          </button>
+        </div>
+      </article>
+
+      <!-- 2-bed Loft -->
+      <article class="residence-card anim-fade">
+        <img class="residence-card-img" src="assets/loft-terrace.png" alt="2 Bedroom Loft Terrace — gabion stone ground floor, timber louvres above" loading="lazy" />
+        <div class="residence-card-body">
+          <div class="residence-card-type">2 Bed Loft</div>
+          <div class="residence-card-name">Loft Terrace</div>
+          <div class="residence-card-meta">96 units · 125 m² · South precinct</div>
+          <button class="residence-card-btn btn-enter-3d">
+            Walk through
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          </button>
+        </div>
+      </article>
+
+      <!-- Apartment Block -->
+      <article class="residence-card anim-fade">
+        <img class="residence-card-img" src="assets/apartment-block.png" alt="Apartment Block — 7 storeys, wave roofline canopy, dark louvre fins" loading="lazy" />
+        <div class="residence-card-body">
+          <div class="residence-card-type">2 Bed Flat</div>
+          <div class="residence-card-name">Apartment Block</div>
+          <div class="residence-card-meta">48 units · 204 m² · South zone</div>
+          <button class="residence-card-btn btn-enter-3d">
+            Walk through
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          </button>
+        </div>
+      </article>
+
+      <!-- Clubhouse -->
+      <article class="residence-card anim-fade">
+        <img class="residence-card-img" src="assets/clubhouse.png" alt="Clubhouse — 3 floors, tiered seating facing the polo field" loading="lazy" />
+        <div class="residence-card-body">
+          <div class="residence-card-type">Social Anchor</div>
+          <div class="residence-card-name">Club House</div>
+          <div class="residence-card-meta">3,419 m² · 3 floors · 8 skyboxes</div>
+          <button class="residence-card-btn btn-enter-3d">
+            Walk through
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          </button>
+        </div>
+      </article>
+
+      <!-- Stables -->
+      <article class="residence-card anim-fade">
+        <img class="residence-card-img" src="assets/horse-stables.png" alt="Horse Stables — red laterite brick, exposed timber trusses, cobblestone courtyard" loading="lazy" />
+        <div class="residence-card-body">
+          <div class="residence-card-type">Equestrian</div>
+          <div class="residence-card-name">Horse Stables</div>
+          <div class="residence-card-meta">4 blocks · 56 stalls · Cobblestone yard</div>
+          <button class="residence-card-btn btn-enter-3d">
+            Walk through
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          </button>
+        </div>
+      </article>
+
+      <!-- Studio/Maisonette info card -->
+      <article class="residence-card anim-fade" style="background: var(--green-800); display:flex; flex-direction:column; justify-content:flex-end;">
+        <div class="residence-card-body" style="flex:1; display:flex; flex-direction:column; justify-content:flex-end; gap:0.8rem;">
+          <div>
+            <div class="residence-card-type">Also available</div>
+            <div class="residence-card-name" style="font-size:1.1rem;">1 Bed Maisonette<br>+ Studio</div>
+          </div>
+          <div class="residence-card-meta">24 units · 117 m² · Outer ring<br>12 studios · 33 m²</div>
+          <p style="font-size:0.8rem; color:var(--text-muted); line-height:1.6;">
+            Maisonettes on the north crescent and studio apartments integrated into the loft blocks offer the most accessible entry into the Project XIX address.
+          </p>
+          <a class="residence-card-btn" href="mailto:o.olasunkanmi@mixtafrica.com?subject=Project XIX Enquiry">
+            Request details
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          </a>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ INVESTOR SECTION ══════════════════════════════════════════ -->
+<section class="investor-section" id="investment" aria-label="Investment case">
+  <div class="container">
+    <div class="section-header anim-fade">
+      <p class="eyebrow">Investor Narrative</p>
+      <h2>The commercial<br><em>case</em></h2>
+      <p>Polo-led destination estates outperform standard residential on scarcity, rental yield, and brand premium. Project XIX builds each of these levers in.</p>
+    </div>
+
+    <div class="investor-grid anim-fade">
+      <div class="investor-card">
+        <div class="investor-num">01</div>
+        <div class="investor-title">Destination Identity</div>
+        <p class="investor-text">A polo estate is a category of one in West Africa. The FIP-standard field, equestrian compound, and Clubhouse create a singular address that standard residential cannot replicate.</p>
+      </div>
+      <div class="investor-card">
+        <div class="investor-num">02</div>
+        <div class="investor-title">13 Revenue Streams</div>
+        <p class="investor-text">Real estate sales, polo memberships, tournament hosting, Clubhouse hospitality, commercial lets, waterfront premium, events, coaching, advertising, horse industry services, health & wellness, digital, and short-let.</p>
+      </div>
+      <div class="investor-card">
+        <div class="investor-num">03</div>
+        <div class="investor-title">Lakowe Corridor Position</div>
+        <p class="investor-text">Ibeju-Lekki's infrastructure investment — Lekki Free Zone, Dangote Refinery, new road corridors — positions Lakowe as the next premium address tier. Project XIX is placed at that frontier.</p>
+      </div>
+      <div class="investor-card">
+        <div class="investor-num">04</div>
+        <div class="investor-title">Mixed-Use Resilience</div>
+        <p class="investor-text">223 residential units across six typologies, commercial block, and hospitality infrastructure provide multiple absorption channels and reduce single-typology concentration risk.</p>
+      </div>
+      <div class="investor-card">
+        <div class="investor-num">05</div>
+        <div class="investor-title">Mixta Africa Track Record</div>
+        <p class="investor-text">Developer of Lakowe Lakes Golf and Country Estate — an established exit comparable in the same corridor — with multi-phase delivery capability and a DFI-grade development model.</p>
+      </div>
+      <div class="investor-card">
+        <div class="investor-num">06</div>
+        <div class="investor-title">Comparable Premiums</div>
+        <p class="investor-text">Lagos polo corridor estates command 92–213% premium over VI/Lekki comparables. Global benchmarks: Val-de-Vie (South Africa), Al-Habtoor Polo Resort (Dubai), Grand Polo Club — Emaar (Dubai).</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ CTA ════════════════════════════════════════════════════════ -->
+<section class="cta-section" id="contact" aria-label="Contact and enquiry">
+  <div class="cta-inner anim-fade">
+    <p class="eyebrow">Concierge Enquiry</p>
+    <h2>Begin your<br><em>conversation</em></h2>
+    <p>Speak directly with the Mixta Africa project team about reservations, investment structure, or a private site visit.</p>
+    <div class="cta-actions">
+      <a class="btn btn-gold" href="mailto:o.olasunkanmi@mixtafrica.com?subject=Project XIX Enquiry">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+        Email Project Team
+      </a>
+      <button class="btn btn-outline btn-enter-3d">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+        Tour the Estate Virtually
+      </button>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ FOOTER ════════════════════════════════════════════════════ -->
+<footer>
+  <div class="footer-inner">
+    <div class="footer-brand">
+      <strong>Project XIX</strong> · Developed by Mixta Africa · Lakowe, Ibeju-Lekki
+    </div>
+    <div class="footer-legal">
+      Artist impressions. Subject to planning and design development. © 2026 Mixta Africa.
+    </div>
+  </div>
+</footer>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     3D WORLD OVERLAY — Fullscreen virtual estate experience
+     ═══════════════════════════════════════════════════════════════ -->
+<div id="world-overlay" role="dialog" aria-modal="true" aria-label="Virtual estate walkthrough">
+
+  <!-- World top bar -->
+  <div class="world-topbar">
+    <div class="world-brand">
+      <span class="world-brand-mark">XIX</span>
+      <div id="scene-caption" class="world-caption">Project XIX — Virtual Estate</div>
+    </div>
+    <div class="world-controls">
+      <!-- Time of day -->
+      <div class="wx-group" role="group" aria-label="Time of day">
+        <button class="wx-btn wx-time-btn active" data-time="morning"   onclick="applyTimePreset('morning')">&#127749; Morning</button>
+        <button class="wx-btn wx-time-btn"         data-time="afternoon" onclick="applyTimePreset('afternoon')">&#9728; Afternoon</button>
+        <button class="wx-btn wx-time-btn"         data-time="sunset"    onclick="applyTimePreset('sunset')">&#127751; Sunset</button>
+        <button class="wx-btn wx-time-btn"         data-time="night"     onclick="applyTimePreset('night')">&#127769; Night</button>
+      </div>
+      <!-- Weather -->
+      <div class="wx-group" role="group" aria-label="Weather">
+        <button class="wx-btn wx-weather-btn active" data-weather="clear"  onclick="applyWeather('clear')">Clear</button>
+        <button class="wx-btn wx-weather-btn"        data-weather="cloudy" onclick="applyWeather('cloudy')">Cloudy</button>
+        <button class="wx-btn wx-weather-btn"        data-weather="rain"   onclick="applyWeather('rain')">Rain</button>
+      </div>
+      <!-- Aerial -->
+      <button class="world-btn world-btn-aerial" id="btn-aerial" aria-label="Toggle aerial orbit view" onclick="toggleAerial(this)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>
+        Aerial
+      </button>
+      <button class="world-btn world-btn-vr" id="vr-btn" aria-label="Enter VR mode">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 8s3-2 10-2 10 2 10 2v6s-3 2-10 2-10-2-10-2V8z"/><circle cx="8" cy="11" r="2"/><circle cx="16" cy="11" r="2"/></svg>
+        VR
+      </button>
+      <button class="world-btn world-btn-close" id="btn-close-world" aria-label="Return to website">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        Exit
+      </button>
+    </div>
+  </div>
+
+  <!-- Main render area -->
+  <div class="world-body">
+    <canvas id="world-canvas" aria-label="3D estate environment — use WASD to walk, drag to look"></canvas>
+
+    <!-- Crosshair (visible when pointer locked) -->
+    <div class="crosshair" aria-hidden="true"></div>
+
+    <!-- Enter prompt -->
+    <div id="enter-prompt" aria-live="polite">Click to look around · WASD to walk</div>
+
+    <!-- Minimap -->
+    <div id="minimap" aria-label="Estate minimap">
+      <canvas id="minimap-canvas" width="320" height="200" aria-hidden="true"></canvas>
+      <div class="minimap-label">Estate Map</div>
+    </div>
+
+    <!-- Viewpoint strip -->
+    <div id="viewpoint-strip" role="toolbar" aria-label="Named viewpoints"></div>
+
+    <!-- Zone info in world -->
+    <aside id="world-zone-panel" aria-live="polite" aria-label="Zone details">
+      <span class="zone-type">Zone</span>
+      <span class="zone-label" style="font-size:1.3rem;">—</span>
+      <span class="zone-tagline" style="font-size:0.78rem;">—</span>
+      <p class="zone-desc" style="font-size:0.82rem;"></p>
+    </aside>
+
+    <!-- Touch joystick overlay (mobile) -->
+    <div id="joystick-overlay" aria-hidden="true">
+      <div class="joystick-hint">
+        <div class="joystick-dot"></div>
+      </div>
+      <div class="look-hint">Drag right<br>to look</div>
+    </div>
   </div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+<!-- ═══ VILLA INTERIOR OVERLAY ════════════════════════════════ -->
+<div id="villa-overlay" role="dialog" aria-modal="true" aria-label="Villa interior walkthrough">
+
+  <div class="world-topbar">
+    <div class="world-brand">
+      <span class="world-brand-mark">XIX</span>
+      <div id="scene-caption" class="world-caption">3 Bedroom Premium Villa — Interior</div>
+    </div>
+    <div class="world-controls">
+      <button class="world-btn world-btn-close" id="btn-close-villa" aria-label="Return to estate">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        Exit Villa
+      </button>
+    </div>
+  </div>
+
+  <div class="world-body">
+    <canvas id="villa-canvas" aria-label="Villa interior 3D walkthrough"></canvas>
+    <div class="crosshair" aria-hidden="true"></div>
+    <div id="enter-prompt" aria-live="polite">Click to look around · WASD to walk</div>
+
+    <!-- Floor plan side panel -->
+    <aside class="villa-plan-panel" aria-label="Villa floor plans">
+      <div class="villa-plan-header">
+        <span class="eyebrow">3 Bedroom Villa</span>
+        <h3>Floor Plans</h3>
+      </div>
+
+      <div class="villa-plan-tabs">
+        <button class="plan-tab active" data-plan="undercroft">Undercroft</button>
+        <button class="plan-tab" data-plan="ground">Ground</button>
+        <button class="plan-tab" data-plan="first">First</button>
+      </div>
+
+      <!-- Room list by floor -->
+      <div class="plan-rooms" id="plan-undercroft">
+        <div class="plan-room" data-key="undercroft">
+          <span class="room-name">Undercroft Parking</span>
+          <span class="room-area">2.4m clear</span>
+        </div>
+        <div class="plan-room" data-key="approach">
+          <span class="room-name">Street Approach</span>
+          <span class="room-area">Ramp entry</span>
+        </div>
+      </div>
+
+      <div class="plan-rooms hidden" id="plan-ground">
+        <div class="plan-room" data-key="ante_room">
+          <span class="room-name">Ante Room</span>
+          <span class="room-area">12 m²</span>
+        </div>
+        <div class="plan-room" data-key="living">
+          <span class="room-name">Living / Dining</span>
+          <span class="room-area">42 m²</span>
+        </div>
+        <div class="plan-room" data-key="terrace_gf">
+          <span class="room-name">Front Terrace</span>
+          <span class="room-area">Polo view</span>
+        </div>
+        <div class="plan-room" data-key="kitchen">
+          <span class="room-name">Kitchen</span>
+          <span class="room-area">26 m²</span>
+        </div>
+      </div>
+
+      <div class="plan-rooms hidden" id="plan-first">
+        <div class="plan-room" data-key="family_lounge">
+          <span class="room-name">Family Lounge</span>
+          <span class="room-area">23 m²</span>
+        </div>
+        <div class="plan-room" data-key="master">
+          <span class="room-name">Master Bedroom</span>
+          <span class="room-area">27 m²</span>
+        </div>
+        <div class="plan-room" data-key="master_bath">
+          <span class="room-name">Master Bathroom</span>
+          <span class="room-area">7 m²</span>
+        </div>
+        <div class="plan-room" data-key="bedroom2">
+          <span class="room-name">Bedroom 2</span>
+          <span class="room-area">16 m²</span>
+        </div>
+        <div class="plan-room" data-key="bedroom3">
+          <span class="room-name">Bedroom 3</span>
+          <span class="room-area">17 m²</span>
+        </div>
+        <div class="plan-room" data-key="terrace_ff">
+          <span class="room-name">First Floor Terrace</span>
+          <span class="room-area">South-facing</span>
+        </div>
+      </div>
+
+      <div class="villa-level-info">
+        <div class="level-row"><span class="level-label">Level 0</span><span class="level-desc">Garden grade</span></div>
+        <div class="level-row"><span class="level-label">Level 5 / 2100mm</span><span class="level-desc">Undercroft parking</span></div>
+        <div class="level-row"><span class="level-label">Level 2 / 2850mm</span><span class="level-desc">Ground floor living</span></div>
+        <div class="level-row"><span class="level-label">Level 3 / 6150mm</span><span class="level-desc">First floor bedrooms</span></div>
+        <div class="level-row"><span class="level-label">Level 4 / 9450mm</span><span class="level-desc">Roof eave</span></div>
+      </div>
+
+      <a class="villa-enquire-btn" href="mailto:o.olasunkanmi@mixtafrica.com?subject=Project XIX — 3 Bedroom Villa Enquiry">
+        Enquire About This Villa
+      </a>
+    </aside>
+
+    <!-- Villa viewpoint strip -->
+    <div id="villa-vp-strip" role="toolbar" aria-label="Villa viewpoints"></div>
+  </div>
+</div>
+
+<!-- ═══ SCRIPTS ═══════════════════════════════════════════════════ -->
+<script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+    }
+  }
+</script>
+<script type="module" src="js/app.js"></script>
+
+<!-- Pointer lock body class for crosshair -->
 <script>
-// ═══════════════════════════════════════════════════════════════════
-//  PROJECT XIX — CLUBHOUSE VR  (built on clubhouse_vr.html base)
-//  New: realistic procedural palms, weather/time system, PBR mats
-// ═══════════════════════════════════════════════════════════════════
-
-// ── ARCHITECTURAL GRID (1 unit = 1 metre) ──────────────────────────
-// 9 column bays × ~9m = 80m total width
-// Rows A–F: A=rear/north, F=field/south
-const GRID = {
-  X: [-40,-31.4,-22.9,-14.3,-5.7,0,5.7,14.3,22.9,31.4,40],
-  Z: { A:0, B:4, C:11, D:16, E:20, F:28 }
-};
-const FL = {
-  gnd:-3.0, gnd_mid:-1.5, f0:0, f1:4.5, f2:9.0,
-  roof:13.5, roofbox:16.0
-};
-const ROOMS = [
-  {id:'arrival',   label:'Arrival Court',       sub:'Ground · South Entry', pos:[0,FL.f0+1.7,GRID.Z.F+2],   rotY:Math.PI},
-  {id:'lobby',     label:'Reception & Lobby',   sub:'Ground · Central',    pos:[0,FL.f0+1.7,GRID.Z.D+2],   rotY:0},
-  {id:'grandstand',label:'Grandstand',           sub:'Ground · Field',      pos:[0,FL.gnd+1.7,GRID.Z.F+8],  rotY:0},
-  {id:'lounge',    label:'Members Lounge',       sub:'1st Floor · Terrace', pos:[0,FL.f1+1.7,GRID.Z.D+2],   rotY:0},
-  {id:'bar',       label:'Bar & Restaurant',     sub:'1st Floor · Central', pos:[0,FL.f1+1.7,GRID.Z.B+5],   rotY:Math.PI*.15},
-  {id:'suite_w',   label:'VIP Suite — West',     sub:'2nd Floor · West',    pos:[-29,FL.f2+1.7,GRID.Z.C],   rotY:0.3},
-  {id:'suite_e',   label:'VIP Suite — East',     sub:'2nd Floor · East',    pos:[29,FL.f2+1.7,GRID.Z.C],    rotY:Math.PI-0.3},
-  {id:'boardroom', label:'Boardroom',            sub:'2nd Floor · Central', pos:[0,FL.f2+1.7,GRID.Z.C],     rotY:0},
-  {id:'roof',      label:'Roof Overview',        sub:'Roof Level',          pos:[0,FL.roofbox+0.5,GRID.Z.C], rotY:0},
-];
-
-let scene,camera,renderer,clock;
-let moveF=false,moveB=false,moveL=false,moveR=false,sprint=false;
-let pitch=0,yaw=0,locked=false,curRoom=0;
-
-// ── WEATHER / TIME STATE ──────────────────────────────────────────
-let sun,fillLight,hemi,ambientLight;
-let rainParticles=null,rainActive=false;
-let palmLeafMeshes=[];   // for wind animation
-let emissiveLights=[];   // night window glow meshes
-let elapsedTime=0;
-let currentWeather='clear';
-let leafWindOffset=0;
-
-const TIME_PRESETS = {
-  morning:  {skyTop:'#1a3a5c',skyHor:'#e87a30',skyGnd:'#3a6a28',sunCol:0xffa040,sunInt:2.8,sunPos:[80,60,-80],  ambInt:0.4,hemiSky:0xd4e8ff,hemiGnd:0x4a6a30,hemiInt:0.7,fogCol:'#c4a870',fogDens:0.009,expsr:1.1},
-  afternoon:{skyTop:'#1a3a5c',skyHor:'#7ab4d4',skyGnd:'#4a7a38',sunCol:0xffe4a0,sunInt:3.5,sunPos:[60,120,30],  ambInt:0.55,hemiSky:0xd4e8ff,hemiGnd:0x4a6a30,hemiInt:1.0,fogCol:'#9ac5d4',fogDens:0.006,expsr:1.18},
-  sunset:   {skyTop:'#0a1830',skyHor:'#e85020',skyGnd:'#5a3a20',sunCol:0xff6020,sunInt:2.2,sunPos:[-100,30,60], ambInt:0.3,hemiSky:0xff8040,hemiGnd:0x3a2a18,hemiInt:0.6,fogCol:'#e07040',fogDens:0.012,expsr:1.3},
-  night:    {skyTop:'#000810',skyHor:'#050d1a',skyGnd:'#050a08',sunCol:0x6080c0,sunInt:0.2,sunPos:[0,50,-80],   ambInt:0.08,hemiSky:0x102040,hemiGnd:0x050a08,hemiInt:0.15,fogCol:'#050d18',fogDens:0.018,expsr:0.6},
-};
-
-function initScene(){
-  scene=new THREE.Scene();
-  scene.fog=new THREE.FogExp2(0x9ac5d4,0.006);
-  camera=new THREE.PerspectiveCamera(70,innerWidth/innerHeight,0.05,800);
-  teleportTo(0);
-  renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});
-  renderer.setSize(innerWidth,innerHeight);
-  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
-  renderer.shadowMap.enabled=true;
-  renderer.shadowMap.type=THREE.PCFSoftShadowMap;
-  renderer.outputEncoding=THREE.sRGBEncoding;
-  renderer.toneMapping=THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure=1.18;
-  document.getElementById('canvas-container').appendChild(renderer.domElement);
-  clock=new THREE.Clock();
-  buildSky();
-  buildWorld();
-  buildLighting();
-  buildRain();
-  buildUI();
-  setTime('morning');
-  addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
-  addEventListener('keydown',e=>{
-    if(['KeyW','ArrowUp'].includes(e.code))moveF=true;
-    if(['KeyS','ArrowDown'].includes(e.code))moveB=true;
-    if(['KeyA','ArrowLeft'].includes(e.code))moveL=true;
-    if(['KeyD','ArrowRight'].includes(e.code))moveR=true;
-    if(e.code==='ShiftLeft'||e.code==='ShiftRight')sprint=true;
-    if(e.key==='Escape'&&locked)document.exitPointerLock();
-    if(['KeyW','KeyS','KeyA','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();
+  document.addEventListener("pointerlockchange", () => {
+    document.body.classList.toggle("pointer-locked", !!document.pointerLockElement);
   });
-  addEventListener('keyup',e=>{
-    if(['KeyW','ArrowUp'].includes(e.code))moveF=false;
-    if(['KeyS','ArrowDown'].includes(e.code))moveB=false;
-    if(['KeyA','ArrowLeft'].includes(e.code))moveL=false;
-    if(['KeyD','ArrowRight'].includes(e.code))moveR=false;
-    if(e.code==='ShiftLeft'||e.code==='ShiftRight')sprint=false;
-  });
-  addEventListener('pointerlockchange',()=>{locked=document.pointerLockElement===renderer.domElement});
-  renderer.domElement.addEventListener('click',()=>renderer.domElement.requestPointerLock());
-  addEventListener('mousemove',e=>{if(!locked)return;yaw-=e.movementX*.0022;pitch=Math.max(-1.4,Math.min(1.4,pitch-e.movementY*.0022));});
-  animate();
-}
-
-// ─── SKY DOME (procedural gradient, rebuilt on time change) ──────────
-
-let skyMesh;
-function buildSky(){
-  const sg=new THREE.SphereGeometry(500,32,16);
-  const skyC=document.createElement('canvas');skyC.width=4;skyC.height=256;
-  const sx=skyC.getContext('2d');
-  const g=sx.createLinearGradient(0,0,0,256);
-  g.addColorStop(0,'#1a3a5c');g.addColorStop(.55,'#7ab4d4');g.addColorStop(1,'#e0ece8');
-  sx.fillStyle=g;sx.fillRect(0,0,4,256);
-  const st=new THREE.CanvasTexture(skyC);
-  skyMesh=new THREE.Mesh(sg,new THREE.MeshBasicMaterial({map:st,side:THREE.BackSide}));
-  scene.add(skyMesh);
-}
-function updateSkyGradient(top,hor,gnd){
-  const sc=document.createElement('canvas');sc.width=4;sc.height=256;
-  const sx=sc.getContext('2d');
-  const g=sx.createLinearGradient(0,0,0,256);
-  g.addColorStop(0,top);g.addColorStop(.5,hor);g.addColorStop(1,gnd);
-  sx.fillStyle=g;sx.fillRect(0,0,4,256);
-  skyMesh.material.map=new THREE.CanvasTexture(sc);
-  skyMesh.material.needsUpdate=true;
-}
-
-// ─── TIME OF DAY ─────────────────────────────────────────────────
-
-window.setTime=function(name){
-  const p=TIME_PRESETS[name];
-  if(!p)return;
-  document.querySelectorAll('.wx-btn').forEach(b=>{
-    if(['morning','afternoon','sunset','night'].some(t=>b.textContent.toLowerCase().includes(t)))
-      b.classList.toggle('active',b.textContent.toLowerCase().includes(name));
-  });
-  updateSkyGradient(p.skyTop,p.skyHor,p.skyGnd);
-  scene.fog.color.set(p.fogCol);scene.fog.density=p.fogDens;
-  if(sun){sun.color.setHex(p.sunCol);sun.intensity=p.sunInt;sun.position.set(...p.sunPos);}
-  if(fillLight)fillLight.intensity=name==='night'?0:.6;
-  if(hemi){hemi.color.setHex(p.hemiSky);hemi.groundColor.setHex(p.hemiGnd);hemi.intensity=p.hemiInt;}
-  if(ambientLight)ambientLight.intensity=p.ambInt;
-  renderer.toneMappingExposure=p.expsr;
-  // Night: show villa emissive window glow
-  emissiveLights.forEach(m=>m.visible=(name==='night'));
-};
-
-// ─── WEATHER ──────────────────────────────────────────────────────
-
-window.setWeather=function(w){
-  currentWeather=w;
-  document.querySelectorAll('.wx-btn').forEach(b=>{
-    if(['clear','cloudy','rain'].some(t=>b.textContent.toLowerCase().includes(t)))
-      b.classList.toggle('active',b.textContent.toLowerCase().includes(w));
-  });
-  rainActive=(w==='rain');
-  if(rainParticles)rainParticles.visible=rainActive;
-  scene.fog.density = w==='rain' ? 0.025 : (w==='cloudy'?0.012:TIME_PRESETS['afternoon'].fogDens);
-};
-
-function buildRain(){
-  const geo=new THREE.BufferGeometry();
-  const count=6000;
-  const positions=new Float32Array(count*3);
-  const speeds=new Float32Array(count);
-  for(let i=0;i<count;i++){
-    positions[i*3+0]=(Math.random()-.5)*200;
-    positions[i*3+1]=Math.random()*50;
-    positions[i*3+2]=(Math.random()-.5)*200+GRID.Z.F;
-    speeds[i]=1.5+Math.random()*2;
-  }
-  geo.setAttribute('position',new THREE.BufferAttribute(positions,3));
-  const mat=new THREE.PointsMaterial({color:0x88aacc,size:.12,transparent:true,opacity:.55});
-  rainParticles=new THREE.Points(geo,mat);
-  rainParticles.visible=false;
-  scene.add(rainParticles);
-}
-function tickRain(dt){
-  if(!rainActive||!rainParticles)return;
-  const pos=rainParticles.geometry.attributes.position.array;
-  for(let i=0;i<pos.length;i+=3){
-    pos[i+1]-=18*dt;
-    if(pos[i+1]<-2){pos[i+1]=48;pos[i]=(Math.random()-.5)*200;pos[i+2]=(Math.random()-.5)*200+GRID.Z.F;}
-  }
-  rainParticles.geometry.attributes.position.needsUpdate=true;
-}
-
-// ─── MATERIAL FACTORY ────────────────────────────────────────────
-
-function mat(col,rough=.75,metal=0,op=1){
-  return new THREE.MeshStandardMaterial({color:col,roughness:rough,metalness:metal,transparent:op<1,opacity:op});
-}
-function glassMat(col=0x1a2a35,op=.5){
-  return new THREE.MeshStandardMaterial({color:col,roughness:.04,metalness:.3,transparent:true,opacity:op,side:THREE.DoubleSide});
-}
-
-// ─── GEOMETRY HELPERS ────────────────────────────────────────────
-
-function box(w,h,d,m,x=0,y=0,z=0,ry=0){
-  const mesh=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),m);
-  mesh.position.set(x,y+h/2,z);mesh.rotation.y=ry;
-  mesh.castShadow=true;mesh.receiveShadow=true;scene.add(mesh);return mesh;
-}
-function plane(w,d,m,x=0,y=0,z=0){
-  const mesh=new THREE.Mesh(new THREE.PlaneGeometry(w,d),m);
-  mesh.rotation.x=-Math.PI/2;mesh.position.set(x,y,z);
-  mesh.receiveShadow=true;scene.add(mesh);return mesh;
-}
-function cyl(rt,rb,h,seg,m,x=0,y=0,z=0){
-  const mesh=new THREE.Mesh(new THREE.CylinderGeometry(rt,rb,h,seg),m);
-  mesh.position.set(x,y+h/2,z);mesh.castShadow=true;mesh.receiveShadow=true;scene.add(mesh);return mesh;
-}
-
-// ─── WORLD ───────────────────────────────────────────────────────
-
-function buildWorld(){
-  buildTerrain();
-  buildPoloField();
-  buildGrandstand();
-  buildGroundFloor();
-  buildFirstFloor();
-  buildSecondFloor();
-  buildRoof();
-  buildFacadeColumns();
-  buildWindows();
-  buildBalconyRails();
-  buildRoofboxes();
-  buildRealPalms();
-  buildFloweringTrees();
-  buildDistantTreeline();
-  buildInteriorFurnishings();
-  buildWindowEmissives();
-}
-
-// ─── TERRAIN ────────────────────────────────────────────────────
-
-function buildTerrain(){
-  plane(300,120,mat(0x8a8070,.95),0,-.01,GRID.Z.A-50);
-  plane(400,250,mat(0x3a8820,.95),0,-.01,GRID.Z.F+90);
-  // Stone paving around building
-  plane(120,40,mat(0x9a9080,.88),0,-.01,GRID.Z.A-22);
-}
-
-// ─── POLO FIELD MARKINGS ────────────────────────────────────────
-
-function buildPoloField(){
-  const fz=GRID.Z.F+10;
-  for(let i=0;i<16;i++){
-    plane(250,12,i%2===0?mat(0x3a8820,.94):mat(0x2e7018,.96),0,0,fz+i*12);
-  }
-  const wl=mat(0xffffff,.8);
-  [[-52,0,fz+90],[52,0,fz+90]].forEach(([x,y,z])=>plane(.35,180,wl,x,y,z));
-  plane(104,.35,wl,0,0,fz);plane(104,.35,wl,0,0,fz+180);
-  // 30/40/60 yard lines
-  [27.4,36.6,54.9].forEach(d=>{
-    plane(104,.25,mat(0xffffff,.6),0,.01,fz+d);
-    plane(104,.25,mat(0xffffff,.6),0,.01,fz+180-d);
-  });
-  // Goal posts
-  [[0,fz],[0,fz+180]].forEach(([px,pz])=>{
-    [0,-13,13].forEach(ox=>{cyl(.1,.1,5,8,mat(0xfafafa,.5,.3),px+ox,.01,pz);});
-  });
-}
-
-// ─── GRANDSTAND ─────────────────────────────────────────────────
-
-function buildGrandstand(){
-  const gsMat=mat(0xc8bea8,.88);
-  const seatMat=mat(0xb8a880,.9);
-  const stepRise=.55,stepTread=1.1;
-  const gsW=80,gsStartZ=GRID.Z.E+1,gsBase=FL.gnd;
-
-  // 5 tiers
-  for(let s=0;s<5;s++){
-    const y=gsBase+s*stepRise,z=gsStartZ+s*stepTread;
-    box(gsW,stepRise,.2,gsMat,0,y,z);
-    plane(gsW,stepTread,gsMat,0,y+stepRise,z+stepTread/2);
-    // Seat rows
-    for(let x=-36;x<=36;x+=.6){
-      box(.44,.44,.07,seatMat,x,y+stepRise,z+.35);
-      box(.44,.07,.42,seatMat,x,y+stepRise-.15,z+.6);
-    }
-  }
-  box(gsW,3.5,.4,mat(0xe8e0d0,.85),0,gsBase+5*stepRise,gsStartZ-.2);
-  // Hedge trim
-  box(2,1.2,8,mat(0x1e5e18,.95),-41,gsBase+5*stepRise,gsStartZ+2);
-  box(2,1.2,8,mat(0x1e5e18,.95), 41,gsBase+5*stepRise,gsStartZ+2);
-  plane(gsW,6,mat(0xd8cdb8,.45,.05),0,FL.f0,GRID.Z.E-3);
-}
-
-// ─── GROUND FLOOR ───────────────────────────────────────────────
-
-function buildGroundFloor(){
-  const y0=FL.f0,bW=80,bD=16;
-  const wallM=mat(0xe8e0d0,.85);
-  const plasterM=mat(0xece5d5,.82);
-  const stoneM=mat(0xb8a888,.9);
-  const floorM=mat(0xd8cdb8,.45,.05);
-
-  plane(bW,bD,floorM,0,y0,(GRID.Z.B+GRID.Z.D)/2);
-  // Perimeter walls
-  box(bW,4.3,.35,wallM,0,y0,GRID.Z.B-.17);
-  box(bW,4.3,.35,wallM,0,y0,GRID.Z.D+.17);
-  box(.35,4.3,bD,wallM,-bW/2+.17,y0,(GRID.Z.B+GRID.Z.D)/2);
-  box(.35,4.3,bD,wallM, bW/2-.17,y0,(GRID.Z.B+GRID.Z.D)/2);
-
-  // Wood-slat ceiling (as in render — warm linear battens)
-  const slatM=mat(0x6a4a28,.8,.05);
-  for(let sl=0;sl<38;sl++) box(bW,.06,.1,slatM,0,y0+4.22,(GRID.Z.B+GRID.Z.D)/2-9+sl*.48);
-
-  // Stone reception back wall
-  box(14,2.8,.15,stoneM,0,y0,GRID.Z.E-.1);
-  // Reception desk
-  box(8,1.1,1.2,mat(0x5a3c1c,.75,.05),0,y0,GRID.Z.E+1.5);
-  box(8,.06,1.3,mat(0xd8cdb8,.2,.1),0,y0+1.1,GRID.Z.E+1.5);
-
-  // Green ceramic vases
-  addVase(-3,y0,GRID.Z.E-1); addVase(3,y0,GRID.Z.E-1);
-
-  // Stair cores
-  buildStaircore(-18,y0,GRID.Z.E+4);
-  buildStaircore( 18,y0,GRID.Z.E+4);
-
-  // Ceiling
-  plane(bW,bD,mat(0xede8dd,.6),0,y0+4.3,(GRID.Z.B+GRID.Z.D)/2,Math.PI/2);
-}
-
-function buildStaircore(x,y,z){
-  box(5,9.5,5,mat(0xe8e0d0,.85),x,y,z);
-  for(let s=0;s<14;s++) box(4.5,.18,.28,mat(0xc8bea8,.88),x,y+s*.32,z-1.8+s*.18);
-}
-
-function addVase(x,y,z){
-  cyl(.22,.16,.7,12,mat(0x2e6030,.7,.2),x,y,z);
-  const p=new THREE.Mesh(new THREE.SphereGeometry(.4,8,6),mat(0x2a6a1a,.9));
-  p.position.set(x,y+.9,z);p.castShadow=true;scene.add(p);
-}
-
-// ─── FIRST FLOOR ────────────────────────────────────────────────
-
-function buildFirstFloor(){
-  const y1=FL.f1,bW=80,winW=21,winD=13;
-  const fM=mat(0xd8cdb8,.45,.05);
-  const wM=mat(0xe8e0d0,.85);
-  const pM=mat(0xece5d5,.82);
-
-  // Central core slab
-  plane(bW,winD,fM,0,y1,(GRID.Z.B+GRID.Z.D)/2);
-  // Terrace slab (overhanging south)
-  plane(bW,7,mat(0xd0c8b8,.5,.05),0,y1,GRID.Z.D+3.5);
-  // Wing slabs
-  plane(winW,winD,fM,-29.5,y1,(GRID.Z.B+GRID.Z.D)/2);
-  plane(winW,winD,fM, 29.5,y1,(GRID.Z.B+GRID.Z.D)/2);
-
-  // Wing walls
-  box(.35,4.3,winD,wM,-40+.17,y1,(GRID.Z.B+GRID.Z.D)/2);
-  box(winW,4.3,.35,wM,-29.5,y1,GRID.Z.B-.17);
-  box(winW,4.3,.35,wM,-29.5,y1,GRID.Z.D+.17);
-  box(.35,4.3,winD,wM, 40-.17,y1,(GRID.Z.B+GRID.Z.D)/2);
-  box(winW,4.3,.35,wM, 29.5,y1,GRID.Z.B-.17);
-  box(winW,4.3,.35,wM, 29.5,y1,GRID.Z.D+.17);
-
-  // Wing partitions — 3 rooms per wing
-  for(let r=-2;r<=0;r++){
-    box(.18,4.0,winD,pM,-40+(r+3)*7,y1,(GRID.Z.B+GRID.Z.D)/2);
-    box(.18,4.0,winD,pM, 40-(r+3)*7,y1,(GRID.Z.B+GRID.Z.D)/2);
-  }
-
-  // Wood ceiling slats on terrace
-  const slatM=mat(0x6a4a28,.8,.05);
-  for(let sl=0;sl<32;sl++) box(bW,.06,.1,slatM,0,y1+4.22,GRID.Z.D+3.5-sl*.24+3.8);
-
-  // Bar counter
-  const twM=mat(0x5a3c1c,.75,.05);
-  box(14,1.15,.9,twM,0,y1,GRID.Z.B+4);
-  box(14,.06,.95,mat(0xddd0b8,.2,.1),0,y1+1.15,GRID.Z.B+4);
-  box(14,2.2,.3,mat(0x4a3018,.7),0,y1,GRID.Z.B+.5);
-
-  // Pendant lights over bar
-  for(let i=-3;i<=3;i++){
-    box(.04,.8,.04,mat(0x1a1a1a,.5,.9),i*4,y1+3.5,GRID.Z.B+5);
-    const g=new THREE.Mesh(new THREE.SphereGeometry(.22,8,6),mat(0xffeebb,.3,.3));
-    g.position.set(i*4,y1+3.5-.4-0.22,GRID.Z.B+5);scene.add(g);
-  }
-
-  // Dining tables
-  for(let i=-2;i<=2;i++){
-    box(2.4,.78,1.2,twM,i*5,y1,GRID.Z.B+9);
-    box(2.4,.06,1.25,mat(0xebe4d0,.2,.08),i*5,y1+.78,GRID.Z.B+9);
-  }
-
-  // Terrace lounge furniture
-  addSofaGroup(-10,y1,GRID.Z.D+2,0);
-  addSofaGroup(0, y1,GRID.Z.D+2,0);
-  addSofaGroup(10,y1,GRID.Z.D+2,0);
-  addUmbrellaObj(-15,y1,GRID.Z.D+4);
-  addUmbrellaObj(0,  y1,GRID.Z.D+4);
-  addUmbrellaObj(15, y1,GRID.Z.D+4);
-
-  // Wing suite sofas
-  addSofaGroup(-30,y1,GRID.Z.C+1,-Math.PI/2);
-  addSofaGroup( 30,y1,GRID.Z.C+1, Math.PI/2);
-
-  // Central core north wall
-  box(38,4.3,.35,wM,0,y1,GRID.Z.B-.17);
-  plane(bW,winD,mat(0xf0ebe0,.5),0,y1+4.3,(GRID.Z.B+GRID.Z.D)/2,Math.PI/2);
-}
-
-function addSofaGroup(x,y,z,rotY){
-  const g=new THREE.Group();
-  const sM=mat(0xd0c4a8,.88);
-  const tM=mat(0x5a3c1c,.75,.05);
-  const s=new THREE.Mesh(new THREE.BoxGeometry(2.2,.45,.9),sM);s.position.set(0,y+.42,0);g.add(s);
-  const bk=new THREE.Mesh(new THREE.BoxGeometry(2.2,.5,.12),sM);bk.position.set(0,y+.75,-.4);g.add(bk);
-  [-1.05,1.05].forEach(ax=>{const a=new THREE.Mesh(new THREE.BoxGeometry(.12,.55,.9),sM);a.position.set(ax,y+.5,0);g.add(a);});
-  const tbl=new THREE.Mesh(new THREE.BoxGeometry(.9,.04,.9),tM);tbl.position.set(0,y+.4,.9);g.add(tbl);
-  g.position.set(x,0,z);g.rotation.y=rotY;
-  g.traverse(c=>{if(c.isMesh){c.castShadow=true;c.receiveShadow=true;}});
-  scene.add(g);
-}
-
-function addUmbrellaObj(x,y,z){
-  cyl(.05,.05,2.8,6,mat(0x4a3820,.7,.2),x,y,z);
-  const c=new THREE.Mesh(new THREE.ConeGeometry(2.2,.55,12),mat(0xe8e0cc,.9));
-  c.position.set(x,y+2.8,z);c.castShadow=true;scene.add(c);
-}
-
-// ─── SECOND FLOOR ───────────────────────────────────────────────
-
-function buildSecondFloor(){
-  const F2Y=FL.f2,bW=80,winW=21,winD=13;
-  const fM=mat(0xd8cdb8,.45,.05);
-  const wM=mat(0xe8e0d0,.85);
-  const pM=mat(0xece5d5,.82);
-  const tM=mat(0x5a3c1c,.75,.05);
-  const bedM=mat(0xf0ebe0,.85);
-
-  plane(winW,winD,fM,-29.5,F2Y,(GRID.Z.B+GRID.Z.D)/2);
-  plane(winW,winD,fM, 29.5,F2Y,(GRID.Z.B+GRID.Z.D)/2);
-  plane(36,winD,fM,0,F2Y,(GRID.Z.B+GRID.Z.D)/2);
-
-  // Wing walls F2
-  box(.35,4.3,winD,wM,-40+.17,F2Y,(GRID.Z.B+GRID.Z.D)/2);
-  box(winW,4.3,.35,wM,-29.5,F2Y,GRID.Z.B-.17);
-  box(winW,4.3,.35,wM,-29.5,F2Y,GRID.Z.D+.17);
-  box(.35,4.3,winD,wM, 40-.17,F2Y,(GRID.Z.B+GRID.Z.D)/2);
-  box(winW,4.3,.35,wM, 29.5,F2Y,GRID.Z.B-.17);
-  box(winW,4.3,.35,wM, 29.5,F2Y,GRID.Z.D+.17);
-  box(36,4.3,.35,wM,0,F2Y,GRID.Z.B-.17);
-  box(36,4.3,.35,wM,0,F2Y,GRID.Z.D+.17);
-
-  // Partitions
-  for(let r=-2;r<=0;r++){
-    box(.18,4.0,winD,pM,-40+(r+3)*7,F2Y,(GRID.Z.B+GRID.Z.D)/2);
-    box(.18,4.0,winD,pM, 40-(r+3)*7,F2Y,(GRID.Z.B+GRID.Z.D)/2);
-  }
-
-  // Suite beds
-  for(let r=0;r<3;r++){
-    const bxW=-40+3.5+r*7, bxE=40-3.5-r*7;
-    box(1.8,.55,2.2,bedM,bxW,F2Y,GRID.Z.C);
-    box(1.85,.08,2.3,mat(0xfaf5ee,.4),bxW,F2Y+.55,GRID.Z.C);
-    box(1.8,.55,2.2,bedM,bxE,F2Y,GRID.Z.C);
-    box(1.85,.08,2.3,mat(0xfaf5ee,.4),bxE,F2Y+.55,GRID.Z.C);
-    // Suite bathrooms (marble plinth)
-    box(1.8,.06,1.8,mat(0xddd5c8,.35,.05),bxW,F2Y+.85,GRID.Z.B+2.5);
-    box(1.8,.06,1.8,mat(0xddd5c8,.35,.05),bxE,F2Y+.85,GRID.Z.B+2.5);
-  }
-
-  // Boardroom
-  box(8,.06,3.0,tM,0,F2Y+.78,(GRID.Z.B+GRID.Z.D)/2);
-  for(let i=-3;i<=3;i++){
-    box(.55,.85,.55,mat(0x1a1208,.7),i*1.25,F2Y,GRID.Z.C-1.8);
-    box(.55,.85,.55,mat(0x1a1208,.7),i*1.25,F2Y,GRID.Z.C+1.8);
-  }
-  // Rugs
-  plane(3.5,2.5,mat(0xb09060,.95),-30,F2Y+.01,GRID.Z.C);
-  plane(3.5,2.5,mat(0xb09060,.95), 30,F2Y+.01,GRID.Z.C);
-  plane(bW,winD,mat(0xf0ebe0,.5),0,F2Y+4.3,(GRID.Z.B+GRID.Z.D)/2,Math.PI/2);
-}
-
-// ─── ROOF ────────────────────────────────────────────────────────
-
-function buildRoof(){
-  const roofY=FL.roof,slabY=13.4,bW=82;
-  box(bW,.4,22,mat(0xd5ccba,.9),0,slabY,(GRID.Z.A+GRID.Z.D)/2);
-  // Parapets
-  box(bW,.8,.3,mat(0xe8e0d0,.85),0,roofY,GRID.Z.A-.5);
-  box(bW,.8,.3,mat(0xe8e0d0,.85),0,roofY,GRID.Z.D+.5);
-  box(.3,.8,22,mat(0xe8e0d0,.85),-bW/2,roofY,(GRID.Z.A+GRID.Z.D)/2);
-  box(.3,.8,22,mat(0xe8e0d0,.85), bW/2,roofY,(GRID.Z.A+GRID.Z.D)/2);
-  // Central canopy (cols 3-7, C-E zone)
-  box(38,.35,10,mat(0xd5ccba,.9),0,9.0,(GRID.Z.C+GRID.Z.E)/2);
-  // Eave slab
-  box(82,.22,1.2,mat(0xe8e0d0,.85),0,FL.f1+4.2,GRID.Z.D+.6);
-  // Service block roof
-  box(30,.3,GRID.Z.B-GRID.Z.A,mat(0xd5ccba,.9),0,FL.f2*2,(GRID.Z.A+GRID.Z.B)/2);
-}
-
-// ─── FACADE COLUMNS ─────────────────────────────────────────────
-
-function buildFacadeColumns(){
-  const cM=mat(0xddd6c6,.8),csM=mat(0x1a1a1a,.5,.8);
-  for(let i=1;i<=9;i++){
-    const x=GRID.X[i];
-    box(.7,FL.f1+.1,.7,cM,x,FL.gnd,GRID.Z.D);
-    box(.7,FL.f1+.2,.7,cM,x,FL.f1,GRID.Z.D);
-    box(.7,4.5,.7,cM,x,FL.f2,GRID.Z.D);
-    box(.7,FL.f1+.1,.7,cM,x,FL.f0,GRID.Z.B);
-    box(.7,FL.f1+.1,.7,cM,x,FL.f1,GRID.Z.B);
-  }
-  // Thin black steel columns (interior terrace)
-  for(let x=-30;x<=30;x+=7) cyl(.08,.08,4.2,8,csM,x,FL.f1,GRID.Z.D-.5);
-}
-
-// ─── WINDOWS ─────────────────────────────────────────────────────
-
-function buildWindows(){
-  const gM=glassMat(0x1a2a35,.5);
-  const gT=glassMat(0x4a7a80,.35);
-  for(let i=1;i<=8;i++){
-    const x=(GRID.X[i]+GRID.X[i+1])/2;
-    box(5.8,3.2,.06,gM,x,FL.f0+.55,GRID.Z.D);
-    box(5.8,3.0,.06,gM,x,FL.f1+.55,GRID.Z.D);
-    if(i<=2||i>=7) box(5.8,3.0,.06,gM,x,FL.f2+.55,GRID.Z.D);
-    box(5.5,3.0,.06,gM,x,FL.f0+.5,GRID.Z.B);
-    box(5.5,3.0,.06,gM,x,FL.f1+.5,GRID.Z.B);
-  }
-  box(34,3.2,.06,gM,0,FL.f2+.5,GRID.Z.D);
-  box(34,3.2,.06,gM,0,FL.f2+.5,GRID.Z.B);
-  box(70,1.8,.06,gT,0,FL.f1,GRID.Z.E);
-}
-
-// ─── BALCONY RAILS ──────────────────────────────────────────────
-
-function buildBalconyRails(){
-  const rM=mat(0x4a3820,.7,.2),rmM=mat(0x808080,.4,.8);
-  box(78,.1,.08,rM,0,FL.f1+1.1,GRID.Z.D+.8);
-  box(78,.08,.08,rM,0,FL.f1+.12,GRID.Z.D+.8);
-  for(let x=-38;x<=38;x+=.22) box(.05,.92,.05,rmM,x,FL.f1+.15,GRID.Z.D+.8);
-  box(78,1.0,.08,rM,0,FL.f0,GRID.Z.E+.3);
-}
-
-// ─── ROOFBOXES ──────────────────────────────────────────────────
-
-function buildRoofboxes(){
-  const boxY=FL.roof,bH=2.5;
-  const wM=mat(0xe8e0d0,.85),gM=glassMat(0x1a2a35,.5);
-  [[-19,GRID.Z.C],[19,GRID.Z.C]].forEach(([x,z])=>{
-    box(6,bH,5,wM,x,boxY,z);
-    box(2.5,1.2,.06,gM,x,boxY+bH/2,z-2.5);
-    box(6.4,.2,5.4,mat(0xd5ccba,.9),x,boxY+bH,z);
-  });
-  [[-18,GRID.Z.E+4],[18,GRID.Z.E+4]].forEach(([x,z])=>box(4,4.5,4,wM,x,FL.f1,z));
-}
-
-// ─── WINDOW EMISSIVES (night glow) ──────────────────────────────
-
-function buildWindowEmissives(){
-  const warmGlow=new THREE.MeshStandardMaterial({
-    color:0xffe8a0,emissive:new THREE.Color(0xffa030),
-    emissiveIntensity:.6,roughness:.3,transparent:true,opacity:.55,
-    side:THREE.DoubleSide
-  });
-  for(let i=1;i<=8;i++){
-    const x=(GRID.X[i]+GRID.X[i+1])/2;
-    [FL.f0+.55,FL.f1+.55].forEach(y=>{
-      const m=new THREE.Mesh(new THREE.PlaneGeometry(5.6,3.0),warmGlow);
-      m.position.set(x,y+1.5,GRID.Z.D+.1);m.visible=false;
-      scene.add(m);emissiveLights.push(m);
-    });
-  }
-}
-
-// ─── REALISTIC PALM TREES ───────────────────────────────────────
-// Fully procedural: trunk rings, bark geometry, animated fronds
-
-function buildRealPalms(){
-  const positions=[
-    [-45,0,GRID.Z.C],[-45,0,GRID.Z.D],
-    [ 45,0,GRID.Z.C],[ 45,0,GRID.Z.D],
-    [-48,0,GRID.Z.E],[ 48,0,GRID.Z.E],
-    [-15,0,GRID.Z.F+6],[15,0,GRID.Z.F+6],
-    [-30,0,GRID.Z.F+6],[30,0,GRID.Z.F+6],
-    [-8, 0,GRID.Z.F+14],[8,0,GRID.Z.F+14],
-  ];
-  positions.forEach(([x,y,z])=>addRealisticPalm(x,y,z,1.0+Math.random()*.4));
-}
-
-function addRealisticPalm(x,y,z,scale=1){
-  const g=new THREE.Group();
-  const trunkH=(9+Math.random()*4)*scale;
-  const lean=(Math.random()-.5)*.08;
-  const leanDir=Math.random()*Math.PI*2;
-
-  // ── TRUNK: stacked tapered segments with ring texture ──────────
-  const trunkSegs=12;
-  const segH=trunkH/trunkSegs;
-  for(let i=0;i<trunkSegs;i++){
-    const t=i/trunkSegs;
-    const r=(.22-.1*t)*scale; // tapers from .22 to .12
-    // Slight ring bulge alternating
-    const bumpR=r*(1+.05*Math.sin(i*3.14));
-    const segGeo=new THREE.CylinderGeometry(bumpR*.9,bumpR,segH,10,1);
-    // Random ring color variation
-    const c=0x7a5c30+Math.floor(Math.random()*0x101010);
-    const m=new THREE.MeshStandardMaterial({color:c,roughness:.9,metalness:0});
-    const seg=new THREE.Mesh(segGeo,m);
-    const ly=y+segH/2+i*segH;
-    const lx=Math.cos(leanDir)*lean*i*segH*.3;
-    const lz=Math.sin(leanDir)*lean*i*segH*.3;
-    seg.position.set(lx,ly,lz);
-    seg.castShadow=true;seg.receiveShadow=true;
-    g.add(seg);
-  }
-
-  // Coconut cluster at crown
-  const crownX=Math.cos(leanDir)*lean*trunkH*.3;
-  const crownY=y+trunkH;
-  const crownZ=Math.sin(leanDir)*lean*trunkH*.3;
-  const cnutM=new THREE.MeshStandardMaterial({color:0x8c7a30,roughness:.7});
-  for(let ci=0;ci<4;ci++){
-    const ca=(ci/4)*Math.PI*2+.3;
-    const cn=new THREE.Mesh(new THREE.SphereGeometry(.2*scale,8,6),cnutM);
-    cn.position.set(crownX+Math.cos(ca)*.35*scale,crownY-.15,crownZ+Math.sin(ca)*.35*scale);
-    cn.castShadow=true;g.add(cn);
-  }
-
-  // ── FRONDS: curved PlaneGeometry with vertex displacement ──────
-  const frondCount=10+Math.floor(Math.random()*3);
-  const frondMat=new THREE.MeshStandardMaterial({
-    color:0x2a7228,roughness:.85,metalness:0,
-    side:THREE.DoubleSide,
-    // Vertex normal map for leaf texture feel
-  });
-
-  for(let fi=0;fi<frondCount;fi++){
-    const angle=(fi/frondCount)*Math.PI*2+Math.random()*.15;
-    const frondLen=(6+Math.random()*2)*scale;
-    const droop=.5+Math.random()*.3;
-    const frondW=.7*scale;
-
-    // Build frond as PlaneGeometry with curved vertices
-    const segs=8;
-    const fGeo=new THREE.PlaneGeometry(frondW,frondLen,1,segs);
-    const pos=fGeo.attributes.position;
-    for(let vi=0;vi<pos.count;vi++){
-      const t=(.5+pos.getY(vi)/frondLen);  // 0=tip,1=base
-      // Apply droop curve along frond length
-      const droopY=-droop*t*t*frondLen*.6;
-      const droopZ= droop*t*t*frondLen*.3;
-      pos.setY(vi,pos.getY(vi)+droopY);
-      pos.setZ(vi,droopZ);
-    }
-    pos.needsUpdate=true;fGeo.computeVertexNormals();
-
-    // Alternate colour slightly for leaflet variety
-    const leafCol=new THREE.MeshStandardMaterial({
-      color:fi%2===0?0x2a7228:0x336630,roughness:.88,side:THREE.DoubleSide
-    });
-    const frond=new THREE.Mesh(fGeo,leafCol);
-    // Position at crown
-    frond.position.set(crownX,crownY+.2,crownZ);
-    // Rotate to spread radially and droop outward
-    frond.rotation.order='YXZ';
-    frond.rotation.y=angle;
-    frond.rotation.x=-Math.PI/2+.3; // tilt downward from vertical
-    frond.castShadow=false;
-
-    g.add(frond);
-    palmLeafMeshes.push({mesh:frond,baseAngleX:frond.rotation.x,phase:fi*.7+Math.random()*6.28,speed:.8+Math.random()*.4});
-  }
-
-  g.position.set(x,0,z);
-  scene.add(g);
-}
-
-// ─── FLOWERING TREES ────────────────────────────────────────────
-
-function buildFloweringTrees(){
-  [-38,-20,20,38].forEach(x=>{
-    cyl(.25,.35,4,8,mat(0x5a4020,.9),x,FL.f0,GRID.Z.E+1);
-    const c=new THREE.Mesh(new THREE.SphereGeometry(2.5,10,8),mat(0xd4906a,.9));
-    c.position.set(x,FL.f0+5.5,GRID.Z.E+1);c.castShadow=true;scene.add(c);
-  });
-}
-
-// ─── DISTANT TREE LINE ──────────────────────────────────────────
-
-function buildDistantTreeline(){
-  for(let x=-150;x<=150;x+=5.5){
-    const h=7+Math.random()*5;
-    const dark=Math.random()>.5;
-    cyl(.18,.22,h,6,mat(dark?0x3a2810:0x5a4020,.9),x,-.01,GRID.Z.F+185);
-    const leafM=mat(dark?0x1a4808:0x2a6018,.9);
-    const cr=new THREE.Mesh(new THREE.SphereGeometry(2+Math.random()*.8,8,6),leafM);
-    cr.position.set(x,h+1.5,GRID.Z.F+185);cr.castShadow=true;scene.add(cr);
-  }
-}
-
-// ─── INTERIOR FURNISHINGS ────────────────────────────────────────
-
-function buildInteriorFurnishings(){
-  box(5,2.0,.3,mat(0x8a7a60,.8),-5,FL.f0,GRID.Z.F-2);
-  box(3,.8,1.5,mat(0x5a3c1c,.75,.05),7,FL.f0,GRID.Z.F-2);
-}
-
-// ─── LIGHTING ────────────────────────────────────────────────────
-
-function buildLighting(){
-  ambientLight=new THREE.AmbientLight(0xfff8e8,.45);scene.add(ambientLight);
-  sun=new THREE.DirectionalLight(0xffe8c8,2.5);
-  sun.castShadow=true;
-  sun.shadow.mapSize.width=sun.shadow.mapSize.height=4096;
-  sun.shadow.camera.near=.5;sun.shadow.camera.far=600;
-  sun.shadow.camera.left=-130;sun.shadow.camera.right=130;
-  sun.shadow.camera.top=100;sun.shadow.camera.bottom=-100;
-  sun.shadow.bias=-.001;
-  scene.add(sun);
-  fillLight=new THREE.DirectionalLight(0xc8dff8,.6);fillLight.position.set(-40,30,-50);scene.add(fillLight);
-  hemi=new THREE.HemisphereLight(0x87ceeb,0x3a7a28,.5);scene.add(hemi);
-
-  // Interior lights
-  const interior=[
-    [0,FL.f1+3.5,GRID.Z.B+5,0xffe8b0,1.5,25],
-    [0,FL.f1+3.2,GRID.Z.D+1,0xffd090,1.2,30],
-    [0,FL.f2+3.5,(GRID.Z.B+GRID.Z.D)/2,0xfff8f0,1.0,25],
-    [-29,FL.f2+3.0,GRID.Z.C,0xffe8b8,.9,20],
-    [ 29,FL.f2+3.0,GRID.Z.C,0xffe8b8,.9,20],
-  ];
-  interior.forEach(([x,y,z,col,int,dist])=>{
-    const pt=new THREE.PointLight(col,int,dist);pt.position.set(x,y,z);scene.add(pt);
-  });
-}
-
-// ─── UI ──────────────────────────────────────────────────────────
-
-function buildUI(){
-  const cont=document.getElementById('room-buttons');
-  ROOMS.forEach((r,i)=>{
-    const btn=document.createElement('button');
-    btn.className='room-btn'+(i===0?' active':'');
-    btn.id='btn-'+r.id;
-    const fl=r.sub.split('·')[0].trim();
-    btn.innerHTML=r.label+'<span class="floor-tag">'+fl+'</span>';
-    btn.onclick=()=>teleportTo(i);
-    cont.appendChild(btn);
-  });
-}
-function teleportTo(idx){
-  curRoom=idx;const r=ROOMS[idx];
-  camera.position.set(r.pos[0],r.pos[1],r.pos[2]);
-  yaw=r.rotY;pitch=0;
-  camera.rotation.order='YXZ';camera.rotation.y=yaw;camera.rotation.x=0;
-  document.getElementById('room-label').textContent=r.label;
-  document.getElementById('room-sub').textContent=r.sub+' · Project XIX Clubhouse';
-  document.querySelectorAll('.room-btn').forEach((b,i)=>b.classList.toggle('active',i===idx));
-}
-
-// ─── ANIMATION ──────────────────────────────────────────────────
-
-function animate(){
-  requestAnimationFrame(animate);
-  const dt=Math.min(clock.getDelta(),.05);
-  elapsedTime+=dt;
-
-  // Movement
-  if(moveF||moveB||moveL||moveR){
-    const spd=sprint?14:5;
-    const dir=new THREE.Vector3();
-    if(moveF)dir.z-=1;if(moveB)dir.z+=1;
-    if(moveL)dir.x-=1;if(moveR)dir.x+=1;
-    dir.normalize().applyQuaternion(camera.quaternion);dir.y=0;
-    camera.position.addScaledVector(dir,spd*dt);
-  }
-  // Mouse look
-  camera.rotation.order='YXZ';camera.rotation.y=yaw;camera.rotation.x=pitch;
-
-  // Animated palm fronds (wind)
-  palmLeafMeshes.forEach(({mesh,baseAngleX,phase,speed})=>{
-    mesh.rotation.x=baseAngleX+Math.sin(elapsedTime*speed+phase)*.04;
-    mesh.rotation.z=Math.sin(elapsedTime*speed*.7+phase)*.025;
-  });
-
-  tickRain(dt);
-  renderer.render(scene,camera);
-}
-
-// ─── LOADING ─────────────────────────────────────────────────────
-
-function fakeLoad(){
-  const bar=document.getElementById('loading-bar');
-  let p=0;
-  const iv=setInterval(()=>{
-    p+=Math.random()*14;
-    if(p>=100){p=100;clearInterval(iv);document.getElementById('start-btn').style.display='block';}
-    bar.style.width=p+'%';
-  },100);
-}
-function startExperience(){
-  document.getElementById('loading').style.display='none';
-  initScene();
-}
-fakeLoad();
 </script>
 </body>
 </html>
