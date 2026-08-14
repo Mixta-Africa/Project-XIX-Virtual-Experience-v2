@@ -1100,3 +1100,188 @@ body.pointer-locked #enter-prompt { opacity: 0; }
 .muted { color: var(--text-muted); }
 .italic { font-style: italic; }
 .serif { font-family: "Cormorant Garamond", serif; }
+
+/* ─── VILLA INTERIOR OVERLAY ─────────────────────────────────── */
+
+#villa-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: none;
+  flex-direction: column;
+  background: #050c07;
+}
+#villa-overlay.open { display: flex; }
+
+/* Reuse world-topbar, world-body, world-btn styles */
+
+/* ─── VILLA FLOOR PLAN PANEL ─────────────────────────────────── */
+
+.villa-plan-panel {
+  position: absolute;
+  top: calc(var(--nav-h) + 1rem);
+  right: 1.4rem;
+  width: 260px;
+  background: rgba(13, 32, 22, 0.94);
+  border: 1px solid rgba(201,168,76,0.22);
+  border-radius: 3px;
+  backdrop-filter: blur(12px);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow: hidden;
+  max-height: calc(100vh - var(--nav-h) - 100px);
+  overflow-y: auto;
+}
+
+.villa-plan-header {
+  padding: 1.2rem 1.4rem 0.8rem;
+  border-bottom: 1px solid rgba(201,168,76,0.12);
+}
+
+.villa-plan-header .eyebrow {
+  display: block;
+  margin-bottom: 0.3rem;
+}
+
+.villa-plan-header h3 {
+  font-size: 1.1rem;
+  font-weight: 300;
+  color: var(--cream-100);
+}
+
+.villa-plan-tabs {
+  display: flex;
+  border-bottom: 1px solid rgba(201,168,76,0.12);
+}
+
+.plan-tab {
+  flex: 1;
+  padding: 0.6rem 0;
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: rgba(240,236,224,0.5);
+  transition: all 0.2s;
+  border-bottom: 2px solid transparent;
+}
+
+.plan-tab.active,
+.plan-tab:hover {
+  color: var(--gold-300);
+  border-bottom-color: var(--gold-500);
+}
+
+.plan-rooms {
+  display: flex;
+  flex-direction: column;
+}
+
+.plan-rooms.hidden { display: none; }
+
+.plan-room {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.65rem 1.4rem;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(201,168,76,0.06);
+  transition: background 0.18s;
+}
+
+.plan-room:hover {
+  background: rgba(201,168,76,0.07);
+}
+
+.plan-room.active {
+  background: rgba(201,168,76,0.12);
+  border-left: 2px solid var(--gold-500);
+}
+
+.room-name {
+  font-size: 0.82rem;
+  color: rgba(240,236,224,0.85);
+}
+
+.room-area {
+  font-size: 0.7rem;
+  color: var(--gold-300);
+  font-style: italic;
+}
+
+.villa-level-info {
+  padding: 0.8rem 1.4rem;
+  border-top: 1px solid rgba(201,168,76,0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.level-row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+}
+
+.level-label {
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--gold-500);
+  white-space: nowrap;
+  min-width: 90px;
+}
+
+.level-desc {
+  font-size: 0.72rem;
+  color: rgba(240,236,224,0.5);
+}
+
+.villa-enquire-btn {
+  display: block;
+  text-align: center;
+  padding: 0.85rem;
+  background: var(--gold-500);
+  color: var(--green-900);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  transition: background 0.2s;
+  margin: 0.8rem 1.4rem 1.4rem;
+  border-radius: 2px;
+}
+.villa-enquire-btn:hover { background: var(--gold-300); }
+
+/* ─── VILLA VIEWPOINT STRIP ─────────────────────────────────── */
+
+#villa-vp-strip {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 280px;
+  height: 80px;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 1.2rem;
+  background: linear-gradient(to top, rgba(6,18,8,0.95), transparent);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+#villa-vp-strip::-webkit-scrollbar { display: none; }
+
+/* ─── RESIDENCE CARD WALK BUTTON ─────────────────────────────── */
+
+.residence-card-btn[data-villa-enter],
+button.residence-card-btn {
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+}
+
+/* ─── PLAN ROOM CLICK JS BINDING ─────────────────────────────── */
+/* Handled in app.js via data-key delegation */
