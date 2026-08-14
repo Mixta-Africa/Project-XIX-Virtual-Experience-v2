@@ -510,31 +510,106 @@ function addLoftTerraces() {
   for (let z = -118; z <= -82; z += 22) s(createLoftUnit(165, z, -Math.PI/2));
 }
 
+// 2-BEDROOM LOFT TERRACE (from architectural drawings)
+// 4 units per block, each 6m wide x 19.5m deep (14m living + 5.5m garage)
+// Ground: living/dining/kitchen + garage. First floor: 2 beds + void above living.
 function createLoftUnit(x, z, ry) {
   const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = ry;
-  const sm=MAT_STONE(), cm=MAT_CONCRETE(), tm=MAT_TIMBER();
-  const gw=MAT_GLASS_WARM(.62), wm=MAT_WHITE_TRIM(), dm=MAT_DARK_METAL();
-  const tileM = MAT_TILE_ROOF();
 
-  // Ground floor - gabion stone
-  g.add(box(20, 3.4, 10, sm, [0,1.7,0]));
-  for (let i = 0; i < 2; i++) {
-    const wx = -5 + i*10;
-    g.add(box(8.5, 2.7, .4, gw, [wx, 1.7, -5.2]));
-  }
-  // Upper floor - concrete render + louvres
-  g.add(box(20, 3.5, 10.5, cm, [0,5.25,0]));
-  for (let i = 0; i < 2; i++) {
-    const wx = -5 + i*10;
-    g.add(box(1.3, 3.3, .6, tm, [wx-3.5, 5.25, -5.6]));
-    g.add(box(7.0, 2.9, .4, gw, [wx+0.5, 5.25, -5.7]));
-    g.add(box(.25, 3.0, .5, dm, [wx+4,   5.25, -5.6]));
-  }
-  // Flat roof - orange-tinted for loft typology
-  g.add(box(21.5, .6, 12, tileM, [0,7.28,0], 0, false));
-  // Fence posts
-  for (const fx of [-10,0,10]) {
-    g.add(box(.15, 1.8, 2.5, tm, [fx, .9, -8]));
+  const cm  = MAT_CONCRETE();
+  const wm  = MAT_WHITE_TRIM();
+  const tm  = MAT_TIMBER();
+  const dm  = MAT_DARK_METAL();
+  const gm  = MAT_GLASS(0.50);
+  const gw  = MAT_GLASS_WARM(0.65);
+  const sm  = MAT_STONE();
+
+  const UNITS = 4;
+  const UW = 6.0;   // unit width (E-W)
+  const UD = 14.0;  // unit depth living zone (N-S, excluding garage)
+  const GD = 5.5;   // garage depth
+  const F0 = 0;     // ground floor slab Y
+  const F1 = 3.2;   // first floor slab Y (floor-to-floor 3.2m)
+  const RY = 6.4;   // roof slab Y
+  const TW = UNITS * UW; // total block width = 24m
+
+  // Centre offset so block is centred at group origin
+  const CX = -TW/2 + UW/2;
+
+  for (let u = 0; u < UNITS; u++) {
+    const ux = CX + u * UW; // unit centre X in local space
+
+    //        GROUND FLOOR WALLS                                                                                                                                           
+    // Rear (north) wall
+    g.add(box(UW, F1, .22, cm, [ux, F1/2, -UD/2]));
+    // East party wall (living zone only     not on last unit east face)
+    if (u === 0) g.add(box(.22, F1, UD, cm, [ux - UW/2, F1/2, 0]));
+    // West party wall of this unit
+    g.add(box(.22, F1, UD, cm, [ux + UW/2, F1/2, 0]));
+    // South wall of living zone (above garage, with large window)
+    g.add(box(UW * .3, F1, .22, cm, [ux - UW*.35, F1/2, UD/2])); // left pier
+    g.add(box(UW * .3, F1, .22, cm, [ux + UW*.35, F1/2, UD/2])); // right pier
+    // Large south window (picture glazing, warm interior)
+    g.add(box(UW * .38, 2.2, .1, gw, [ux, F1*.45, UD/2 - .05]));
+    // Low sill below window
+    g.add(box(UW * .38, .45, .22, cm, [ux, .22, UD/2]));
+
+    //        GROUND FLOOR SLAB                                                                                                                                              
+    g.add(box(UW - .22, .18, UD - .22, cm, [ux, F1 - .09, 0]));
+
+    //        GARAGE (south of living zone)                                                                                                          
+    const gz = UD/2 + GD/2; // garage zone Z centre
+    // Garage side walls
+    g.add(box(.22, 3.4, GD, cm, [ux - UW/2, 1.7, gz]));
+    if (u === UNITS-1) g.add(box(.22, 3.4, GD, cm, [ux + UW/2, 1.7, gz]));
+    // Garage rear wall (southernmost face)
+    g.add(box(UW, 3.4, .22, cm, [ux, 1.7, gz + GD/2]));
+    // Timber slatted garage screen (signature facade element, south face)
+    const slatMat = MAT_TIMBER();
+    for (let s = 0; s < 16; s++) {
+      const sx = ux - UW/2 + .18 + s * (UW - .36) / 15;
+      g.add(box(.08, 2.8, .1, slatMat, [sx, 1.5, gz - GD/2 + .05]));
+    }
+    // Garage slab (first floor level above garage = bedroom floor)
+    g.add(box(UW - .22, .18, GD - .22, cm, [ux, F1 - .09, gz]));
+
+    //        FIRST FLOOR WALLS                                                                                                                                                 
+    const f1y = F1 + (F1/2); // first floor wall mid
+    // Rear (north) wall     master bedroom
+    g.add(box(UW, F1, .22, cm, [ux, F1 + F1/2, -UD/2]));
+    // North facade full-width master bedroom window (blue glazing in plans)
+    g.add(box(UW * .55, 1.4, .08, MAT_GLASS(.45), [ux - UW*.05, F1 + F1*.45, -UD/2 + .05]));
+    // East party wall F1
+    if (u === 0) g.add(box(.22, F1, UD + GD, cm, [ux - UW/2, F1 + F1/2, (GD - UD)/2 + UD/2]));
+    g.add(box(.22, F1, UD + GD, cm, [ux + UW/2, F1 + F1/2, (GD - UD)/2 + UD/2]));
+    // South wall of bedroom 2 (over garage)
+    g.add(box(UW, F1, .22, cm, [ux, F1 + F1/2, UD/2 + GD]));
+    // Bedroom 2 south window
+    g.add(box(UW * .45, 1.8, .08, gw, [ux, F1 + F1*.45, UD/2 + GD - .05]));
+
+    // VOID slab     U-shaped: north section (master) + south strip (bed2)
+    // No slab over living room (void). Slab north strip: z = -UD/2 to -UD/2+7
+    g.add(box(UW - .22, .18, 7, cm, [ux, F1*2 - .09, -UD/2 + 3.5]));
+    // Slab south strip over bed2: z = UD/2 to UD/2+GD
+    g.add(box(UW - .22, .18, GD, cm, [ux, F1*2 - .09, UD/2 + GD/2]));
+    // Void edge balustrade (on first floor looking down into living)
+    g.add(box(UW - .22, .8, .06, MAT_GLASS(.32), [ux, F1 + .4, -UD/2 + 7.2]));
+
+    //        ROOF SLAB (flat concrete)                                                                                                                            
+    g.add(box(UW - .22, .18, UD + GD - .22, cm, [ux, RY - .09, (GD - UD)/2 + UD/2]));
+    // Parapet     clean white, slightly proud
+    g.add(box(UW, .4, .25, wm, [ux, RY + .2, -UD/2]));           // north parapet
+    g.add(box(UW, .4, .25, wm, [ux, RY + .2, UD/2 + GD]));       // south parapet
+    // Unit bay divider expressed piers (full height, .3m wide)
+    if (u < UNITS - 1) {
+      g.add(box(.3, RY + .45, .22, wm, [ux + UW/2, (RY + .45)/2, -UD/4]));
+    }
+
+    //        TERRACE (north rear, ground level)                                                                                           
+    g.add(plane(UW - .5, 2.5, new THREE.MeshStandardMaterial({color:0xd8d0c4,roughness:.6}),
+      [ux, .02, -UD/2 - 1.25]));
+    // Low terrace boundary wall
+    g.add(box(UW - .5, .8, .18, sm, [ux, .4, -UD/2 - 2.45]));
   }
   return g;
 }
@@ -550,30 +625,164 @@ function addWestCompound() {
   s(plane(100, 160, gm, [-195, .10, 0]));
   for (const z of [-55,0,55]) s(box(100, .05, .4, lm, [-195, .15, z], 0, false));
 
-  // Blocks of flats - north and south of training field
-  s(createFlatBlock(-172, -68));
-  s(createFlatBlock(-172,  68));
+  // Blocks of flats - west compound only (per exact positions doc)
+  s(createFlatBlock(-240, -25));   // north block (x=-240, z=-25)
+  s(createFlatBlock(-240,  60));   // south block (x=-240, z=+60)
 }
 
+// APARTMENT BLOCK (from architectural drawings)
+// 80m wide x 30m deep, 5 residential floors + ground parking podium
+// Two circulation cores at x=+-20 from centre, central 5m void between them
+// Signature wave parapet crowning the roof (2.5m above roof slab)
 function createFlatBlock(x, z) {
   const g = new THREE.Group(); g.position.set(x, 0, z);
-  const BW=44, BD=16, floors=4, fH=3.45;
-  const cm=MAT_CONCRETE(), tm=MAT_TIMBER(), dm=MAT_DARK_METAL();
-  const gw=MAT_GLASS_WARM(.52), wm=MAT_WHITE_TRIM();
 
-  for (let col=-BW/2+5; col<=BW/2-5; col+=8) g.add(box(.9,3.8,.9,cm,[col,1.9,0]));
-  for (let f=1; f<=floors; f++) {
-    const y=3.8+(f-1)*fH+fH/2;
-    g.add(box(BW,fH-.25,BD,cm,[0,y,0]));
-    g.add(box(1.6,fH-.3,BD+2.5,dm,[-BW/2-.9,y,0]));
-    g.add(box(1.6,fH-.3,BD+2.5,dm,[ BW/2+.9,y,0]));
-    g.add(box(7,fH-.5,.55,tm,[0,y,-BD/2-.1]));
-    g.add(box(BW-6,.85,.4,MAT_GLASS(.5),[0,y-fH/2+.4,-BD/2-.35],0,false));
-    g.add(box(BW+2,.4,BD+2,wm,[0,y-fH/2,0],0,false));
+  const cm  = MAT_CONCRETE();
+  const wm  = MAT_WHITE_TRIM();
+  const tm  = MAT_TIMBER();
+  const dm  = MAT_DARK_METAL();
+  const gm  = MAT_GLASS(0.48);
+  const gw  = MAT_GLASS_WARM(0.52);
+
+  const BW = 80;   // total building width (E-W)
+  const BD = 30;   // total building depth (N-S)
+  const fH = 3.4;  // floor-to-floor height
+  const FLOORS = 5;
+  const GH = 3.4;  // ground floor / podium height
+  const RY = GH + FLOORS * fH;  // roof slab Y = 20.4m
+
+  //        GROUND FLOOR PARKING PODIUM                                                                                                                         
+  // Main building mass at ground     white rendered walls
+  g.add(box(BW, GH, BD, cm, [0, GH/2, 0]));
+
+  // Parking bay markings (ground level, inside podium)
+  const bayMat = new THREE.MeshStandardMaterial({color:0xffffff, roughness:.5});
+  for (let bx = -36; bx <= 36; bx += 4.5) {
+    g.add(box(.06, .02, 5.5, bayMat, [bx, .01, -BD/2 + 3])); // north bay row
+    g.add(box(.06, .02, 5.5, bayMat, [bx, .01,  BD/2 - 3])); // south bay row
   }
-  const roofY=3.8+floors*fH+3.2;
-  for (const side of [-1,1]) { const w=box(BW/2+4,.9,10,wm,[side*(BW/4),roofY,0]); w.rotation.z=side*.14; g.add(w); }
-  g.add(box(8,.7,10,wm,[0,roofY-1.4,0],0,false));
+
+  // Two vehicle ramp openings at north face (1/3 and 2/3 of width)
+  for (const rx of [-BW/6, BW/6]) {
+    g.add(box(8, GH, .3, dm, [rx, GH/2, -BD/2])); // ramp opening surrounds
+  }
+
+  // Garage shutter bays on south face (4 x 4m wide grey shutters)
+  const shutterMat = new THREE.MeshStandardMaterial({color:0x606060, roughness:.8});
+  for (let sx = -18; sx <= 18; sx += 12) {
+    g.add(box(9.5, 2.9, .15, shutterMat, [sx, 1.5, BD/2]));
+    // Frame
+    g.add(box(10, 3.0, .08, dm, [sx, 1.5, BD/2 + .08]));
+  }
+
+  // Expressed concrete columns on south face at ground (4m spacing)
+  for (let cx = -BW/2; cx <= BW/2; cx += 3.2) {
+    g.add(box(.4, GH, .4, wm, [cx, GH/2, BD/2]));
+  }
+
+  //        TWO CIRCULATION CORES                                                                                                                                        
+  // Core positions: x = -20 and +20 from centre, dark cladding, full height
+  const coreH = RY + .5;
+  const coreMat = new THREE.MeshStandardMaterial({color:0x2a2e2c, roughness:.7, metalness:.1});
+  for (const cx of [-20, 20]) {
+    g.add(box(4.2, coreH, BD + .6, coreMat, [cx, coreH/2, 0])); // dark tower element
+    // Glazed lift lobby at south face of each core
+    g.add(box(3.8, GH, .1, MAT_GLASS(.55), [cx, GH/2, BD/2 + .3]));
+  }
+
+  // Central 5m void / light well (landscape element between cores at ground)
+  // Visual gap     no slab here at ground level between x=-2.5 to +2.5
+  // Represented by a green surface
+  const voidMat = new THREE.MeshStandardMaterial({color:0x2a6a1a, roughness:.9});
+  g.add(plane(5, BD, voidMat, [0, .02, 0]));
+
+  //        TYPICAL RESIDENTIAL FLOORS (1-5)                                                                                                             
+  for (let f = 0; f < FLOORS; f++) {
+    const fy = GH + f * fH;          // base Y of this floor
+    const fmid = fy + fH / 2;        // mid Y for wall placement
+
+    // Main floor slab (continuous)
+    g.add(box(BW + 2.4, .2, BD + 2.4, wm, [0, fy, 0]));
+
+    // East wing mass (x = -40 to -22)
+    g.add(box(36, fH - .2, BD, cm, [-29, fmid, 0]));
+    // West wing mass (x = +22 to +40)
+    g.add(box(36, fH - .2, BD, cm, [29, fmid, 0]));
+    // Centre bridge between cores
+    g.add(box(36, fH - .2, BD, cm, [0, fmid, 0]));
+
+    // SOUTH FACE     continuous glazing in bays between columns
+    // Spandrel panels (solid, .9m high at slab level)
+    g.add(box(BW, .9, .25, wm, [0, fy + .45, BD/2]));
+    // Window bays (2.5m high, full floor rhythm 3.2m bay)
+    for (let bx = -38; bx <= 38; bx += 3.2) {
+      if (Math.abs(bx - (-20)) < 3 || Math.abs(bx - 20) < 3) continue; // skip cores
+      g.add(box(2.6, 2.4, .1, gw, [bx, fy + fH*.62, BD/2]));
+    }
+    // Dark vertical fins on returns and selected bays
+    const finMat = new THREE.MeshStandardMaterial({color:0x252a28, roughness:.6, metalness:.1});
+    for (let bx = -38; bx <= 38; bx += 9.6) {
+      g.add(box(.15, fH - .3, BD * .3, finMat, [bx, fmid, BD/2 - BD*.15]));
+    }
+
+    // NORTH FACE     simpler banding
+    g.add(box(BW, .9, .25, wm, [0, fy + .45, -BD/2]));
+    for (let bx = -38; bx <= 38; bx += 6.4) {
+      if (Math.abs(bx - (-20)) < 3 || Math.abs(bx - 20) < 3) continue;
+      g.add(box(5.2, 2.2, .08, gm, [bx, fy + fH*.62, -BD/2]));
+    }
+
+    // CONTINUOUS BALCONY slab (south face, projects 1.2m)
+    g.add(box(BW - 8, .15, 1.2, wm, [0, fy + .15, BD/2 + .6]));
+    // Balcony rail (dark metal)
+    g.add(box(BW - 8, .9, .05, MAT_GLASS(.35), [0, fy + .55, BD/2 + 1.2]));
+    // Thin top rail
+    g.add(box(BW - 8, .06, .06, dm, [0, fy + .98, BD/2 + 1.2]));
+  }
+
+  // Top eave/canopy before parapet (deep shadow line)
+  g.add(box(BW + 3, .25, BD + 3, wm, [0, RY - .12, 0]));
+
+  //        ROOF PARAPET SCULPTURE     wave crown                                                                                                    
+  // Spans ~25m at centre (x=-12.5 to +12.5), rises 2.5m above roof slab
+  // Two raised wings + recessed centre
+  const pMat = new THREE.MeshStandardMaterial({color:0x909090, roughness:.6, metalness:.1});
+
+  // Left wing (~8m wide, ~2m tall, slightly angled)
+  const leftWing = box(9, 2.2, 6, pMat, [-10, RY + 1.1, -2]);
+  leftWing.rotation.z = .08;
+  g.add(leftWing);
+  // Right wing
+  const rightWing = box(9, 2.2, 6, pMat, [10, RY + 1.1, -2]);
+  rightWing.rotation.z = -.08;
+  g.add(rightWing);
+  // Centre recessed link (lower     the saddle)
+  g.add(box(5, 1.4, 6, pMat, [0, RY + .7, -2]));
+  // Connecting slab behind sculpture
+  g.add(box(25, .4, 7, pMat, [0, RY + .2, -2]));
+
+  // Standard perimeter parapet wall
+  g.add(box(BW + .4, .8, .3, wm, [0, RY + .4, -BD/2]));
+  g.add(box(BW + .4, .8, .3, wm, [0, RY + .4,  BD/2]));
+  g.add(box(.3, .8, BD, wm, [-BW/2, RY + .4, 0]));
+  g.add(box(.3, .8, BD, wm, [ BW/2, RY + .4, 0]));
+
+  //        SOUTH LANDSCAPE     row of mature trees every 6m                                                          
+  const treeMat = new THREE.MeshStandardMaterial({color:0x2a5e18, roughness:.9});
+  const trunkMat2 = new THREE.MeshStandardMaterial({color:0x5c3c18, roughness:.85});
+  for (let tx = -36; tx <= 36; tx += 6) {
+    g.add(cyl(.12, .18, 4.5, 8, trunkMat2, [tx, 2.25, BD/2 + 7]));
+    const cr = new THREE.Mesh(new THREE.SphereGeometry(1.8, 8, 6), treeMat);
+    cr.position.set(tx, 5.5, BD/2 + 7); cr.castShadow = true; g.add(cr);
+  }
+
+  //        EXTERNAL SURFACE PARKING (south)                                                                                                 
+  g.add(plane(BW, 20, MAT_ASPHALT(), [0, .01, BD/2 + 15]));
+  const bayM2 = new THREE.MeshStandardMaterial({color:0xffffff, roughness:.5});
+  for (let bx = -36; bx <= 36; bx += 4.5) {
+    g.add(box(.06, .02, 5.5, bayM2, [bx, .02, BD/2 + 15]));
+  }
+
   scene.add(g); return g;
 }
 
