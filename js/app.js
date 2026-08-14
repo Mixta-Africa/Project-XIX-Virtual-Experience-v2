@@ -66,6 +66,25 @@ function applyWeather(w) {
 }
 
 window.applyTimePreset = applyTimePreset;
+
+// GLB orientation calibration     lets you test which face is "front"
+// without re-deploying. Call from browser console or UI buttons.
+let glbBaseRotation = 0;
+window.rotateVillaGLB = function(degrees) {
+  glbBaseRotation = degrees * Math.PI / 180;
+  const scene = getScene();
+  if (!scene) return;
+  document.querySelectorAll("#glb-orient-group .wx-btn").forEach(b =>
+    b.classList.toggle("active", b.textContent.trim() === degrees + "  ")
+  );
+  // Find all cloned villa GLB root groups and update their Y rotation offset
+  scene.traverse(obj => {
+    if (obj.userData && obj.userData.isVillaGLB) {
+      obj.rotation.y = obj.userData.baseRotY + glbBaseRotation;
+    }
+  });
+  console.log("Villa GLB rotated by", degrees, "degrees");
+};
 window.applyWeather    = applyWeather;
 
 //           BOOT                                                                                                                                                                                                                
