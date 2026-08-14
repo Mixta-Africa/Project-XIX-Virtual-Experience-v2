@@ -1,3 +1,4 @@
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
 /**
  * Project XIX — Main Application Entry Point
  * Orchestrates: landing, masterplan, 3D walkthrough, VR.
