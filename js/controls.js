@@ -243,3 +243,4 @@ export async function enterVR(renderer, scene, camera, clock, onFrame) {
     alert("VR session could not start: " + err.message);
   }
 }
+
