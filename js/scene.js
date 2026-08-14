@@ -593,7 +593,6 @@ function addGrassCards() {
 
 const PALM_SPRITES = ["assets/palm-sprite.png", "assets/palm-sprite-2.png"];
 const palmSpriteMats = [];
-let palmSprites = []; // registered for billboarding each frame
 
 function initPalmSprites() {
   const tl = new THREE.TextureLoader();
