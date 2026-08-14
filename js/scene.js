@@ -12,8 +12,9 @@ import {
 } from "./materials.js";
 
 let scene, renderer, camera, clock;
-let waterMeshes = [];
-let grassCards  = [];
+let waterMeshes  = [];
+let grassCards   = [];
+let palmSprites  = [];
 
 export function initScene(canvas) {
   clock = new THREE.Clock();
@@ -284,14 +285,41 @@ function addUmbrella(parent, pos) {
 
 function addVillaRing() {
   const s = 18;
-  // North arc
-  for (let i=0;i<12;i++) { const v=createVilla(); v.position.set(-99+i*s,0,-106); v.rotation.y=Math.PI; scene.add(v); }
-  // South
-  for (let i=0;i<10;i++) { const v=createVilla(); v.position.set(-81+i*s,0,102); scene.add(v); }
-  // West
-  for (let i=0;i<10;i++) { const v=createVilla(); v.position.set(-162,0,-81+i*s); v.rotation.y=Math.PI/2; scene.add(v); }
-  // East
-  for (let i=0;i<11;i++) { const v=createVilla(); v.position.set(162,0,-90+i*s); v.rotation.y=-Math.PI/2; scene.add(v); }
+
+  // North arc: villas set back BEHIND lake (~z=-145), forming a crescent
+  // Lake spans z=-102 to z=-128. Villas sit at z=-145 to -165.
+  // 7 NW of lake centrepoint, 7 NE — slight curve following lake edge.
+  const northCount = 7;
+  for (let side = -1; side <= 1; side += 2) {
+    for (let i = 0; i < northCount; i++) {
+      const t     = (i + 0.5) / northCount;
+      const xBase = side * (20 + i * 18);          // spread left or right of centre
+      const zBase = -148 - Math.abs(xBase) * 0.08; // slight curve: corners further back
+      const v = createVilla();
+      v.position.set(xBase, 0, zBase);
+      v.rotation.y = Math.PI + side * 0.08; // face south (toward field), slight inward toe-in
+      scene.add(v);
+    }
+  }
+
+  // South strip
+  for (let i=0;i<10;i++) {
+    const v=createVilla(); v.position.set(-81+i*s,0,102); scene.add(v);
+  }
+
+  // West — inner + outer staggered columns per Brief
+  for (let i=0;i<7;i++) {
+    const zi=-72+i*s;
+    const vi=createVilla(); vi.position.set(-162,0,zi); vi.rotation.y=Math.PI/2; scene.add(vi);
+    const vo=createVilla(); vo.position.set(-182,0,zi+s/2); vo.rotation.y=Math.PI/2; scene.add(vo);
+  }
+
+  // East — inner + outer staggered columns
+  for (let i=0;i<8;i++) {
+    const zi=-81+i*s;
+    const vi=createVilla(); vi.position.set(162,0,zi); vi.rotation.y=-Math.PI/2; scene.add(vi);
+    const vo=createVilla(); vo.position.set(182,0,zi+s/2); vo.rotation.y=-Math.PI/2; scene.add(vo);
+  }
 }
 
 function createVilla() {
@@ -561,64 +589,95 @@ function addGrassCards() {
   }
 }
 
-/* ── ROYAL PALMS ──────────────────────────────────────────────── */
+/* ── PALM SPRITES (billboard, always faces camera) ─────────────── */
+
+const PALM_SPRITES = ["assets/palm-sprite.png", "assets/palm-sprite-2.png"];
+const palmSpriteMats = [];
+let palmSprites = []; // registered for billboarding each frame
+
+function initPalmSprites() {
+  const tl = new THREE.TextureLoader();
+  PALM_SPRITES.forEach(src => {
+    const tex = tl.load(src);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.premultiplyAlpha = true;
+    palmSpriteMats.push(new THREE.MeshBasicMaterial({
+      map: tex,
+      transparent: true,
+      alphaTest: 0.12,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    }));
+  });
+}
 
 function addRoyalPalms() {
+  if (palmSpriteMats.length === 0) initPalmSprites();
   [[-100,-90],[100,-90],[-120,170],[120,170],[0,-90],[-50,-95],[50,-95],
    [-220,218],[-195,255],[-175,245],[210,-80],[215,45],[200,135],
-   [-80,170],[80,170],[-140,155],[140,155],[0,145],[-60,148],[60,148]
-  ].forEach(([x,z]) => addPalmAt(x,z,1.0+Math.random()*0.45));
+   [-80,170],[80,170],[-140,155],[140,155],[0,145],[-60,148],[60,148],
+   [-30,-100],[30,-100],[-60,-90],[60,-90]
+  ].forEach(([x,z]) => addPalmSprite(x,z,1.0+Math.random()*0.5));
 }
 
 function addPerimeterTrees() {
+  if (palmSpriteMats.length === 0) initPalmSprites();
   for (let x=-252;x<=252;x+=13) {
-    addPalmAt(x,-195,0.85+Math.random()*0.3);
-    addPalmAt(x,202,0.85+Math.random()*0.3);
+    addPalmSprite(x,-195,0.85+Math.random()*0.3);
+    addPalmSprite(x, 202,0.85+Math.random()*0.3);
   }
-  for (let z=-185;z<=200;z+=15) {
-    addPalmAt(-254,z,0.9+Math.random()*0.25);
-    addPalmAt(254,z,0.9+Math.random()*0.25);
+  for (let z=-185;z<=200;z+=16) {
+    addPalmSprite(-254,z,0.9+Math.random()*0.28);
+    addPalmSprite( 254,z,0.9+Math.random()*0.28);
   }
 }
 
-function addPalmAt(x, z, scale=1) {
-  const g=new THREE.Group(); g.position.set(x,0,z); g.scale.setScalar(scale);
-  const trunkM=new THREE.MeshStandardMaterial({color:0x7a5c30,roughness:0.9});
-  const frondM=new THREE.MeshStandardMaterial({color:0x3a7228,roughness:0.85,side:THREE.DoubleSide});
-  const lean=(Math.random()-.5)*0.05;
-  const trunkH=14+Math.random()*5;
+function addPalmSprite(x, z, scale=1) {
+  if (palmSpriteMats.length === 0) initPalmSprites();
+  const varIdx = Math.floor(Math.random() * palmSpriteMats.length);
+  const mat    = palmSpriteMats[varIdx];
 
-  for (let i=0;i<5;i++) {
-    const s=cyl(0.24-i*0.025,0.28-i*0.025,trunkH/5,10,trunkM,
-      [lean*i*trunkH/5, trunkH/10+i*trunkH/5, 0]);
-    s.rotation.z=lean; g.add(s);
+  const trunkH = (14 + Math.random() * 6) * scale;
+  const spriteH = trunkH * 1.35; // include fronds
+  const spriteW = spriteH * 0.5;
+
+  // Cross-billboard: two planes at 90 degrees
+  const geo = new THREE.PlaneGeometry(spriteW, spriteH);
+  for (const ry of [0, Math.PI/2]) {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(x, spriteH / 2, z);
+    m.rotation.y = ry;
+    m.castShadow = false;
+    m.receiveShadow = false;
+    scene.add(m);
+    palmSprites.push(m); // registered for Y-axis billboard
   }
-  for (let i=0;i<9;i++) {
-    const angle=(i/9)*Math.PI*2;
-    const frond=new THREE.Mesh(new THREE.PlaneGeometry(7+Math.random(),0.9),frondM);
-    frond.position.set(Math.cos(angle)*3.5+lean*trunkH, trunkH+0.5, Math.sin(angle)*3.5);
-    frond.rotation.y=angle; frond.rotation.z=0.48+Math.random()*0.12;
-    frond.castShadow=false; g.add(frond);
-  }
-  g.add(cyl(0.32,0.38,0.65,8,
-    new THREE.MeshStandardMaterial({color:0x8c7a30,roughness:0.75}),
-    [lean*trunkH, trunkH-0.3, 0]));
-  scene.add(g);
 }
 
 /* ── FRAME TICK ──────────────────────────────────────────────── */
 
 export function tickScene(elapsedTime, camera) {
+  // Animate water normals
   waterMeshes.forEach(m => {
     if (m.material && m.material.normalMap) {
       m.material.normalMap.offset.x = elapsedTime * 0.018;
       m.material.normalMap.offset.y = elapsedTime * 0.012;
     }
   });
+
+  // Grass cards — face camera on Y axis
   grassCards.forEach(card => {
     card.rotation.y = Math.atan2(
       camera.position.x - card.position.x,
       camera.position.z - card.position.z
+    );
+  });
+
+  // Palm sprites — face camera on Y axis (billboard)
+  palmSprites.forEach(sprite => {
+    sprite.rotation.y = Math.atan2(
+      camera.position.x - sprite.position.x,
+      camera.position.z - sprite.position.z
     );
   });
 }
