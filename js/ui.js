@@ -36,9 +36,12 @@ let minimapReady = false;
 //   Image TOP edge   = world Z ≈ -200 (north / lake side)
 //   Image BOTTOM edge= world Z ≈ +210 (south / Lagos Road)
 // These are tuned to the actual scene geometry in scene.js.
+// Bounds calibrated to corrected scene.js geometry:
+// North (lake side) = z=-260, South (Lagos Road) = z=+225
+// West (stables) = x=-270, East (commercial) = x=+225
 const MAP = {
-  xMin: -252, xMax: 252,
-  zMin: -200, zMax: 210,
+  xMin: -270, xMax: 225,
+  zMin: -260, zMax: 225,
 };
 
 export function initMinimap(planImageSrc) {
