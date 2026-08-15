@@ -54,7 +54,7 @@ export const VIEWPOINTS = {
   lofts:        { label:"Loft Terrace",     pos:[-218,1.65,-5], yaw:-Math.PI/2, pitch:0,     caption:"West compound loft terraces - beside training field", icon:"loft",    zoneKey:"lofts"    },
   paddock:      { label:"Paddock",          pos:[155,1.65,-60],yaw:-Math.PI/2,  pitch:0,     caption:"Northeast paddock - post and rail enclosed",         icon:"pitch",   zoneKey:"paddock"  },
 
-  aerial:       { label:"Aerial View",      pos:[0,200,0],     yaw:0,           pitch:-Math.PI/2, caption:"Estate overview - 18.8 hectares, Lakowe",       icon:"aerial"  },
+  // aerial removed from bottom strip - controlled by topbar AERIAL button only
 };
 
 /**
