@@ -219,8 +219,7 @@ function buildEnvironment(){
   addClubhouse();
   addVillaRing();        // GLB-based, with plot reservation
   addLoftTerraces();
-  addWestCompound();     // west: flats GLB + training field
-  addEastCompound();     // east: loft column + flats + training field
+  addWestCompound();     // west: loft column + flats + training field
   addStables();
   addPaddock();
   addGamePark();
@@ -557,11 +556,15 @@ function addVillaRing(){
     const z=-82+i*PLOT;
     placeVillaWithLandscape(-192,z,Math.PI/2);
   }
-  // EAST - SINGLE villa column x=+162 (directly beside polo field pony line)
-  // NOTE: East side has ONE villa column only. Behind it: lofts, then flats, then training.
+  // EAST INNER column x=+162 (8 units, facing west toward field)
   for(let i=0;i<8;i++){
     const z=-96+i*PLOT;
     placeVillaWithLandscape(162,z,-Math.PI/2);
+  }
+  // EAST OUTER column x=+192 (7 units, staggered)
+  for(let i=0;i<7;i++){
+    const z=-82+i*PLOT;
+    placeVillaWithLandscape(192,z,-Math.PI/2);
   }
   // ONE continuous north row bowing over the lake.
   // Lake centre x=+30, radius=90m, peak bow=17m northward at lake centre.
@@ -655,7 +658,11 @@ function addLoftTerraces(){
     const cz=-162-Math.abs(x)*.05;
     placeLoftGLB(x,cz,Math.PI);
   }
-  // NE ARM: handled in addEastCompound() to keep east zone logic together
+  // NORTH CRESCENT - SINGLE ROW, NE ARM (x=+95 to +295)
+  for(let x=95; x<=295; x+=36){
+    const cz=-162-Math.abs(x)*.05;
+    placeLoftGLB(x,cz,Math.PI);
+  }
   // WEST COMPOUND LOFTS
   // Pixel-measured: x=-218, z matches flat blocks (-14 and +112)
   // Face east toward polo field
@@ -692,61 +699,44 @@ function createLoftBlock(x,z,ry){
 //        WEST COMPOUND (Audit 6.1, 6.2, 7.1, 7.2)                                                                                                    
 function addWestCompound(){
   const gm=MAT_GRASS_FIELD(); const dm=MATS.safetyBrown();
-  // Training field: pixel-measured centre x=-347, z=+42 (N edge z=-66, S edge z=+149)
+  const PLOT=28;
+
+  // WEST SIDE ORDER (field outward, east to west):
+  // 1. Villas at x=-162 inner, x=-192 outer (done in addVillaRing)
+  // 2. Loft terraces at x=-218, N-S column facing east toward field
+  // 3. Block of flats at x=-275 (two GLB blocks)
+  // 4. Training field at x=-347
+
+  // LOFT TERRACES west column (x=-218, N-S, face east)
+  for(let i=0;i<7;i++){
+    const z=-82+i*PLOT;
+    placeLoftGLB(-218, z, Math.PI/2);
+  }
+
+  // BLOCKS OF FLATS west compound
+  placeAptGLB(-275, -14, Math.PI/2);
+  placeAptGLB(-275, 112, Math.PI/2);
+
+  // TRAINING FIELD (west, N-S oriented, x=-347)
   s(plane(120,220,dm,[-347,.06,42]));
   s(plane(100,200,gm,[-347,.10,42]));
 
-  // Blocks of flats via GLB
-  // Pixel-measured: centre x=-275, N block z=-14, S block z=+112
-  // Road at x=-270 separates them from training field at x=-347
-  placeAptGLB(-275, -14, Math.PI/2);
-  placeAptGLB(-275, 112, Math.PI/2);
-}
-
-function addEastCompound(){
-  // EAST SIDE ORDER (field outward, west to east):
-  // 1. Villas at x=+162 (done in addVillaRing)
-  // 2. Loft terraces at x=+192 - run N-S beside villa column
-  // 3. Block of flats at x=+248 - two blocks, E-W oriented
-  // 4. Training field at x=+347 - N-S, mirror of west training field
-
-  const gm=MAT_GRASS_FIELD(); const dm=MATS.safetyBrown();
-  const PLOT=28;
-
-  // LOFT TERRACES (x=+192, N-S column, facing west toward field)
-  // 7 loft blocks stepping north to south alongside villa column
-  for(let i=0;i<7;i++){
-    const z=-82+i*PLOT;
-    placeLoftGLB(192, z, -Math.PI/2); // face west (toward field)
-  }
-
-  // BLOCKS OF FLATS (x=+248, two blocks)
-  // N block z=-14, S block z=+112 (mirroring west side)
-  placeAptGLB(248, -14, Math.PI/2);
-  placeAptGLB(248, 112, Math.PI/2);
-
-  // EAST TRAINING FIELD (x=+347, N-S oriented, mirror of west)
-  s(plane(120,220,dm,[347,.06,42]));
-  s(plane(100,200,gm,[347,.10,42]));
   // Yard markings
   const lm=new THREE.MeshStandardMaterial({color:0xf5f0d5,roughness:.4});
-  for(const mz of[-55,42,149]) s(box(100,.05,.4,lm,[347,.15,mz],0,false));
-  // Goal posts
-  const pm=MATS.railWhite();
+  for(const mz of[-66,42,149]) s(box(100,.05,.4,lm,[-347,.15,mz],0,false));
+  const pm2=MATS.railWhite();
   for(const gz of[-66,149]) for(const pz of[0,-7.3,7.3])
-    s(cyl(.12,.12,3,8,pm,[347,1.5,gz+pz]));
+    s(cyl(.12,.12,3,8,pm2,[-347,1.5,gz+pz]));
 
-  // EAST internal roads (between each zone)
+  // West internal roads between zones
   const am=MATS.roadAsph();
-  s(plane(8,220,am,[177,.12,20]));  // road between villas (162) and lofts (192)
-  s(plane(8,220,am,[220,.12,20]));  // road between lofts (192) and flats (248)
-  s(plane(8,220,am,[298,.12,20]));  // road between flats (248) and training (347)
-  // North strip east loft row (crescent road level)
-  for(let x=153; x<=295; x+=36){
-    const cz=-162-Math.abs(x)*.05;
-    placeLoftGLB(x,cz,Math.PI);
-  }
+  s(plane(8,220,am,[-205,.12,20]));  // between inner villa (-192) and loft (-218)
+  s(plane(8,220,am,[-247,.12,20]));  // between loft (-218) and flats (-275)
+  s(plane(8,220,am,[-311,.12,20]));  // between flats (-275) and training (-347)
 }
+
+// East compound removed - east side uses standard villa inner+outer columns
+// NE crescent loft row handled in addLoftTerraces
 
 function createFlatBlock(x,z){ // fallback if GLB fails
   const g=new THREE.Group(); g.position.set(x,0,z);
