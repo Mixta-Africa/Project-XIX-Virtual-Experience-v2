@@ -31,10 +31,15 @@ let introPlaying = false;
 let currentViewKey = "field_centre";
 let animFrameId = null;
 let composer = null;
-let aerialOrbit = false;
-let aerialAngle = 0;
+let aerialOrbit  = false;
+let aerialAngle  = 0;
+let aerialYawOffset = 0;   // mouse/touch drag adds to the base orbit angle
+let aerialPitch  = -Math.PI / 2.5;  // tilt (~40 deg down)
+let aerialDragging = false;
+let aerialLastX  = 0, aerialLastY = 0;
 const AERIAL_RADIUS = 220;
 const AERIAL_HEIGHT = 200;
+const AERIAL_SPEED  = 0.12;   // orbit speed (radians/sec)
 
 //           WEATHER / TIME PRESETS                                                                                                                                                       
 const TIME_PRESETS = {
@@ -524,23 +529,61 @@ function toggleAerial(btn) {
   aerialOrbit = !aerialOrbit;
   if (aerialOrbit) {
     btn && btn.classList.add("active");
-    // Lift camera to aerial height, pitch down
-    const cam = getCamera();
-    if (cam) {
-      cam.position.y = AERIAL_HEIGHT;
-      // Keep current x/z position so view stays over same area
-    }
-    activate(); // keep controls active for free movement
-    setView([0, AERIAL_HEIGHT, 0], 0, -Math.PI/2);
-    setCaption("Aerial view - WASD to pan, drag to look");
-    document.getElementById("enter-prompt").style.display = "none";
+    deactivate();           // release ground-level controls
+    aerialAngle     = 0;
+    aerialYawOffset = 0;
+    aerialPitch     = -Math.PI / 2.5;
+    setCaption("Aerial view     hover orbits automatically    drag to steer");
+    bindAerialPointer();
   } else {
     btn && btn.classList.remove("active");
-    // Return to ground level at current x/z
-    const cam = getCamera();
-    if (cam) cam.position.y = 1.72;
-    setCaption("Back to ground level");
+    unbindAerialPointer();
+    activate();
+    teleportTo("field_centre", VIEWPOINTS.field_centre);
   }
+}
+
+//        AERIAL POINTER/TOUCH DRAG (adds offset to the orbit angle)                                                 
+function bindAerialPointer() {
+  const el = getRenderer()?.domElement;
+  if (!el) return;
+  el.addEventListener("mousedown",  aerialMouseDown,  { passive:true });
+  el.addEventListener("mousemove",  aerialMouseMove,  { passive:true });
+  el.addEventListener("mouseup",    aerialMouseUp,    { passive:true });
+  el.addEventListener("touchstart", aerialTouchStart, { passive:true });
+  el.addEventListener("touchmove",  aerialTouchMove,  { passive:false });
+  el.addEventListener("touchend",   aerialMouseUp,    { passive:true });
+}
+function unbindAerialPointer() {
+  const el = getRenderer()?.domElement;
+  if (!el) return;
+  el.removeEventListener("mousedown",  aerialMouseDown);
+  el.removeEventListener("mousemove",  aerialMouseMove);
+  el.removeEventListener("mouseup",    aerialMouseUp);
+  el.removeEventListener("touchstart", aerialTouchStart);
+  el.removeEventListener("touchmove",  aerialTouchMove);
+  el.removeEventListener("touchend",   aerialMouseUp);
+}
+function aerialMouseDown(e)  { aerialDragging=true; aerialLastX=e.clientX; aerialLastY=e.clientY; }
+function aerialMouseUp()     { aerialDragging=false; }
+function aerialMouseMove(e)  {
+  if (!aerialDragging) return;
+  aerialYawOffset -= (e.clientX - aerialLastX) * 0.004;
+  aerialPitch      = Math.max(-Math.PI*0.9, Math.min(-0.15,
+                      aerialPitch - (e.clientY - aerialLastY) * 0.003));
+  aerialLastX=e.clientX; aerialLastY=e.clientY;
+}
+function aerialTouchStart(e) {
+  const t=e.touches[0];
+  aerialDragging=true; aerialLastX=t.clientX; aerialLastY=t.clientY;
+}
+function aerialTouchMove(e) {
+  e.preventDefault();
+  const t=e.touches[0];
+  aerialYawOffset -= (t.clientX - aerialLastX) * 0.004;
+  aerialPitch      = Math.max(-Math.PI*0.9, Math.min(-0.15,
+                      aerialPitch - (t.clientY - aerialLastY) * 0.003));
+  aerialLastX=t.clientX; aerialLastY=t.clientY;
 }
 window.toggleAerial = toggleAerial;
 
@@ -590,10 +633,16 @@ function startRenderLoop() {
     const delta   = Math.min(clock.getDelta(), 0.05);
     const elapsed = (performance.now() - startTime) / 1000;
     if (aerialOrbit) {
-      // Aerial mode: free WASD movement at fixed high elevation
-      // Player can pan around to inspect any part of the estate
-      updateControls(delta);
-      camera.position.y = AERIAL_HEIGHT; // lock height
+      // Auto-orbit: angle advances continuously (the hover effect)
+      // User drag adds/subtracts from the angle and tilts pitch
+      aerialAngle += AERIAL_SPEED * delta;
+      const totalAngle = aerialAngle + aerialYawOffset;
+      camera.position.x = Math.sin(totalAngle) * AERIAL_RADIUS;
+      camera.position.z = Math.cos(totalAngle) * AERIAL_RADIUS;
+      camera.position.y = AERIAL_HEIGHT;
+      camera.lookAt(0, 0, 0);
+      // Apply user pitch override (drag up/down tilts the view)
+      camera.rotation.x = aerialPitch;
     } else {
       updateControls(delta);
     }
