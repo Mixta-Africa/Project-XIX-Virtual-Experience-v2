@@ -540,6 +540,60 @@
   </div>
 </div>
 
+
+<!-- ═══ PRODUCT PANEL ════════════════════════════════════════════════════════ -->
+<div id="product-panel" class="product-panel" role="dialog" aria-modal="true" aria-label="Product details">
+  <div class="pp-header">
+    <div>
+      <span class="pp-type eyebrow">Type</span>
+      <h2 class="pp-title display">Building</h2>
+      <p class="pp-tagline"></p>
+    </div>
+    <button class="pp-close" onclick="closeProductPanel()" aria-label="Close">&times;</button>
+  </div>
+
+  <div class="pp-body">
+    <!-- Left: 3D GLB viewer -->
+    <div class="pp-viewer">
+      <div class="pp-viewer-label eyebrow">Interactive 3D Model &mdash; drag to rotate</div>
+      <canvas id="pp-glb-canvas" aria-label="Rotatable 3D building model"></canvas>
+      <div id="pp-glb-fallback" class="pp-glb-fallback" style="display:none">
+        <span>3D model loading&hellip;</span>
+      </div>
+    </div>
+
+    <!-- Right: Details -->
+    <div class="pp-details">
+      <!-- Specs grid -->
+      <div class="pp-specs-section">
+        <div class="eyebrow" style="margin-bottom:.6rem">Specifications</div>
+        <div class="pp-specs"></div>
+      </div>
+
+      <!-- Floor plan -->
+      <div class="pp-plans-section">
+        <div class="eyebrow" style="margin-bottom:.6rem">Floor Plans &amp; Renders</div>
+        <div class="pp-plan-tabs"></div>
+        <img class="pp-plan-img" src="" alt="Floor plan" loading="lazy" />
+      </div>
+
+      <!-- Description -->
+      <p class="pp-desc"></p>
+
+      <!-- CTA -->
+      <div class="pp-cta">
+        <button class="btn btn-gold" onclick="closeProductPanel(); setTimeout(()=>document.getElementById('contact').scrollIntoView({behavior:'smooth'}),200)">
+          Enquire About This Property
+        </button>
+        <a class="btn btn-outline" href="mailto:o.olasunkanmi@mixtafrica.com?subject=Project XIX Enquiry" target="_blank">
+          Email Project Team
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="pp-overlay" onclick="closeProductPanel()"></div>
+
 <!-- ═══ SCRIPTS ═══════════════════════════════════════════════════ -->
 <script type="importmap">
   {
@@ -549,7 +603,30 @@
     }
   }
 </script>
+<!-- Bridge: exposes module functions to inline onclick handlers -->
+<script>
+// Weather/time functions called by onclick buttons
+// These delegate to the module once it loads
+window._pendingCalls = [];
+['applyTimePreset','applyWeather','toggleAerial','rotateVillaGLB','showProductPanel'].forEach(fn=>{
+  window[fn] = function(...args){
+    if(window.__moduleReady && window.__moduleReady[fn]) window.__moduleReady[fn](...args);
+    else window._pendingCalls.push({fn,args});
+  };
+});
+</script>
 <script type="module" src="js/app.js"></script>
+<script type="module">
+  import { openProductPanel, closeProductPanel, resizePanelViewer } from "./js/product-panel.js";
+  // Expose to window bridge
+  Object.assign(window.__moduleReady || (window.__moduleReady = {}), {
+    showProductPanel: openProductPanel,
+    closeProductPanel,
+  });
+  window.closeProductPanel = closeProductPanel;
+  // Resize viewer on window resize
+  window.addEventListener("resize", resizePanelViewer, { passive: true });
+</script>
 
 <!-- Pointer lock body class for crosshair -->
 <script>
