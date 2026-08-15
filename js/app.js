@@ -7,6 +7,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
 import { VIEWPOINTS, ZONES, WORLD } from "./data.js";
 import { buildVillaInterior, VILLA_VIEWPOINTS } from "./villa-interior.js";
 import { initScene, getRenderer, getScene, getCamera, getClock, tickScene, updateSky, plotRegistry, reservePlot, getPlotAtRay } from "./scene.js";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime } from "./graphics.js";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR
@@ -29,6 +30,7 @@ let villaRenderer = null;
 let introPlaying = false;
 let currentViewKey = "field_centre";
 let animFrameId = null;
+let composer = null;
 let aerialOrbit = false;
 let aerialAngle = 0;
 const AERIAL_RADIUS = 220;
@@ -46,6 +48,7 @@ function applyTimePreset(name) {
   const p = TIME_PRESETS[name]; if (!p) return;
   document.querySelectorAll(".wx-time-btn").forEach(b => b.classList.toggle("active", b.dataset.time === name));
   updateSky(...p.sky);
+  setBloomForTime(name);
   const s = getScene(); if (!s) return;
   s.fog.color.set(p.fog); s.fog.density = p.fogD;
   const sun = s.children.find(o => o.isDirectionalLight && o.castShadow);
@@ -394,6 +397,9 @@ async function openWorldAt(viewKey) {
     initControls(getCamera(), getRenderer());
     setLoadingProgress(70);
     initMinimap("assets/plan-2d.png");
+    setLoadingProgress(85);
+    // Init post-processing after scene exists
+    composer = initPostProcessing(getRenderer(), getScene(), getCamera());
     setLoadingProgress(90);
 
     showVRButton(() => {
@@ -558,7 +564,7 @@ function startRenderLoop() {
     tickScene(elapsed, camera);
     updateMinimap(camera.position.x, camera.position.z, getYaw());
     updateSpatialAudio(camera.position.x, camera.position.z);
-    renderer.render(scene, camera);
+    renderFrame(); // EffectComposer: SSAO + Bloom + SMAA
   }
 
   frame();
@@ -574,6 +580,7 @@ function resizeWorld() {
   renderer.setSize(w, h);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
+  resizeComposer(w, h);
 }
 
 //           SCROLL ANIMATIONS                                                                                                                                                                         
