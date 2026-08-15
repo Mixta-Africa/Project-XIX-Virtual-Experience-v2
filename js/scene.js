@@ -32,17 +32,17 @@ let clubGLBTemplate=null, stablesGLBTemplate=null;
 
 // Villa GLB (3-bed premium villa mesh)
 const VILLA_SCALE = 12.56;
-const VILLA_Y     = 4.94;
+const VILLA_Y     = 0;    // GLB origin already at ground level; was incorrectly set to 4.94 (buried building)
 let villaGLBScene = null;
 let pendingVillas  = [];
 
 // Apartment GLB
 const APT_SCALE = 31.18;
-const APT_Y     = 7.95;
+const APT_Y     = 0;     // GLB origin at ground level; was 7.95 (buried building)
 
 // Loft Terrace GLB
 const LOFT_SCALE = 20.0;
-const LOFT_Y     = 1.34;
+const LOFT_Y     = 0;    // GLB origin at ground level; was 1.34 (buried terrace)
 let loftGLBScene = null;
 let pendingLofts  = [];
 let aptGLBScene  = null;
@@ -68,6 +68,7 @@ export function initScene(canvas) {
   camera = new THREE.PerspectiveCamera(65, 1, 0.1, 1600);
   buildLighting();
   buildSky();
+  loadTreeGLB();     // load early so tree GLB is ready when landscaping runs
   buildEnvironment();
   loadVillaGLB();
   loadApartmentGLB();
@@ -391,7 +392,6 @@ function loadOneGLB(path, scale, yOff, onDone, onFail) {
   makeDracoLoader().load(path,
     gltf => {
       gltf.scene.scale.setScalar(scale);
-      gltf.scene.position.y = yOff;
       gltf.scene.traverse(child => {
         if (child.isMesh) {
           child.castShadow = true;
@@ -399,6 +399,10 @@ function loadOneGLB(path, scale, yOff, onDone, onFail) {
           child.frustumCulled = true;
         }
       });
+      // Auto-lift: compute bounding box at scale and ensure base sits at Y=0
+      const bbox = new THREE.Box3().setFromObject(gltf.scene);
+      const autoLift = bbox.min.y < 0 ? -bbox.min.y : 0;
+      gltf.scene.position.y = yOff + autoLift;
       onDone(gltf.scene);
     },
     undefined,
@@ -407,11 +411,21 @@ function loadOneGLB(path, scale, yOff, onDone, onFail) {
 }
 
 function loadClubhouseGLB(){
+  // yOff=0: GLB is authored with its base at Y=0. The building was being buried
+  // because loadOneGLB was also applying a positive yOff (lifting INTO ground).
+  // Position z=108, rotated 180° so the entrance faces south toward the field.
   loadOneGLB("assets/clubhouse-mesh.glb", 60.975, 0, tmpl=>{
     clubGLBTemplate=tmpl;
     const g=new THREE.Group(); g.position.set(0,0,108); g.rotation.y=Math.PI;
+    // Ensure the mesh sits exactly on Y=0 by computing its bounding box
+    const bbox = new THREE.Box3().setFromObject(g);
+    const minY = bbox.min.y;
+    if(minY < -0.5) g.position.y -= minY; // lift so bottom is at ground
     g.add(tmpl.clone(true)); scene.add(g);
-    console.log("Clubhouse GLB OK");
+    // Re-check after child added
+    const bbox2 = new THREE.Box3().setFromObject(g);
+    if(bbox2.min.y < -0.5) g.position.y -= bbox2.min.y;
+    console.log("Clubhouse GLB OK, minY:", bbox2.min.y.toFixed(2));
   });
 }
 
@@ -420,7 +434,10 @@ function loadStablesGLB(){
     stablesGLBTemplate=tmpl;
     const g=new THREE.Group(); g.position.set(-375,0,90);
     g.add(tmpl.clone(true)); scene.add(g);
-    console.log("Stables GLB OK");
+    // Lift if buried
+    const bbox = new THREE.Box3().setFromObject(g);
+    if(bbox.min.y < -0.5) g.position.y -= bbox.min.y;
+    console.log("Stables GLB OK, minY:", bbox.min.y.toFixed(2));
   });
 }
 
@@ -428,25 +445,26 @@ function loadVillaGLB(){
   makeDracoLoader().load("assets/villa-mesh.glb",
     gltf=>{
       // CRITICAL: Wrap in a Group so clone() picks up scale+position correctly
-      // Setting scale/pos on gltf.scene directly is lost on clone(true)
-      const wrapper = new THREE.Group();
-      wrapper.add(gltf.scene);
-      // Apply scale and ground-sit offset to the WRAPPER, not the scene root
       gltf.scene.scale.setScalar(VILLA_SCALE);
-      gltf.scene.position.y = VILLA_Y;
       gltf.scene.traverse(c=>{
         if(c.isMesh){
           c.castShadow=true; c.receiveShadow=true;
           if(c.material){
-            c.material.envMapIntensity=0.4; // reduced - no HDR glare
+            c.material.envMapIntensity=0.4;
             c.material.needsUpdate=true;
           }
         }
       });
-      villaGLBScene = wrapper; // store the wrapper as template
+      // Auto-lift: ensure the villa base sits exactly at Y=0, not underground
+      const bbox = new THREE.Box3().setFromObject(gltf.scene);
+      const autoLift = bbox.min.y < 0 ? -bbox.min.y : VILLA_Y;
+      gltf.scene.position.y = autoLift;
+      const wrapper = new THREE.Group();
+      wrapper.add(gltf.scene);
+      villaGLBScene = wrapper;
       pendingVillas.forEach(({x,z,ry,plotKey})=>placeVillaGLB(x,z,ry,plotKey));
       pendingVillas=[];
-      console.log("Villa GLB loaded OK");
+      console.log("Villa GLB loaded OK, minY:", bbox.min.y.toFixed(2));
     },
     xhr=>{ if(xhr.total) console.log("Villa GLB:", Math.round(xhr.loaded/xhr.total*100)+"%"); },
     err=>{ 
@@ -460,18 +478,22 @@ function loadVillaGLB(){
 function loadApartmentGLB(){
   makeDracoLoader().load("assets/apartment-mesh.glb",
     gltf=>{
-      const wrapper = new THREE.Group();
-      wrapper.add(gltf.scene);
       gltf.scene.scale.setScalar(APT_SCALE);
-      gltf.scene.position.y=APT_Y;
       gltf.scene.traverse(c=>{
         if(c.isMesh){ c.castShadow=true; c.receiveShadow=true;
           if(c.material){ c.material.envMapIntensity=0.3; c.material.needsUpdate=true; }
         }
       });
+      // Auto-lift: ensure base at Y=0
+      const bbox = new THREE.Box3().setFromObject(gltf.scene);
+      const autoLift = bbox.min.y < 0 ? -bbox.min.y : APT_Y;
+      gltf.scene.position.y = autoLift;
+      const wrapper = new THREE.Group();
+      wrapper.add(gltf.scene);
       aptGLBScene=wrapper;
       pendingApts.forEach(({x,z,ry})=>placeAptGLB(x,z,ry));
       pendingApts=[];
+      console.log("Apartment GLB loaded OK, minY:", bbox.min.y.toFixed(2));
     },
     null,
     ()=>{ pendingApts.forEach(({x,z})=>{ scene.add(createFlatBlock(x,z)); }); pendingApts=[]; }
@@ -552,20 +574,23 @@ export function getPlotAtRay(raycaster){
 function loadLoftGLB(){
   makeDracoLoader().load("assets/loft-mesh.glb",
     gltf=>{
-      const wrapper=new THREE.Group();
-      wrapper.add(gltf.scene);
       gltf.scene.scale.setScalar(LOFT_SCALE);
-      gltf.scene.position.y=LOFT_Y;
       gltf.scene.traverse(child=>{
         if(child.isMesh){
           child.castShadow=true; child.receiveShadow=true;
           if(child.material){ child.material.envMapIntensity=0.3; child.material.needsUpdate=true; }
         }
       });
+      // Auto-lift so base is exactly at Y=0
+      const bbox = new THREE.Box3().setFromObject(gltf.scene);
+      const autoLift = bbox.min.y < 0 ? -bbox.min.y : LOFT_Y;
+      gltf.scene.position.y = autoLift;
+      const wrapper=new THREE.Group();
+      wrapper.add(gltf.scene);
       loftGLBScene=wrapper;
       pendingLofts.forEach(({x,z,ry})=>placeLoftGLB(x,z,ry));
       pendingLofts=[];
-      console.log("Loft GLB loaded OK");
+      console.log("Loft GLB loaded OK, minY:", bbox.min.y.toFixed(2));
     },
     null,
     err=>{
@@ -631,6 +656,7 @@ function addVillaRing(){
 
 function placeVillaWithLandscape(x,z,ry){
   const plotKey=`${Math.round(x)},${Math.round(z)}`;
+  registerVillaFootprint(x,z); // keep trees out of this plot
   placeVillaGLB(x,z,ry,plotKey);
   addPlotLandscaping(x,z,ry);
   // 2 cypress trees per villa (Audit 3.5)
@@ -684,20 +710,20 @@ function createVillaFallback(){
 // Single row north crescent (NW arm + NE arm). West compound between villas and flats.
 function addLoftTerraces(){
   // NORTH CRESCENT - SINGLE ROW, NW ARM
-  // Parabolic curve: z = -162 - abs(x)*0.05
-  // Stops at x=-110 (lake west edge ~x=-110)
   for(let x=-310; x<=-110; x+=36){
     const cz=-162-Math.abs(x)*.05;
+    registerVillaFootprint(x,cz); // keep trees off the terrace
     placeLoftGLB(x,cz,Math.PI);
   }
   // NORTH CRESCENT - SINGLE ROW, NE ARM
-  // Starts at x=+95 (lake east edge ~x=+90)
   for(let x=95; x<=310; x+=36){
     const cz=-162-Math.abs(x)*.05;
+    registerVillaFootprint(x,cz);
     placeLoftGLB(x,cz,Math.PI);
   }
   // WEST COMPOUND LOFTS
-  // Sit between outer villa column (x=-192) and flats (x=-248), centred at x=-220
+  registerVillaFootprint(-220,-40);
+  registerVillaFootprint(-220, 40);
   placeLoftGLB(-220,-40,-Math.PI/2);
   placeLoftGLB(-220, 40,-Math.PI/2);
 }
@@ -822,6 +848,7 @@ function initPalmMats(){
 }
 
 function addPalmSprite(x,y,z,scale=1){
+  if(isInNoBuildZone(x,z)) return; // never grow from a structure
   initPalmMats();
   const mat=palmMats[Math.floor(Math.random()*palmMats.length)];
   const h=(13+Math.random()*5)*scale, w=h*.5;
@@ -833,15 +860,134 @@ function addPalmSprite(x,y,z,scale=1){
 }
 
 function addCypressAt(x,z){ // slender accent tree per villa
+  if(isInNoBuildZone(x,z)) return;
   cyl(.25,.38,5,8,MATS.stableRoof(),[x,2.5,z]);
   const cone=new THREE.Mesh(new THREE.ConeGeometry(.7,4.5,8),MATS.hedgeGreen());
   cone.position.set(x,5.5,z); cone.castShadow=true; scene.add(cone);
 }
 
-function addTreeAt(x,y,z,scale=1){ // generic tropical tree
+// ─────────────────────────────────────────────────────────────────
+//   NO-BUILD ZONE REGISTRY
+//   Each entry is [cx, cz, halfW, halfD] in world metres.
+//   Trees (GLB and palm sprites) are suppressed inside these rects.
+// ─────────────────────────────────────────────────────────────────
+const NO_BUILD_ZONES = [
+  // Clubhouse + forecourt + parking
+  [0, 128, 75, 55],
+  // Stables complex
+  [-375, 90, 55, 45],
+  // West compound flat blocks
+  [-248, -25, 50, 22],
+  [-248,  55, 50, 22],
+  // Training field
+  [-390,  0, 65, 100],
+  // Service compound
+  [-255, 95, 30, 20],
+  [-240, 100, 22, 10],
+  // Commercial block east
+  [270, 65, 28, 18],
+  // Paddock / game park
+  [218, 0, 28, 28],
+  [218, 52, 30, 26],
+  // Polo field itself
+  [0, 0, 140, 76],
+  // Lake (north crescent)
+  [30, -115, 105, 18],
+  // East lake
+  [220, -48, 12, 22],
+];
+
+// Villa ring footprints added dynamically so trees don't sprout from villas
+const villaFootprints = []; // {cx,cz,r} circles per villa
+
+function registerVillaFootprint(x,z){
+  villaFootprints.push({cx:x, cz:z, r:12});
+}
+
+function isInNoBuildZone(x,z){
+  for(const [cx,cz,hw,hd] of NO_BUILD_ZONES){
+    if(Math.abs(x-cx)<=hw && Math.abs(z-cz)<=hd) return true;
+  }
+  for(const {cx,cz,r} of villaFootprints){
+    if((x-cx)*(x-cx)+(z-cz)*(z-cz) <= r*r) return true;
+  }
+  return false;
+}
+
+// ─────────────────────────────────────────────────────────────────
+//   3D TREE GLB SYSTEM
+//   Loads tree-mesh-v1.glb once, then clones it for each placement.
+//   The model has one flat side (baked from reference); we fix this
+//   by placing THREE clones rotated 0° / 120° / 240° around the
+//   same origin, so every viewpoint sees detailed geometry.
+// ─────────────────────────────────────────────────────────────────
+let treeGLBTemplate = null;
+let pendingTrees    = []; // {x,y,z,scale} queued before GLB ready
+
+function loadTreeGLB(){
+  makeDracoLoader().load("assets/tree-mesh-v1.glb",
+    gltf=>{
+      gltf.scene.traverse(c=>{
+        if(c.isMesh){
+          c.castShadow=true; c.receiveShadow=true;
+          // Make sure the canopy material renders from both sides so
+          // the "inside" of the mesh is never a hard silhouette cut.
+          if(c.material){
+            c.material = c.material.clone();
+            c.material.side = THREE.DoubleSide;
+            c.material.needsUpdate = true;
+          }
+        }
+      });
+      // Auto-sit on ground
+      const bbox = new THREE.Box3().setFromObject(gltf.scene);
+      if(bbox.min.y < 0) gltf.scene.position.y = -bbox.min.y;
+      treeGLBTemplate = gltf.scene;
+      pendingTrees.forEach(({x,y,z,scale})=>_placeTreeGLB(x,y,z,scale));
+      pendingTrees=[];
+      console.log("Tree GLB loaded OK");
+    },
+    null,
+    err=>{
+      console.warn("Tree GLB failed, falling back to procedural tree:", err.message||err);
+      // Drain the queue with fallback geometry
+      pendingTrees.forEach(({x,y,z,scale})=>_fallbackTree(x,y,z,scale));
+      pendingTrees=[];
+    }
+  );
+}
+
+function _fallbackTree(x,y,z,scale=1){
   cyl(.15,.22,4*scale,8,new THREE.MeshStandardMaterial({color:0x5c3c18,roughness:.88}),[x,2*scale,z]);
   const cr=new THREE.Mesh(new THREE.SphereGeometry(1.8*scale,8,6),MATS.grassGreen());
   cr.position.set(x,(4+1.8)*scale,z); cr.castShadow=true; scene.add(cr);
+}
+
+function _placeTreeGLB(x,y,z,scale=1){
+  if(!treeGLBTemplate){ pendingTrees.push({x,y,z,scale}); return; }
+
+  const group = new THREE.Group();
+  group.position.set(x, y || 0, z);
+
+  // THREE clones rotated 0 / 120 / 240 degrees around Y so the tree
+  // looks fully textured from all viewing angles (fixes the flat side).
+  for(let i=0;i<3;i++){
+    const clone = treeGLBTemplate.clone(true);
+    clone.rotation.y = (i * Math.PI * 2) / 3;
+    clone.scale.setScalar(scale);
+    // Each subsequent clone is slightly randomised in scale ±5% for variety
+    const jitter = 0.95 + Math.random()*0.1;
+    clone.scale.multiplyScalar(jitter);
+    group.add(clone);
+  }
+
+  scene.add(group);
+}
+
+// Public entry point replaces old addTreeAt everywhere
+function addTreeAt(x,y,z,scale=1){
+  if(isInNoBuildZone(x,z)) return;
+  _placeTreeGLB(x, y||0, z, scale);
 }
 
 function addLandscaping(){
