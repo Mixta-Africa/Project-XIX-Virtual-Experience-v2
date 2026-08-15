@@ -121,10 +121,10 @@ document.addEventListener("DOMContentLoaded", () => {
   bindPlotSystem();
   bindVillaInteriorBtn();
   initAudio();
-  // Register module functions with the window bridge (fixes onclick in non-module HTML)
-  window.__moduleReady = {
+  // Merge into __moduleReady     do NOT overwrite (product-panel.js may have set showProductPanel already)
+  window.__moduleReady = Object.assign(window.__moduleReady || {}, {
     applyTimePreset, applyWeather, toggleAerial, rotateVillaGLB,
-  };
+  });
   (window._pendingCalls || []).forEach(({fn,args}) => {
     if(window.__moduleReady[fn]) window.__moduleReady[fn](...args);
   });
