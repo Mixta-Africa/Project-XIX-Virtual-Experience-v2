@@ -233,21 +233,7 @@ export function buildViewpointStrip(container, onSelect) {
     container.appendChild(wrapper);
   });
   
-  // After strip is built, re-wire buttons to ALSO open product panel
-  container.querySelectorAll(".vp-btn").forEach(btn => {
-    const key = btn.dataset.key;
-    const productMap = {
-      villas:'villas', clubhouse:'clubhouse', stables:'stables',
-      lofts:'lofts', training:'training', paddock:'paddock',
-    };
-    if (productMap[key]) {
-      const origClick = btn.onclick;
-      btn.addEventListener("click", () => {
-        const fn = window.__moduleReady && window.__moduleReady.showProductPanel;
-        if (fn) fn(productMap[key]);
-      });
-    }
-  });
+  // Product panel is now opened inside onSelect callback in app.js
 
   // Close dropdowns when clicking elsewhere
   document.addEventListener("click", e => {
