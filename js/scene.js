@@ -101,7 +101,7 @@ function buildLighting() {
   const fill = new THREE.DirectionalLight(0xb8d0e8, 0.45);
   fill.position.set(120, 80, -100); scene.add(fill);
   // Clubhouse interior glow
-  [[-40,8,162],[0,8,162],[40,8,162]].forEach(p => {
+  [[-40,8,115],[0,8,115],[40,8,115]].forEach(p => {
     const pt = new THREE.PointLight(0xffe0a0, 2.0, 48, 2);
     pt.position.set(...p); scene.add(pt);
   });
@@ -215,7 +215,7 @@ function addGround(){
   s(plane(900,700,PBR.dirt(),[0,0,30]));
   s(plane(500,400,PBR.grass(),[0,.01,0]));
   // Clubhouse forecourt paving
-  s(plane(180,80,MATS.concrete(),[0,.02,170]));
+  s(plane(180,80,MATS.concrete(),[0,.02,122]));
   // Stables courtyard
   s(plane(90,70,MATS.cobble(),[-355,.02,90]));
   // West compound ground
@@ -341,7 +341,7 @@ function addEastLake(){
 
 //        CLUBHOUSE (Audit 4.1, 4.2, 4.3)                                                                                                                               
 function addClubhouse(){
-  const g=new THREE.Group(); g.position.set(0,0,155);
+  const g=new THREE.Group(); g.position.set(0,0,108);
   const cm=MATS.clubWhite();
   const gw=MAT_GLASS_WARM(.55);
   const gm=MAT_GLASS(.48);
@@ -380,13 +380,13 @@ function addClubhouse(){
   // PARKING both sides (Audit 4.1) - 50x20m each
   const am=MATS.roadAsph();
   const bayM=MATS.railWhite();
-  s(plane(50,20,am,[-68,.13,175]));
-  s(plane(50,20,am,[ 68,.13,175]));
+  s(plane(50,20,am,[-68,.13,128]));
+  s(plane(50,20,am,[ 68,.13,128]));
   for(const bx of[-68,68]) for(let i=-22;i<=22;i+=4.5)
-    s(box(.06,.04,5.5,bayM,[bx+i,.16,175],0,false));
+    s(box(.06,.04,5.5,bayM,[bx+i,.16,128],0,false));
 
   // Clubhouse avenue - double row of 8 palms (Audit 10.1)
-  for(let pz=140;pz<=160;pz+=8){ addPalmSprite(-12,.1,pz,1.3); addPalmSprite(12,.1,pz,1.3); }
+  for(let pz=93;pz<=113;pz+=8){ addPalmSprite(-12,.1,pz,1.3); addPalmSprite(12,.1,pz,1.3); }
 }
 
 function addUmbrella(parent,pos){
@@ -534,14 +534,15 @@ function addVillaRing(){
   northX.forEach(x=>{
     const dx=x-LAKE_CX;
     const bow=dx*dx<LAKE_R*LAKE_R ? BOW*(1-(dx*dx)/(LAKE_R*LAKE_R)) : 0;
-    placeVillaWithLandscape(x, -108-bow, 0);
+    placeVillaWithLandscape(x, -132-bow, 0);
   });
-  // SOUTH SW arc (5 units, face north ry=0, Audit 3.6)
+  // SOUTH ARC: gap at centre for clubhouse (x=0, width 110m, so |x|<55 is blocked)
+  // Only place where |x|>=65. Base z=105 flush with clubhouse front.
   for(const side of[-1,1]){
-    [20,48,76,104,132].forEach(xabs=>{
+    [65,93,121].forEach(xabs=>{
       const x=side*xabs;
-      const z=100+Math.abs(x)*.04;
-      placeVillaWithLandscape(x,z,0); // ALL face north (Audit 3.6 fix)
+      const z=105+Math.abs(x)*.04;
+      placeVillaWithLandscape(x,z,0);
     });
   }
 }
@@ -601,13 +602,13 @@ function createVillaFallback(){
 function addLoftTerraces(){
   // CRESCENT ROW 1 (curved with road, Audit 5.1)
   // NW arm: x=-310 to -85, NE arm: x=+85 to +265, gap abs(x)<80 (Audit 5.2)
-  for(let x=-310;x<=280;x+=22){
+  for(let x=-310;x<=280;x+=28){
     if(Math.abs(x)<82) continue; // wider gap over lake
     const cz=-168-Math.abs(x)*.05; // parabolic curve (Audit 5.1)
     s(createLoftBlock(x,cz,Math.PI)); // face south
   }
   // CRESCENT ROW 2 (outer row, z   -182)
-  for(let x=-295;x<=265;x+=22){
+  for(let x=-295;x<=265;x+=28){
     if(Math.abs(x)<82) continue;
     const cz=-182-Math.abs(x)*.04;
     s(createLoftBlock(x,cz,Math.PI));
@@ -652,8 +653,8 @@ function addWestCompound(){
 
   // Blocks of flats via GLB (E-W oriented, Audit 6.2)
   // North block: x=-248, z=-25. South block: x=-248, z=+55
-  placeAptGLB(-248,-25,0);   // E-W oriented (ry=0)
-  placeAptGLB(-248, 55,0);
+  placeAptGLB(-248,-25,Math.PI/2);   // E-W oriented (ry=0)
+  placeAptGLB(-248, 55,Math.PI/2);
 }
 
 function createFlatBlock(x,z){ // fallback if GLB fails
@@ -780,7 +781,7 @@ function addLandscaping(){
   for(let x=-55;x<=115;x+=16){ addPalmSprite(x,.1,-104,1.1); addPalmSprite(x,.1,-126,1.0); }
 
   // Clubhouse avenue flanks
-  for(const pz of[142,150,158,166]){ addPalmSprite(-16,.1,pz,1.2); addPalmSprite(16,.1,pz,1.2); }
+  for(const pz of[95,103,111,119]){ addPalmSprite(-16,.1,pz,1.2); addPalmSprite(16,.1,pz,1.2); }
 
   // East green area dense planting (Audit 10.3)
   for(let tx=240;tx<=290;tx+=7) for(let tz=-80;tz<=-20;tz+=7) addTreeAt(tx,.1,tz,.7+Math.random()*.6);
