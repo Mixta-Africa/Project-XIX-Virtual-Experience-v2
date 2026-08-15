@@ -594,6 +594,35 @@
 </div>
 <div class="pp-overlay" onclick="closeProductPanel()"></div>
 
+
+<!-- INTERIOR WALKTHROUGH OVERLAY -->
+<div id="interior-overlay" class="interior-overlay" aria-modal="true" role="dialog">
+  <div class="int-header">
+    <div class="int-header-left">
+      <span class="int-building-name eyebrow">Premium Villa</span>
+      <span class="int-room-label">Living Room</span>
+      <span class="int-room-hint">Polo field view</span>
+    </div>
+    <div class="int-header-right">
+      <button id="int-exit-btn" class="int-exit-btn" aria-label="Exit interior view">
+        &times; Exit Interior
+      </button>
+    </div>
+  </div>
+
+  <canvas id="interior-canvas" aria-label="Interior walkthrough view"></canvas>
+
+  <div class="int-crosshair" aria-hidden="true"></div>
+
+  <div class="int-room-strip" id="int-room-strip">
+    <!-- Room buttons injected by JS -->
+  </div>
+
+  <div class="int-controls-hint" aria-hidden="true">
+    Click to look &middot; WASD to walk &middot; ESC to exit
+  </div>
+</div>
+
 <!-- ═══ SCRIPTS ═══════════════════════════════════════════════════ -->
 <script type="importmap">
   {
@@ -617,14 +646,82 @@ window._pendingCalls = [];
 </script>
 <script type="module" src="js/app.js"></script>
 <script type="module">
-  import { openProductPanel, closeProductPanel, resizePanelViewer } from "./js/product-panel.js";
-  // Expose to window bridge
-  Object.assign(window.__moduleReady || (window.__moduleReady = {}), {
-    showProductPanel: openProductPanel,
-    closeProductPanel,
+import { initInterior, openInterior, closeInterior, resizeInterior, getInteriorRooms, INTERIORS } from "./js/interior.js";
+
+// Init interior renderer on the canvas
+const intCanvas = document.getElementById("interior-canvas");
+initInterior(intCanvas);
+
+// Expose to window
+window.openInteriorView = function(buildingType, roomKey) {
+  const overlay = document.getElementById("interior-overlay");
+  const bld = INTERIORS[buildingType];
+  if (!bld) return;
+
+  // Set header
+  overlay.querySelector(".int-building-name").textContent = bld.name;
+
+  // Build room strip
+  const strip = document.getElementById("int-room-strip");
+  strip.innerHTML = "";
+  bld.rooms.forEach(room => {
+    const btn = document.createElement("button");
+    btn.className = "int-room-btn";
+    btn.dataset.key = room.key;
+    btn.innerHTML = `<span class="irb-label">${room.label}</span><span class="irb-sub">${room.sublabel}</span>`;
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".int-room-btn").forEach(b=>b.classList.remove("active"));
+      btn.classList.add("active");
+      overlay.querySelector(".int-room-label").textContent = room.label;
+      overlay.querySelector(".int-room-hint").textContent  = room.hint || room.sublabel;
+      openInterior(buildingType, room.key);
+    });
+    strip.appendChild(btn);
   });
+
+  // Activate first room
+  strip.querySelector(".int-room-btn")?.classList.add("active");
+  const firstRoom = bld.rooms[0];
+  overlay.querySelector(".int-room-label").textContent = firstRoom.label;
+  overlay.querySelector(".int-room-hint").textContent  = firstRoom.hint || firstRoom.sublabel;
+
+  // Size canvas
+  const W = window.innerWidth, H = window.innerHeight;
+  intCanvas.width  = W; intCanvas.height = H;
+  resizeInterior(W, H);
+
+  // Open
+  openInterior(buildingType, firstRoom.key);
+  overlay.classList.add("open");
+  document.body.classList.add("interior-open");
+};
+
+window.closeInteriorView = function() {
+  document.getElementById("interior-overlay")?.classList.remove("open");
+  document.body.classList.remove("interior-open");
+  closeInterior();
+};
+
+document.getElementById("int-exit-btn")?.addEventListener("click", () => window.closeInteriorView());
+window.addEventListener("resize", () => {
+  const W=window.innerWidth, H=window.innerHeight;
+  intCanvas.width=W; intCanvas.height=H;
+  resizeInterior(W, H);
+});
+</script>
+<script type="module">
+  import { openProductPanel, closeProductPanel, resizePanelViewer } from "./js/product-panel.js";
+  // Register immediately AND set up a persistent getter so app.js overwrite cannot break it
+  window.__moduleReady = window.__moduleReady || {};
+  window.__moduleReady.showProductPanel = openProductPanel;
+  window.__moduleReady.closeProductPanel = closeProductPanel;
   window.closeProductPanel = closeProductPanel;
-  // Resize viewer on window resize
+  // Re-register after a tick in case app.js DOMContentLoaded fires later and overwrites
+  setTimeout(() => {
+    window.__moduleReady = window.__moduleReady || {};
+    window.__moduleReady.showProductPanel = openProductPanel;
+    window.__moduleReady.closeProductPanel = closeProductPanel;
+  }, 500);
   window.addEventListener("resize", resizePanelViewer, { passive: true });
 </script>
 
