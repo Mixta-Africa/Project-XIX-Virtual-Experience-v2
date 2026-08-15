@@ -1672,3 +1672,48 @@ body.world-open { overflow: hidden; position: fixed; width: 100%; }
   line-height: 1.8;
   pointer-events: none;
 }
+
+/* ─── VIEWPOINT DROPDOWN ─────────────────────────────────────── */
+
+.vp-wrapper { position: relative; flex-shrink: 0; }
+
+.vp-chevron {
+  font-size: .55rem;
+  margin-left: .3rem;
+  opacity: .7;
+  vertical-align: middle;
+}
+
+.vp-dropdown {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  flex-direction: column;
+  background: rgba(6, 18, 8, 0.97);
+  border: 1px solid rgba(201,168,76,0.35);
+  border-radius: 4px;
+  overflow: hidden;
+  min-width: 140px;
+  box-shadow: 0 -8px 24px rgba(0,0,0,0.6);
+  z-index: 60;
+}
+
+.vp-dropdown-item {
+  padding: .65rem 1rem;
+  font-size: .72rem;
+  font-weight: 500;
+  letter-spacing: .05em;
+  color: rgba(240,236,224,.75);
+  text-align: left;
+  border: none;
+  background: none;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(201,168,76,.08);
+  transition: background .15s, color .15s;
+  white-space: nowrap;
+}
+.vp-dropdown-item:last-child { border-bottom: none; }
+.vp-dropdown-item:hover {
+  background: rgba(201,168,76,.12);
+  color: var(--gold-300);
+}
