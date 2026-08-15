@@ -1,382 +1,812 @@
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
 /**
- * Project XIX     UI Module
- * Minimap, loading screen, viewpoint strip, zone info panel, spatial audio stubs.
+ * Project XIX     Main Application Entry Point
+ * Orchestrates: landing, masterplan, 3D walkthrough, VR.
  */
 
-import { WORLD, VIEWPOINTS, ZONES } from "./data.js";
+import { VIEWPOINTS, ZONES, WORLD } from "./data.js";
+import { buildVillaInterior, VILLA_VIEWPOINTS } from "./villa-interior.js";
+import { initScene, getRenderer, getScene, getCamera, getClock, tickScene, updateSky, plotRegistry, reservePlot, getPlotAtRay } from "./scene.js?v=22";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime } from "./graphics.js";
+import {
+  initControls, activate, deactivate, setView, updateControls, getYaw,
+  requestGyro, enterVR
+} from "./controls.js";
+import {
+  initMinimap, updateMinimap,
+  buildViewpointStrip, showZonePanel, hideZonePanel,
+  showLoading, hideLoading, setLoadingProgress,
+  setCaption, showEnterPrompt, hideEnterPrompt,
+  showVRButton, showJoystick, hideJoystick, isMobile,
+  enableAudio, updateSpatialAudio, initAudio
+} from "./ui.js";
 
-//           LOADING SCREEN                                                                                                                                                                                  
+//           STATE                                                                                                                                                                                                             
 
-export function showLoading() {
-  const el = document.getElementById("loading-screen");
-  if (el) el.style.display = "flex";
-}
+let sceneReady = false;
+let villaInteriorActive = false;
+let villaScene = null;
+let villaRenderer = null;
+let introPlaying = false;
+let currentViewKey = "field_centre";
+let animFrameId = null;
+let composer = null;
+let aerialOrbit  = false;
+let aerialAngle  = 0;
+let aerialYawOffset = 0;   // mouse/touch drag adds to the base orbit angle
+let aerialPitch  = -Math.PI / 2.5;  // tilt (~40 deg down)
+let aerialDragging = false;
+let aerialLastX  = 0, aerialLastY = 0;
+const AERIAL_RADIUS = 220;
+const AERIAL_HEIGHT = 200;
+const AERIAL_SPEED  = 0.12;   // orbit speed (radians/sec)
 
-export function hideLoading() {
-  const el = document.getElementById("loading-screen");
-  if (!el) return;
-  el.style.opacity = "0";
-  setTimeout(() => { el.style.display = "none"; }, 600);
-}
-
-export function setLoadingProgress(pct) {
-  const bar = document.getElementById("loading-bar-fill");
-  if (bar) bar.style.width = `${Math.min(100, pct)}%`;
-}
-
-//           MINIMAP                                                                                                                                                                                                    
-
-let minimapCanvas, minimapCtx, minimapPlanImage;
-let minimapReady = false;
-
-//        MINIMAP WORLD     CANVAS CALIBRATION                                                                         
-// The plan-2d.png image maps to the scene as follows:
-//   Image LEFT edge  = world X     -252 (west perimeter)
-//   Image RIGHT edge = world X     +252 (east perimeter)
-//   Image TOP edge   = world Z     -200 (north / lake side)
-//   Image BOTTOM edge= world Z     +210 (south / Lagos Road)
-// These are tuned to the actual scene geometry in scene.js.
-// Bounds calibrated to corrected scene.js geometry:
-// North (lake side) = z=-260, South (Lagos Road) = z=+225
-// West (stables) = x=-270, East (commercial) = x=+225
-const MAP = {
-  xMin: -270, xMax: 225,
-  zMin: -260, zMax: 225,
+//           WEATHER / TIME PRESETS                                                                                                                                                       
+const TIME_PRESETS = {
+  morning:   { sky:["#1e3a5a","#7aaac8","#4a7a38"], sunCol:0xffd080, sunInt:1.8, sunPos:[-80,55,-80],   fog:"#8ab8cc", fogD:0.0008, exp:0.92, hemiInt:0.9 },
+  afternoon: { sky:["#1a3a6a","#5a9acc","#3a6a30"], sunCol:0xffe8b0, sunInt:2.2, sunPos:[-160,160,100], fog:"#8ab8cc", fogD:0.0009, exp:1.02, hemiInt:1.2 },
+  sunset:    { sky:["#0a1830","#c84818","#4a2a10"], sunCol:0xff8030, sunInt:1.6, sunPos:[-100,28,60],   fog:"#c06040", fogD:0.0012, exp:1.05, hemiInt:0.8 },
+  night:     { sky:["#000508","#020a14","#050a08"], sunCol:0x304870, sunInt:0.12,sunPos:[0,40,-80],     fog:"#020810", fogD:0.0015, exp:0.55, hemiInt:0.15 },
 };
 
-export function initMinimap(planImageSrc) {
-  minimapCanvas = document.getElementById("minimap-canvas");
-  if (!minimapCanvas) return;
-
-  //        CRITICAL: set canvas pixel dimensions to match its CSS display size
-  // CSS: width=200px height=130px (updated below). Canvas must match exactly
-  // so coordinate math is pixel-perfect.
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  minimapCanvas.width  = 200 * dpr;
-  minimapCanvas.height = 130 * dpr;
-  minimapCtx = minimapCanvas.getContext("2d");
-  minimapCtx.scale(dpr, dpr);  // scale for HiDPI
-
-  minimapPlanImage = new Image();
-  minimapPlanImage.onload = () => { minimapReady = true; };
-  minimapPlanImage.src = planImageSrc;
+function applyTimePreset(name) {
+  const p = TIME_PRESETS[name]; if (!p) return;
+  document.querySelectorAll(".wx-time-btn").forEach(b =>
+    b.classList.toggle("active", b.dataset.time === name));
+  try { updateSky(...p.sky); } catch(e){}
+  try { setBloomForTime(name); } catch(e){}
+  const s = getScene();
+  if (s && s.fog) {
+    s.fog.color.set(p.fog);
+    s.fog.density = p.fogD;
+  }
+  if (s) {
+    // Find directional sun light
+    s.traverse(o => {
+      if (o.isDirectionalLight && o.castShadow) {
+        o.color.setHex(p.sunCol);
+        o.intensity = p.sunInt;
+        o.position.set(...p.sunPos);
+      }
+      if (o.isHemisphereLight) {
+        o.intensity = p.hemiInt || 1.2;
+      }
+    });
+  }
+  const r = getRenderer();
+  if (r) r.toneMappingExposure = p.exp;
 }
 
-export function updateMinimap(worldX, worldZ, yawRad) {
-  if (!minimapCtx) return;
+function applyWeather(w) {
+  document.querySelectorAll(".wx-weather-btn").forEach(b =>
+    b.classList.toggle("active", b.dataset.weather === w));
+  const s = getScene();
+  if (!s || !s.fog) return;
+  const baseD = TIME_PRESETS.afternoon.fogD;
+  if (w === "rain")   s.fog.density = baseD * 3.5;
+  else if (w === "cloudy") s.fog.density = baseD * 1.8;
+  else s.fog.density = baseD;
+}
 
-  // Display size (matches CSS)
-  const W = 200;
-  const H = 130;
+window.applyTimePreset = applyTimePreset;
 
-  minimapCtx.clearRect(0, 0, W, H);
+// GLB orientation calibration     lets you test which face is "front"
+// without re-deploying. Call from browser console or UI buttons.
+let glbBaseRotation = 0;
+window.rotateVillaGLB = function(degrees) {
+  glbBaseRotation = degrees * Math.PI / 180;
+  const scene = getScene();
+  if (!scene) return;
+  document.querySelectorAll("#glb-orient-group .wx-btn").forEach(b =>
+    b.classList.toggle("active", b.textContent.trim() === degrees + "  ")
+  );
+  // Find all cloned villa GLB root groups and update their Y rotation offset
+  scene.traverse(obj => {
+    if (obj.userData && obj.userData.isVillaGLB) {
+      obj.rotation.y = obj.userData.baseRotY + glbBaseRotation;
+    }
+  });
+  console.log("Villa GLB rotated by", degrees, "degrees");
+};
+window.applyWeather    = applyWeather;
 
-  //        Background: plan image
-  if (minimapReady && minimapPlanImage.complete) {
-    minimapCtx.globalAlpha = 0.9;
-    minimapCtx.drawImage(minimapPlanImage, 0, 0, W, H);
-    minimapCtx.globalAlpha = 1;
-  } else {
-    // Fallback: dark green fill with field outline
-    minimapCtx.fillStyle = "#0d2018";
-    minimapCtx.fillRect(0, 0, W, H);
-    minimapCtx.strokeStyle = "#3a7a50";
-    minimapCtx.lineWidth = 1;
-    // Field rectangle approx (centre of map)
-    minimapCtx.strokeRect(W*0.28, H*0.25, W*0.44, H*0.50);
+//           BOOT                                                                                                                                                                                                                
+
+document.addEventListener("DOMContentLoaded", () => {
+  bootLandingCanvas();
+  bindMasterplan();
+  bindNav();
+  bindExitButton();
+  bindSectionScrollAnim();
+  bindPlotSystem();
+  bindVillaInteriorBtn();
+  initAudio();
+  // Merge into __moduleReady     do NOT overwrite (product-panel.js may have set showProductPanel already)
+  window.__moduleReady = Object.assign(window.__moduleReady || {}, {
+    applyTimePreset, applyWeather, toggleAerial, rotateVillaGLB,
+  });
+  (window._pendingCalls || []).forEach(({fn,args}) => {
+    if(window.__moduleReady[fn]) window.__moduleReady[fn](...args);
+  });
+  window._pendingCalls = [];
+});
+
+//           HERO CANVAS ANIMATION                                                                                                                                                             
+
+function bootLandingCanvas() {
+  const canvas = document.getElementById("hero-canvas");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  let tick = 0;
+  let w = 0, h = 0;
+
+  function resize() {
+    const dpr = window.devicePixelRatio || 1;
+    w = canvas.offsetWidth; h = canvas.offsetHeight;
+    canvas.width  = w * dpr;
+    canvas.height = h * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
-  //        World     canvas pixel mapping (clamped)
-  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
-  const px = clamp(
-    ((worldX - MAP.xMin) / (MAP.xMax - MAP.xMin)) * W,
-    4, W - 4
-  );
-  const py = clamp(
-    ((worldZ - MAP.zMin) / (MAP.zMax - MAP.zMin)) * H,
-    4, H - 4
-  );
+  function draw() {
+    tick += 0.004;
+    // Deep green-to-black sky
+    const sky = ctx.createLinearGradient(0, 0, 0, h);
+    sky.addColorStop(0,    "#0d2218");
+    sky.addColorStop(0.55, "#0a1810");
+    sky.addColorStop(1,    "#070d08");
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, w, h);
 
-  //        Accuracy ring (shows approx position area)
-  minimapCtx.beginPath();
-  minimapCtx.arc(px, py, 10, 0, Math.PI * 2);
-  minimapCtx.fillStyle = "rgba(201,168,76,0.15)";
-  minimapCtx.fill();
-
-  //        Direction wedge (facing direction)
-  minimapCtx.save();
-  minimapCtx.translate(px, py);
-  minimapCtx.rotate(yawRad); // yaw 0 = north (-Z) = arrow up; yaw PI/2 = east (+X) = arrow right
-
-  minimapCtx.beginPath();
-  minimapCtx.moveTo(0, -14);
-  minimapCtx.lineTo(6, 4);
-  minimapCtx.lineTo(0, 0);
-  minimapCtx.lineTo(-6, 4);
-  minimapCtx.closePath();
-  minimapCtx.fillStyle = "#ffffff";
-  minimapCtx.strokeStyle = "#0a0f0c";
-  minimapCtx.lineWidth = 1.5;
-  minimapCtx.shadowColor = "#ffffff";
-  minimapCtx.shadowBlur = 8;
-  minimapCtx.fill();
-  minimapCtx.stroke();
-
-  minimapCtx.restore();
-
-  //        Bright position dot (always visible)
-  minimapCtx.beginPath();
-  minimapCtx.arc(px, py, 4.5, 0, Math.PI * 2);
-  minimapCtx.fillStyle = "#ff4444";
-  minimapCtx.strokeStyle = "#ffffff";
-  minimapCtx.lineWidth = 1.5;
-  minimapCtx.shadowColor = "#ff4444";
-  minimapCtx.shadowBlur = 10;
-  minimapCtx.fill();
-  minimapCtx.stroke();
-
-  //        Crosshair lines through dot
-  minimapCtx.shadowBlur = 0;
-  minimapCtx.strokeStyle = "rgba(255,255,255,0.5)";
-  minimapCtx.lineWidth = 0.5;
-  minimapCtx.beginPath();
-  minimapCtx.moveTo(px - 8, py); minimapCtx.lineTo(px + 8, py);
-  minimapCtx.moveTo(px, py - 8); minimapCtx.lineTo(px, py + 8);
-  minimapCtx.stroke();
-
-  //        Coordinates readout (bottom-left of minimap)
-  minimapCtx.font = "bold 8px monospace";
-  minimapCtx.fillStyle = "rgba(201,168,76,0.9)";
-  minimapCtx.shadowColor = "#000";
-  minimapCtx.shadowBlur = 3;
-  minimapCtx.fillText(
-    `${Math.round(worldX)}m E  ${Math.round(-worldZ)}m N`,
-    4, H - 4
-  );
-}
-
-//           VIEWPOINT STRIP                                                                                                                                                                               
-
-const viewpointIcons = {
-  pitch:    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="8" width="18" height="10" rx="1"/><line x1="12" y1="8" x2="12" y2="18"/></svg>`,
-  clubhouse:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="11" width="18" height="8"/><path d="M2 11L12 4l10 7"/></svg>`,
-  lake:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 14c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/><path d="M2 18c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/></svg>`,
-  villa:    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="4" y="10" width="16" height="10"/><path d="M2 10L12 3l10 7"/><rect x="9" y="14" width="6" height="6"/></svg>`,
-  loft:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="8" width="20" height="13"/><line x1="7" y1="8" x2="7" y2="21"/><line x1="14" y1="8" x2="14" y2="21"/></svg>`,
-  stables:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 20V10l8-6 8 6v10"/><path d="M10 20v-5h4v5"/></svg>`,
-  aerial:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="12" cy="12" r="9"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>`,
-};
-
-export function buildViewpointStrip(container, onSelect) {
-  if (!container) return;
-  container.innerHTML = "";
-
-  // Map viewpoint keys to product panel keys
-  const PRODUCT_MAP = {
-    villas:"villas", clubhouse:"clubhouse", stables:"stables",
-    lofts:"lofts", training:"training", paddock:"paddock", flats:"flats",
-  };
-
-  Object.entries(VIEWPOINTS).forEach(([key, vp]) => {
-    if (key === "intro") return;
-
-    const wrapper = document.createElement("div");
-    wrapper.className = "vp-wrapper";
-
-    const btn = document.createElement("button");
-    btn.className   = "vp-btn";
-    btn.dataset.key = key;
-    const hasSubViews = vp.subViews && vp.subViews.length > 0;
-    btn.innerHTML = `
-      <span class="vp-icon">${viewpointIcons[vp.icon] || viewpointIcons.pitch}</span>
-      <span class="vp-label">${vp.label}${hasSubViews ? " <span class=\"vp-chevron\">&#9652;</span>" : ""}</span>
-    `;
-
-    if (hasSubViews) {
-      // Dropdown for viewpoints with sub-views (e.g. Villas: West/East/North/South)
-      const menu = document.createElement("div");
-      menu.className = "vp-dropdown";
-      menu.style.display = "none";
-
-      vp.subViews.forEach(sv => {
-        const sbtn = document.createElement("button");
-        sbtn.className   = "vp-dropdown-item";
-        sbtn.textContent = sv.label;
-        sbtn.addEventListener("click", e => {
-          e.stopPropagation();
-          document.querySelectorAll(".vp-btn").forEach(b=>b.classList.remove("active"));
-          btn.classList.add("active");
-          menu.style.display = "none";
-          btn.querySelector(".vp-chevron").innerHTML = "&#9652;";
-          // Teleport
-          onSelect(sv.key, sv);
-          // Open product panel
-          const tryOpenSub = (attempts) => {
-            const fn = window.__moduleReady?.showProductPanel;
-            if (fn) { fn(PRODUCT_MAP[key] || PRODUCT_MAP[sv.key]); return; }
-            if (attempts > 0) setTimeout(() => tryOpenSub(attempts - 1), 100);
-          };
-          tryOpenSub(10);
-        });
-        menu.appendChild(sbtn);
-      });
-
-      btn.addEventListener("click", () => {
-        const isOpen = menu.style.display !== "none";
-        document.querySelectorAll(".vp-dropdown").forEach(d=>d.style.display="none");
-        document.querySelectorAll(".vp-chevron").forEach(ch=>ch.innerHTML="&#9652;");
-        menu.style.display = isOpen ? "none" : "flex";
-        btn.querySelector(".vp-chevron").innerHTML = isOpen ? "&#9652;" : "&#9662;";
-      });
-
-      wrapper.appendChild(btn);
-      wrapper.appendChild(menu);
-
-    } else {
-      // Simple button: teleport + open product panel
-      btn.addEventListener("click", () => {
-        document.querySelectorAll(".vp-btn").forEach(b=>b.classList.remove("active"));
-        document.querySelectorAll(".vp-dropdown").forEach(d=>d.style.display="none");
-        btn.classList.add("active");
-        // Teleport immediately
-        onSelect(key, vp);
-        // Open product panel - retry up to 10x if module not ready yet
-        const productKey = PRODUCT_MAP[key];
-        if (productKey) {
-          const tryOpen = (attempts) => {
-            const fn = window.__moduleReady?.showProductPanel;
-            if (fn) { fn(productKey); return; }
-            if (attempts > 0) setTimeout(() => tryOpen(attempts - 1), 100);
-          };
-          tryOpen(10);
-        }
-      });
-      wrapper.appendChild(btn);
+    // Stars (static seed)
+    ctx.fillStyle = "rgba(255,248,220,0.7)";
+    for (let i = 0; i < 60; i++) {
+      const sx = ((i * 137.5) % w);
+      const sy = ((i * 91.3) % (h * 0.45));
+      const size = (Math.sin(tick * 2 + i) * 0.5 + 0.5) * 1.2 + 0.4;
+      ctx.beginPath();
+      ctx.arc(sx, sy, size, 0, Math.PI * 2);
+      ctx.fill();
     }
 
-    container.appendChild(wrapper);
+    // Crescent lake reflection glow
+    const lakeGlow = ctx.createRadialGradient(w * 0.5, h * 0.22, 20, w * 0.5, h * 0.22, w * 0.38);
+    lakeGlow.addColorStop(0,   `rgba(30,130,170,${0.18 + Math.sin(tick * 3) * 0.04})`);
+    lakeGlow.addColorStop(1,   "rgba(0,0,0,0)");
+    ctx.fillStyle = lakeGlow;
+    ctx.fillRect(0, 0, w, h);
+
+    // Ground horizon
+    const ground = ctx.createLinearGradient(0, h * 0.52, 0, h);
+    ground.addColorStop(0, "rgba(22, 65, 40, 0.9)");
+    ground.addColorStop(1, "rgba(10, 30, 18, 1)");
+    ctx.fillStyle = ground;
+    ctx.beginPath();
+    ctx.moveTo(0, h * 0.52);
+    ctx.bezierCurveTo(w * 0.25, h * 0.48, w * 0.75, h * 0.56, w, h * 0.50);
+    ctx.lineTo(w, h);
+    ctx.lineTo(0, h);
+    ctx.closePath();
+    ctx.fill();
+
+    // Polo field     mowed stripe perspective
+    ctx.save();
+    const fW = w * 0.56, fH = h * 0.26;
+    const fX = (w - fW) / 2, fY = h * 0.55;
+    for (let i = 0; i < 10; i++) {
+      const alpha = 0.12 + (i / 10) * 0.15;
+      ctx.fillStyle = i % 2 === 0
+        ? `rgba(70,155,65,${alpha})`
+        : `rgba(55,130,50,${alpha})`;
+      ctx.fillRect(fX, fY + (i / 10) * fH, fW, fH / 10 + 1);
+    }
+    // Field border lines
+    ctx.strokeStyle = "rgba(248,245,220,0.35)";
+    ctx.lineWidth = 1.2;
+    ctx.strokeRect(fX, fY, fW, fH);
+    // Yard lines
+    for (const xFrac of [0.22, 0.33, 0.5, 0.67, 0.78]) {
+      ctx.beginPath();
+      ctx.moveTo(fX + fW * xFrac, fY);
+      ctx.lineTo(fX + fW * xFrac, fY + fH);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // Approach lights (vanishing perspective)
+    for (let i = 0; i < 28; i++) {
+      const depth = i / 28;
+      const spread = w * (0.04 + depth * 0.55);
+      const lightY = h * (0.54 + depth * 0.44);
+      const glow = 0.25 - depth * 0.14 + Math.sin(tick * 18 + i * 0.7) * 0.04;
+      ctx.fillStyle = `rgba(201, 168, 76, ${Math.max(0.04, glow)})`;
+      for (const side of [-1, 1]) {
+        ctx.beginPath();
+        ctx.arc(w * 0.5 + side * spread, lightY, 2.5 + depth * 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // Distant palm silhouettes
+    for (let i = 0; i < 14; i++) {
+      const px = (i / 13) * w;
+      const pBase = h * 0.51 + Math.sin(i * 1.7) * h * 0.03;
+      const pScale = 0.7 + Math.sin(i * 0.9) * 0.3;
+      drawPalmSilhouette(ctx, px, pBase, pScale, tick + i);
+    }
+
+    requestAnimationFrame(draw);
+  }
+
+  window.addEventListener("resize", resize);
+  resize();
+  draw();
+}
+
+function drawPalmSilhouette(ctx, x, base, scale, phase) {
+  const h_trunk = 55 * scale;
+  ctx.strokeStyle = `rgba(8, 22, 14, 0.9)`;
+  ctx.lineWidth = 2.5 * scale;
+  ctx.beginPath();
+  ctx.moveTo(x, base);
+  const lean = Math.sin(phase * 0.5) * 4;
+  ctx.bezierCurveTo(x + lean, base - h_trunk * 0.4, x + lean * 1.5, base - h_trunk * 0.7, x + lean * 2, base - h_trunk);
+  ctx.stroke();
+
+  // Fronds
+  ctx.lineWidth = 1.2 * scale;
+  for (let i = 0; i < 7; i++) {
+    const angle = (i / 7) * Math.PI * 2 + phase * 0.2;
+    ctx.beginPath();
+    ctx.moveTo(x + lean * 2, base - h_trunk);
+    ctx.quadraticCurveTo(
+      x + lean * 2 + Math.cos(angle) * 22 * scale,
+      base - h_trunk + Math.sin(angle) * 8 * scale - 10 * scale,
+      x + lean * 2 + Math.cos(angle) * 30 * scale,
+      base - h_trunk + Math.sin(angle) * 18 * scale
+    );
+    ctx.stroke();
+  }
+}
+
+//           MASTERPLAN                                                                                                                                                                                              
+
+function bindMasterplan() {
+  const planImg  = document.getElementById("plan-image");
+  const zoneLayer = document.getElementById("zone-layer");
+  if (!planImg || !zoneLayer) return;
+
+  // Build SVG zone hotspots
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 100 100");
+  svg.setAttribute("preserveAspectRatio", "none");
+  svg.style.cssText = "position:absolute;inset:0;width:100%;height:100%;cursor:crosshair;";
+
+  Object.entries(ZONES).forEach(([key, zone]) => {
+    const { l, t, w, h } = zone.hot;
+    const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    rect.setAttribute("x", l);
+    rect.setAttribute("y", t);
+    rect.setAttribute("width", w);
+    rect.setAttribute("height", h);
+    rect.setAttribute("rx", "0.8");
+    rect.setAttribute("fill", zone.color + "28");
+    rect.setAttribute("stroke", zone.color);
+    rect.setAttribute("stroke-width", "0.4");
+    rect.style.cursor = "pointer";
+    rect.style.transition = "fill 0.2s";
+
+    // Label
+    const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    text.setAttribute("x", l + w / 2);
+    text.setAttribute("y", t + h / 2 + 1);
+    text.setAttribute("text-anchor", "middle");
+    text.setAttribute("font-size", "2.2");
+    text.setAttribute("fill", "#f8f4e8");
+    text.setAttribute("font-family", "Inter, sans-serif");
+    text.setAttribute("font-weight", "500");
+    text.setAttribute("paint-order", "stroke");
+    text.setAttribute("stroke", "#0a1008");
+    text.setAttribute("stroke-width", "0.8");
+    text.setAttribute("pointer-events", "none");
+    text.textContent = zone.label;
+
+    rect.addEventListener("mouseenter", () => {
+      rect.setAttribute("fill", zone.color + "55");
+      showZonePanel(key);
+    });
+    rect.addEventListener("mouseleave", () => {
+      rect.setAttribute("fill", zone.color + "28");
+    });
+    rect.addEventListener("click", () => {
+      showZonePanel(key);
+      if (zone.viewpoint) {
+        openWorldAt(zone.viewpoint);
+      }
+    });
+
+    svg.appendChild(rect);
+    svg.appendChild(text);
   });
 
-  // Close dropdowns on outside click
-  document.addEventListener("click", e => {
-    if (!e.target.closest(".vp-wrapper")) {
-      document.querySelectorAll(".vp-dropdown").forEach(d=>d.style.display="none");
-      document.querySelectorAll(".vp-chevron").forEach(ch=>ch.innerHTML="&#9652;");
-    }
-  }, { passive:true });
+  zoneLayer.appendChild(svg);
 }
 
-//           ZONE INFO PANEL                                                                                                                                                                               
+//           NAV                                                                                                                                                                                                                   
 
-export function showZonePanel(zoneKey) {
-  const zone = ZONES[zoneKey];
-  if (!zone) return;
-  const panel = document.getElementById("zone-panel");
+function bindPlotSystem() {
+  // Left-click in 3D world -> check if it hits a plot overlay
+  const canvas = document.getElementById("world-canvas");
+  if (!canvas) return;
+  canvas.addEventListener("click", e => {
+    if (!document.getElementById("world-overlay")?.classList.contains("open")) return;
+    const rect = canvas.getBoundingClientRect();
+    const mouse = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width)  * 2 - 1,
+     -((e.clientY - rect.top)  / rect.height) * 2 + 1
+    );
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(mouse, getCamera());
+    const plotKey = getPlotAtRay(raycaster);
+    if (plotKey) showPlotPanel(plotKey);
+  });
+}
+
+function showPlotPanel(plotKey) {
+  const plot = plotRegistry.get(plotKey);
+  if (!plot) return;
+  const panel = document.getElementById("plot-panel");
   if (!panel) return;
-
-  panel.querySelector(".zone-type").textContent     = zone.type;
-  panel.querySelector(".zone-label").textContent    = zone.label;
-  panel.querySelector(".zone-tagline").textContent  = zone.tagline;
-  panel.querySelector(".zone-desc").textContent     = zone.description;
-  panel.querySelector(".zone-client").textContent   = zone.clientLens;
+  const [x, z] = plotKey.split(",").map(Number);
+  const side = x < 0 ? "West" : x === 0 ? "Centre" : "East";
+  const pos  = z < -50 ? "North" : z > 50 ? "South" : "Mid";
+  panel.querySelector(".plot-id").textContent    = `Plot ${plotKey}`;
+  panel.querySelector(".plot-location").textContent = `${pos} ${side}     Premium Villa`;
+  panel.querySelector(".plot-status").textContent   = plot.status === "available" ? "Available" : "Reserved";
+  panel.querySelector(".plot-status").className  = "plot-status " + plot.status;
+  const btn = panel.querySelector(".plot-reserve-btn");
+  btn.disabled = plot.status !== "available";
+  btn.textContent = plot.status === "available" ? "Reserve This Plot" : "Already Reserved";
+  btn.onclick = () => {
+    if (reservePlot(plotKey)) {
+      showPlotPanel(plotKey); // refresh panel
+      showNotification("Plot reserved! Our team will contact you within 24 hours.");
+    }
+  };
   panel.classList.add("visible");
+  document.getElementById("plot-panel-close")?.addEventListener("click", ()=> panel.classList.remove("visible"), {once:true});
 }
 
-export function hideZonePanel() {
-  const panel = document.getElementById("zone-panel");
-  if (panel) panel.classList.remove("visible");
+function showNotification(msg) {
+  const n = document.getElementById("notification");
+  if (!n) return;
+  n.textContent = msg; n.classList.add("show");
+  setTimeout(() => n.classList.remove("show"), 4500);
 }
 
-//           SPATIAL AUDIO                                                                                                                                                                                     
+window.closeWorldAndPlot = function() {
+  document.getElementById("plot-panel")?.classList.remove("visible");
+  document.getElementById("world-overlay")?.classList.remove("open");
+  document.body.style.overflow = "";
+};
 
-let audioCtx;
-const audioSources = {};
+function bindNav() {
+  document.querySelectorAll("[data-section]").forEach(link => {
+    link.addEventListener("click", e => {
+      e.preventDefault();
+      const target = document.getElementById(link.dataset.section);
+      if (target) target.scrollIntoView({ behavior: "smooth" });
+    });
+  });
 
-export function initAudio() {
-  // Lazily created on first user gesture
-}
+  // Explore button     masterplan section
+  document.querySelectorAll(".btn-explore").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.getElementById("masterplan").scrollIntoView({ behavior: "smooth" });
+    });
+  });
 
-export async function enableAudio() {
-  if (audioCtx) return;
-  try {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    // Ambient wind / birds     synthesised
-    addAmbientLoop(220, 0.018, "wind");
-    addAmbientLoop(880, 0.005, "birds", true);
-  } catch (_) {}
-}
-
-function addAmbientLoop(baseFreq, gain, name, random = false) {
-  if (!audioCtx) return;
-  const oscillator = audioCtx.createOscillator();
-  const gainNode   = audioCtx.createGain();
-  oscillator.type = "sine";
-  oscillator.frequency.value = baseFreq;
-  gainNode.gain.value = gain;
-  oscillator.connect(gainNode);
-  gainNode.connect(audioCtx.destination);
-  oscillator.start();
-  audioSources[name] = { oscillator, gainNode };
-
-  if (random) {
-    // Randomise freq to simulate bird calls
-    setInterval(() => {
-      oscillator.frequency.setTargetAtTime(baseFreq + Math.random() * 200, audioCtx.currentTime, 0.05);
-      gainNode.gain.setTargetAtTime(Math.random() * 0.008, audioCtx.currentTime, 0.1);
-    }, 800 + Math.random() * 1200);
-  }
-}
-
-export function updateSpatialAudio(worldX, worldZ) {
-  if (!audioCtx || !audioSources.wind) return;
-  // Increase wind near north/south perimeter
-  const dist = Math.min(Math.abs(worldZ - WORLD.zMin), Math.abs(worldZ - WORLD.zMax));
-  const windGain = 0.015 + (1 - Math.min(dist / 100, 1)) * 0.02;
-  audioSources.wind.gainNode.gain.setTargetAtTime(windGain, audioCtx.currentTime, 0.3);
-}
-
-//           HUD: CAPTION & STATUS                                                                                                                                                             
-
-export function setCaption(text) {
-  const el = document.getElementById("scene-caption");
-  if (el) el.textContent = text;
-}
-
-export function showEnterPrompt(text = "Click or tap to look around    WASD to walk") {
-  const el = document.getElementById("enter-prompt");
-  if (el) { el.textContent = text; el.style.opacity = "1"; }
-}
-
-export function hideEnterPrompt() {
-  const el = document.getElementById("enter-prompt");
-  if (el) el.style.opacity = "0";
-}
-
-//           VR BUTTON                                                                                                                                                                                                 
-
-export function showVRButton(onClick) {
-  if (!("xr" in navigator)) return;
-  navigator.xr.isSessionSupported("immersive-vr").then(supported => {
-    if (!supported) return;
-    const btn = document.getElementById("vr-btn");
-    if (!btn) return;
-    btn.style.display = "flex";
-    btn.addEventListener("click", onClick);
+  // Enter 3D button
+  document.querySelectorAll(".btn-enter-3d").forEach(btn => {
+    btn.addEventListener("click", () => openWorldAt("field_centre"));
   });
 }
 
-//           TOUCH JOYSTICK OVERLAY                                                                                                                                                          
+//           WORLD ENTRY                                                                                                                                                                                           
 
-export function showJoystick() {
-  const el = document.getElementById("joystick-overlay");
-  if (el) el.style.display = "flex";
+async function openWorldAt(viewKey) {
+  currentViewKey = viewKey;
+  const vp = VIEWPOINTS[viewKey] || VIEWPOINTS.field_centre;
+
+  showLoading();
+  setLoadingProgress(10);
+
+  // Lazy-initialise Three.js scene
+  if (!sceneReady) {
+    const canvas3d = document.getElementById("world-canvas");
+    initScene(canvas3d);
+    setLoadingProgress(40);
+    initControls(getCamera(), getRenderer());
+    setLoadingProgress(70);
+    initMinimap("assets/plan-2d.png");
+    setLoadingProgress(85);
+    // Init post-processing after scene exists
+    composer = initPostProcessing(getRenderer(), getScene(), getCamera());
+    setLoadingProgress(90);
+
+    showVRButton(() => {
+      enterVR(getRenderer(), getScene(), getCamera(), getClock(), tick => {
+        updateControls(tick);
+        updateMinimap(getCamera().position.x, getCamera().position.z, getYaw());
+        updateSpatialAudio(getCamera().position.x, getCamera().position.z);
+      });
+    });
+
+    buildViewpointStrip(
+      document.getElementById("viewpoint-strip"),
+      (key, vp) => teleportTo(key, vp)
+    );
+
+    sceneReady = true;
+    setLoadingProgress(100);
+  }
+
+  await new Promise(r => setTimeout(r, 300));
+  hideLoading();
+
+  // Show world overlay
+  const overlay = document.getElementById("world-overlay");
+  overlay.classList.add("open");
+  document.body.style.overflow = "hidden";
+
+  // Resize renderer
+  resizeWorld();
+  window.addEventListener("resize", resizeWorld);
+
+  // Cinematic intro on first open
+  if (viewKey === "field_centre" && !introPlaying) {
+    await cinematicIntro();
+  } else {
+    const pos = vp.pos;
+    setView(pos, vp.yaw, vp.pitch || 0);
+    setCaption(vp.caption);
+  }
+
+  activate();
+
+  if (isMobile()) {
+    showJoystick();
+    showEnterPrompt("Drag right to look    Left joystick to walk");
+  } else {
+    showEnterPrompt("Click to lock cursor    WASD / arrows to walk    Shift to sprint");
+  }
+
+  // Enable audio on user gesture
+  enableAudio();
+
+  // Start render loop
+  startRenderLoop();
 }
 
-export function hideJoystick() {
-  const el = document.getElementById("joystick-overlay");
-  if (el) el.style.display = "none";
+async function cinematicIntro() {
+  introPlaying = true;
+  const introVp = VIEWPOINTS.intro;
+  setView(introVp.pos, introVp.yaw, introVp.pitch);
+  setCaption(introVp.caption);
+
+  const targetVp = VIEWPOINTS.field_centre;
+  const startPos = [...introVp.pos];
+  const endPos   = targetVp.pos;
+  const duration = 3800; // ms
+  const start    = performance.now();
+
+  await new Promise(resolve => {
+    function ease(t) { return t < 0.5 ? 2*t*t : -1+(4-2*t)*t; }
+    function step(now) {
+      const t = Math.min((now - start) / duration, 1);
+      const e = ease(t);
+      const cam = getCamera();
+      cam.position.x = startPos[0] + (endPos[0] - startPos[0]) * e;
+      cam.position.y = startPos[1] + (endPos[1] - startPos[1]) * e;
+      cam.position.z = startPos[2] + (endPos[2] - startPos[2]) * e;
+      // Pitch: tilt from down-looking to horizontal
+      const startP = introVp.pitch;
+      const camPitch = startP + (0 - startP) * e;
+      getCamera().rotation.order = "YXZ";
+      getCamera().rotation.x = camPitch;
+      getCamera().rotation.y = introVp.yaw + (targetVp.yaw - introVp.yaw) * e;
+      if (t < 1) requestAnimationFrame(step);
+      else resolve();
+    }
+    requestAnimationFrame(step);
+  });
+
+  setView(endPos, targetVp.yaw, 0);
+  setCaption(targetVp.caption);
 }
 
-export function isMobile() {
-  return /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) || window.innerWidth < 768;
+function toggleAerial(btn) {
+  aerialOrbit = !aerialOrbit;
+  if (aerialOrbit) {
+    btn && btn.classList.add("active");
+    deactivate();           // release ground-level controls
+    aerialAngle     = 0;
+    aerialYawOffset = 0;
+    aerialPitch     = -Math.PI / 2.5;
+    setCaption("Aerial view     hover orbits automatically    drag to steer");
+    bindAerialPointer();
+  } else {
+    btn && btn.classList.remove("active");
+    unbindAerialPointer();
+    activate();
+    teleportTo("field_centre", VIEWPOINTS.field_centre);
+  }
+}
+
+//        AERIAL POINTER/TOUCH DRAG (adds offset to the orbit angle)                                                 
+function bindAerialPointer() {
+  const el = getRenderer()?.domElement;
+  if (!el) return;
+  el.addEventListener("mousedown",  aerialMouseDown,  { passive:true });
+  el.addEventListener("mousemove",  aerialMouseMove,  { passive:true });
+  el.addEventListener("mouseup",    aerialMouseUp,    { passive:true });
+  el.addEventListener("touchstart", aerialTouchStart, { passive:true });
+  el.addEventListener("touchmove",  aerialTouchMove,  { passive:false });
+  el.addEventListener("touchend",   aerialMouseUp,    { passive:true });
+}
+function unbindAerialPointer() {
+  const el = getRenderer()?.domElement;
+  if (!el) return;
+  el.removeEventListener("mousedown",  aerialMouseDown);
+  el.removeEventListener("mousemove",  aerialMouseMove);
+  el.removeEventListener("mouseup",    aerialMouseUp);
+  el.removeEventListener("touchstart", aerialTouchStart);
+  el.removeEventListener("touchmove",  aerialTouchMove);
+  el.removeEventListener("touchend",   aerialMouseUp);
+}
+function aerialMouseDown(e)  { aerialDragging=true; aerialLastX=e.clientX; aerialLastY=e.clientY; }
+function aerialMouseUp()     { aerialDragging=false; }
+function aerialMouseMove(e)  {
+  if (!aerialDragging) return;
+  aerialYawOffset -= (e.clientX - aerialLastX) * 0.004;
+  aerialPitch      = Math.max(-Math.PI*0.9, Math.min(-0.15,
+                      aerialPitch - (e.clientY - aerialLastY) * 0.003));
+  aerialLastX=e.clientX; aerialLastY=e.clientY;
+}
+function aerialTouchStart(e) {
+  const t=e.touches[0];
+  aerialDragging=true; aerialLastX=t.clientX; aerialLastY=t.clientY;
+}
+function aerialTouchMove(e) {
+  e.preventDefault();
+  const t=e.touches[0];
+  aerialYawOffset -= (t.clientX - aerialLastX) * 0.004;
+  aerialPitch      = Math.max(-Math.PI*0.9, Math.min(-0.15,
+                      aerialPitch - (t.clientY - aerialLastY) * 0.003));
+  aerialLastX=t.clientX; aerialLastY=t.clientY;
+}
+window.toggleAerial = toggleAerial;
+
+function teleportTo(key, vp) {
+  setView(vp.pos, vp.yaw, vp.pitch || 0);
+  setCaption(vp.caption);
+  if (vp.zoneKey) showZonePanel(vp.zoneKey);
+  else hideZonePanel();
+}
+
+//           EXIT WORLD                                                                                                                                                                                              
+
+function bindExitButton() {
+  document.getElementById("btn-close-world")?.addEventListener("click", closeWorld);
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape" && document.getElementById("world-overlay")?.classList.contains("open")) {
+      if (document.pointerLockElement) {
+        document.exitPointerLock();
+      } else {
+        closeWorld();
+      }
+    }
+  });
+}
+
+function closeWorld() {
+  deactivate();
+  hideJoystick();
+  document.getElementById("world-overlay")?.classList.remove("open");
+  document.body.style.overflow = "";
+  if (animFrameId) { cancelAnimationFrame(animFrameId); animFrameId = null; }
+  window.removeEventListener("resize", resizeWorld);
+}
+
+//           RENDER LOOP                                                                                                                                                                                           
+
+function startRenderLoop() {
+  if (animFrameId) cancelAnimationFrame(animFrameId);
+  const renderer = getRenderer();
+  const scene    = getScene();
+  const camera   = getCamera();
+  const clock    = getClock();
+
+  const startTime = performance.now();
+  function frame() {
+    animFrameId = requestAnimationFrame(frame);
+    const delta   = Math.min(clock.getDelta(), 0.05);
+    const elapsed = (performance.now() - startTime) / 1000;
+    if (aerialOrbit) {
+      // Auto-orbit: angle advances continuously (the hover effect)
+      // User drag adds/subtracts from the angle and tilts pitch
+      aerialAngle += AERIAL_SPEED * delta;
+      const totalAngle = aerialAngle + aerialYawOffset;
+      camera.position.x = Math.sin(totalAngle) * AERIAL_RADIUS;
+      camera.position.z = Math.cos(totalAngle) * AERIAL_RADIUS;
+      camera.position.y = AERIAL_HEIGHT;
+      camera.lookAt(0, 0, 0);
+      // Apply user pitch override (drag up/down tilts the view)
+      camera.rotation.x = aerialPitch;
+    } else {
+      updateControls(delta);
+    }
+    tickScene(elapsed, camera);
+    updateMinimap(camera.position.x, camera.position.z, getYaw());
+    updateSpatialAudio(camera.position.x, camera.position.z);
+    renderFrame(); // EffectComposer: SSAO + Bloom + SMAA
+  }
+
+  frame();
+}
+
+function resizeWorld() {
+  const renderer = getRenderer();
+  const camera   = getCamera();
+  if (!renderer || !camera) return;
+  const canvas = document.getElementById("world-canvas");
+  const w = canvas.parentElement.clientWidth;
+  const h = canvas.parentElement.clientHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  resizeComposer(w, h);
+}
+
+//           SCROLL ANIMATIONS                                                                                                                                                                         
+
+function bindSectionScrollAnim() {
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) e.target.classList.add("in-view");
+    });
+  }, { threshold: 0.12 });
+  document.querySelectorAll(".anim-fade").forEach(el => io.observe(el));
+}
+
+//           VILLA INTERIOR                                                                                                                                                                                  
+
+function bindVillaInteriorBtn() {
+  // Open from any "Walk through" button on villa cards
+  document.addEventListener("click", e => {
+    // Villa enter buttons
+    const enterBtn = e.target.closest(".residence-card-btn");
+    const card = enterBtn?.closest(".residence-card");
+    if (enterBtn && card?.querySelector(".residence-card-type")?.textContent?.includes("3 Bed")) {
+      openVillaInterior(); return;
+    }
+
+    // Plan tab switching
+    const tab = e.target.closest(".plan-tab");
+    if (tab) {
+      document.querySelectorAll(".plan-tab").forEach(t => t.classList.remove("active"));
+      tab.classList.add("active");
+      const plan = tab.dataset.plan;
+      document.querySelectorAll(".plan-rooms").forEach(r => r.classList.add("hidden"));
+      document.getElementById("plan-" + plan)?.classList.remove("hidden");
+      return;
+    }
+
+    // Room click -> teleport
+    const room = e.target.closest(".plan-room");
+    if (room?.dataset.key) {
+      teleportVillaTo(room.dataset.key);
+      document.querySelectorAll(".plan-room").forEach(r => r.classList.remove("active"));
+      room.classList.add("active");
+      return;
+    }
+  });
+
+  document.getElementById("btn-close-villa")?.addEventListener("click", closeVillaInterior);
+}
+
+function openVillaInterior() {
+  const overlay = document.getElementById("villa-overlay");
+  if (!overlay) return;
+  overlay.classList.add("open");
+  document.body.style.overflow = "hidden";
+
+  if (!villaScene) {
+    // Build interior scene on demand
+    const canvas = document.getElementById("villa-canvas");
+    if (!canvas) return;
+
+    villaRenderer = new (THREE.WebGLRenderer)({ canvas, antialias: true, powerPreference: "high-performance" });
+    villaRenderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
+    villaRenderer.shadowMap.enabled  = true;
+    villaRenderer.shadowMap.type     = THREE.PCFSoftShadowMap;
+    villaRenderer.toneMapping        = THREE.ACESFilmicToneMapping;
+    villaRenderer.toneMappingExposure = 1.1;
+    villaRenderer.outputColorSpace   = THREE.SRGBColorSpace;
+
+    villaScene = new THREE.Scene();
+    villaScene.background = new THREE.Color(0x7ab4d4);
+    villaScene.fog = new THREE.FogExp2(0x9ac5d4, 0.025);
+
+    buildVillaInterior(villaScene);
+  }
+
+  // Start at approach viewpoint
+  teleportVillaTo("approach");
+  activate();
+  resizeVilla();
+  window.addEventListener("resize", resizeVilla);
+  startVillaLoop();
+
+  // Populate viewpoint strip
+  buildVillaStrip();
+}
+
+function closeVillaInterior() {
+  document.getElementById("villa-overlay")?.classList.remove("open");
+  document.body.style.overflow = "";
+  deactivate();
+  window.removeEventListener("resize", resizeVilla);
+  if (villaAnimId) { cancelAnimationFrame(villaAnimId); villaAnimId = null; }
+}
+
+let villaAnimId = null;
+
+function startVillaLoop() {
+  if (villaAnimId) cancelAnimationFrame(villaAnimId);
+  const cam = getCamera();
+  function frame() {
+    villaAnimId = requestAnimationFrame(frame);
+    const delta = Math.min(getClock().getDelta(), 0.05);
+    updateControls(delta);
+    if (villaRenderer && villaScene) villaRenderer.render(villaScene, cam);
+  }
+  frame();
+}
+
+function resizeVilla() {
+  const canvas = document.getElementById("villa-canvas");
+  if (!canvas || !villaRenderer) return;
+  const w = canvas.parentElement.clientWidth;
+  const h = canvas.parentElement.clientHeight;
+  villaRenderer.setSize(w, h);
+  const cam = getCamera();
+  cam.aspect = w / h;
+  cam.updateProjectionMatrix();
+}
+
+function teleportVillaTo(key) {
+  const vp = VILLA_VIEWPOINTS.find(v => v.key === key);
+  if (!vp) return;
+  setView(vp.pos, vp.yaw, 0);
+  setCaption(vp.caption || vp.label);
+
+  // Update floor plan highlight
+  document.querySelectorAll(".vp-floor-btn").forEach(b => {
+    b.classList.toggle("active", b.dataset.key === key);
+  });
+}
+
+function buildVillaStrip() {
+  const strip = document.getElementById("villa-vp-strip");
+  if (!strip) return;
+  strip.innerHTML = "";
+  VILLA_VIEWPOINTS.forEach(vp => {
+    const btn = document.createElement("button");
+    btn.className = "vp-btn vp-floor-btn";
+    btn.dataset.key = vp.key;
+    btn.innerHTML = `<span class="vp-label">\${vp.label}</span>`;
+    btn.addEventListener("click", () => teleportVillaTo(vp.key));
+    strip.appendChild(btn);
+  });
 }
