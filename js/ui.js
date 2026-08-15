@@ -303,3 +303,4 @@ export function hideJoystick() {
 export function isMobile() {
   return /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) || window.innerWidth < 768;
 }
+
