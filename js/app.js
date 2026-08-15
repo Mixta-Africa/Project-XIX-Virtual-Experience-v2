@@ -524,12 +524,22 @@ function toggleAerial(btn) {
   aerialOrbit = !aerialOrbit;
   if (aerialOrbit) {
     btn && btn.classList.add("active");
-    deactivate();
-    setCaption("Aerial orbit - 200m above estate");
+    // Lift camera to aerial height, pitch down
+    const cam = getCamera();
+    if (cam) {
+      cam.position.y = AERIAL_HEIGHT;
+      // Keep current x/z position so view stays over same area
+    }
+    activate(); // keep controls active for free movement
+    setView([0, AERIAL_HEIGHT, 0], 0, -Math.PI/2);
+    setCaption("Aerial view - WASD to pan, drag to look");
+    document.getElementById("enter-prompt").style.display = "none";
   } else {
     btn && btn.classList.remove("active");
-    activate();
-    teleportTo("field_centre", VIEWPOINTS.field_centre);
+    // Return to ground level at current x/z
+    const cam = getCamera();
+    if (cam) cam.position.y = 1.72;
+    setCaption("Back to ground level");
   }
 }
 window.toggleAerial = toggleAerial;
@@ -580,11 +590,10 @@ function startRenderLoop() {
     const delta   = Math.min(clock.getDelta(), 0.05);
     const elapsed = (performance.now() - startTime) / 1000;
     if (aerialOrbit) {
-      aerialAngle += delta * 0.18;
-      camera.position.x = Math.sin(aerialAngle) * AERIAL_RADIUS;
-      camera.position.z = Math.cos(aerialAngle) * AERIAL_RADIUS;
-      camera.position.y = AERIAL_HEIGHT;
-      camera.lookAt(0, 0, 0);
+      // Aerial mode: free WASD movement at fixed high elevation
+      // Player can pan around to inspect any part of the estate
+      updateControls(delta);
+      camera.position.y = AERIAL_HEIGHT; // lock height
     } else {
       updateControls(delta);
     }
