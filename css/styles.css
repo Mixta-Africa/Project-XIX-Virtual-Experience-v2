@@ -1343,3 +1343,332 @@ button.residence-card-btn {
   overflow-y: auto;
 }
 
+/* ─── PLOT RESERVATION PANEL ─────────────────────────────────── */
+
+.plot-panel {
+  position: absolute;
+  top: calc(var(--nav-h) + 1rem);
+  left: 1.4rem;
+  width: 300px;
+  background: rgba(10, 18, 12, 0.95);
+  border: 1px solid rgba(201,168,76,0.35);
+  border-radius: 4px;
+  padding: 1.6rem;
+  backdrop-filter: blur(16px);
+  opacity: 0;
+  transform: translateX(-12px);
+  transition: opacity 0.3s, transform 0.3s;
+  pointer-events: none;
+  z-index: 50;
+}
+.plot-panel.visible {
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: auto;
+}
+.plot-panel-close {
+  position: absolute;
+  top: .8rem;
+  right: .8rem;
+  background: none;
+  border: none;
+  color: rgba(240,236,224,.5);
+  font-size: 1.2rem;
+  cursor: pointer;
+  line-height: 1;
+}
+.plot-panel-close:hover { color: var(--gold-300); }
+.plot-eyebrow {
+  font-size: .62rem;
+  font-weight: 600;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--gold-500);
+  margin-bottom: .5rem;
+}
+.plot-id {
+  font-family: "Cormorant Garamond", serif;
+  font-size: 1.5rem;
+  font-weight: 300;
+  color: var(--cream-100);
+  margin-bottom: .2rem;
+}
+.plot-location {
+  font-size: .78rem;
+  color: rgba(240,236,224,.6);
+  margin-bottom: .8rem;
+}
+.plot-divider {
+  height: 1px;
+  background: rgba(201,168,76,.15);
+  margin: .8rem 0;
+}
+.plot-spec-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .4rem .6rem;
+}
+.spec-label {
+  display: block;
+  font-size: .58rem;
+  font-weight: 600;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.spec-val {
+  display: block;
+  font-size: .78rem;
+  color: var(--cream-200);
+  margin-top: .15rem;
+}
+.plot-status {
+  font-size: .72rem;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  padding: .3rem .7rem;
+  border-radius: 3px;
+  display: inline-block;
+}
+.plot-status.available {
+  background: rgba(0,200,100,.15);
+  border: 1px solid rgba(0,200,100,.4);
+  color: #44ee88;
+}
+.plot-status.reserved {
+  background: rgba(200,50,50,.15);
+  border: 1px solid rgba(200,50,50,.4);
+  color: #ff6666;
+}
+.plot-reserve-btn {
+  margin-top: .8rem;
+  width: 100%;
+  padding: .9rem;
+}
+.plot-reserve-btn:disabled {
+  background: rgba(255,255,255,.1);
+  color: rgba(255,255,255,.3);
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+.plot-disclaimer {
+  font-size: .65rem;
+  color: rgba(240,236,224,.3);
+  margin-top: .8rem;
+  line-height: 1.6;
+}
+
+/* ─── NOTIFICATION TOAST ─────────────────────────────────────── */
+
+.notification {
+  position: fixed;
+  bottom: 7rem;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: var(--gold-500);
+  color: var(--green-900);
+  font-size: .78rem;
+  font-weight: 600;
+  letter-spacing: .06em;
+  padding: .9rem 2rem;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity .4s, transform .4s;
+  pointer-events: none;
+  z-index: 500;
+  white-space: nowrap;
+}
+.notification.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   RESPONSIVE + TOUCH SYSTEM
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ─── VIRTUAL JOYSTICK ───────────────────────────────────────── */
+
+#joystick-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 20;
+}
+
+.vj-base {
+  position: absolute;
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  border: 2px solid rgba(201,168,76,0.55);
+  background: rgba(6,18,8,0.38);
+  transform: translate(-50%, -50%);
+  opacity: 0.35;
+  transition: opacity 0.2s;
+  pointer-events: none;
+}
+
+.vj-dot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(201,168,76,0.8);
+  transform: translate(-50%,-50%);
+  box-shadow: 0 0 12px rgba(201,168,76,0.5);
+  pointer-events: none;
+}
+
+/* ─── WORLD OVERLAY RESPONSIVE ───────────────────────────────── */
+
+/* Topbar scroll on small screens */
+.world-topbar {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  gap: 0.3rem;
+  padding: 0 0.8rem;
+}
+.world-topbar::-webkit-scrollbar { display: none; }
+
+/* Weather group compact on mobile */
+@media (max-width: 640px) {
+  .wx-group { gap: 0.2rem; padding: 0 0.2rem; }
+  .wx-btn { padding: 0.22rem 0.45rem; font-size: 0.58rem; }
+  .world-brand-mark { display: none; }
+  .world-btn { padding: 0.3rem 0.6rem; font-size: 0.65rem; }
+  #scene-caption { display: none; } /* too cramped on mobile */
+}
+
+/* Viewpoint strip scroll on mobile */
+#viewpoint-strip {
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x mandatory;
+}
+.vp-btn { scroll-snap-align: start; }
+
+/* ─── MINIMAP RESPONSIVE ─────────────────────────────────────── */
+
+@media (max-width: 480px) {
+  #minimap {
+    width: 130px;
+    bottom: 90px;
+    right: 0.8rem;
+  }
+  #minimap-canvas { width: 130px; height: 85px; }
+}
+
+/* ─── PLOT PANEL RESPONSIVE ──────────────────────────────────── */
+
+@media (max-width: 640px) {
+  .plot-panel {
+    left: 0;
+    right: 0;
+    top: auto;
+    bottom: 80px;
+    width: 100%;
+    border-radius: 8px 8px 0 0;
+    max-height: 65vh;
+    overflow-y: auto;
+    transform: translateY(20px);
+  }
+  .plot-panel.visible { transform: translateY(0); }
+  .plot-spec-grid { grid-template-columns: 1fr 1fr; }
+}
+
+/* ─── LANDING PAGE RESPONSIVE ────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .hero-content { grid-template-columns: 1fr; padding-bottom: 2rem; }
+  .hero-stats { flex-direction: row; gap: 1.2rem; }
+  .hero-actions { flex-direction: column; gap: 0.6rem; }
+  .hero-actions .btn { text-align: center; justify-content: center; }
+  h1 { font-size: clamp(2.2rem, 12vw, 4rem); }
+  .intro-strip-inner { grid-template-columns: 1fr 1fr; }
+  .intro-divider { display: none; }
+  .masterplan-shell { grid-template-columns: 1fr; }
+  #zone-panel { position: static; opacity: 1; transform: none; margin-top: 1rem; }
+  .residence-grid { grid-template-columns: 1fr; }
+  .investor-grid { grid-template-columns: 1fr; }
+  .cta-actions { flex-direction: column; align-items: center; }
+}
+
+@media (max-width: 480px) {
+  :root { --nav-h: 50px; }
+  .topbar { padding: 0 0.8rem; }
+  .nav-links { display: none; }
+  .brand-name { display: none; }
+  .section { padding: 3.5rem 0; }
+  h2 { font-size: clamp(1.6rem, 8vw, 2.4rem); }
+  .container { width: 95%; }
+  .btn { padding: 0.7rem 1.4rem; font-size: 0.76rem; }
+}
+
+/* ─── TOUCH FRIENDLY ─────────────────────────────────────────── */
+
+/* Ensure tap targets meet 44px minimum */
+.room-btn, .vp-btn, .wx-btn, .world-btn { min-height: 38px; }
+
+/* Remove hover states that don't work on touch */
+@media (hover: none) {
+  .residence-card:hover { transform: none; border-color: rgba(201,168,76,0.1); }
+  .btn-gold:hover { transform: none; box-shadow: none; }
+}
+
+/* Safe area for notched phones (iPhone X+) */
+#world-overlay, #loading-screen {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.world-topbar {
+  padding-top: max(0.8rem, env(safe-area-inset-top));
+}
+#viewpoint-strip {
+  padding-bottom: max(0.8rem, env(safe-area-inset-bottom));
+}
+
+/* ─── TABLET (iPad) ──────────────────────────────────────────── */
+
+@media (min-width: 768px) and (max-width: 1024px) {
+  .masterplan-shell { grid-template-columns: 1fr 320px; }
+  .residence-grid { grid-template-columns: repeat(2, 1fr); }
+  .investor-grid { grid-template-columns: repeat(2, 1fr); }
+  h1 { font-size: clamp(2.8rem, 6vw, 5rem); }
+  .vp-btn { padding: 0.5rem 0.9rem; }
+}
+
+/* ─── WORLD CANVAS SIZING ────────────────────────────────────── */
+
+#world-canvas {
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
+  touch-action: none; /* prevent browser handling touch on canvas */
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+}
+
+/* Prevent body scroll while world is open */
+body.world-open { overflow: hidden; position: fixed; width: 100%; }
+
+/* ─── LOOK HINT ON MOBILE ────────────────────────────────────── */
+
+.look-hint-mobile {
+  position: absolute;
+  bottom: 100px;
+  right: 1.2rem;
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(240,236,224,0.35);
+  text-align: right;
+  line-height: 1.8;
+  pointer-events: none;
+}
