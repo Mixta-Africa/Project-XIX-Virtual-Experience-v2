@@ -587,23 +587,11 @@ function aerialTouchMove(e) {
 }
 window.toggleAerial = toggleAerial;
 
-// Product keys that open the panel when button is clicked
-const PRODUCT_KEYS = {
-  villas:'villas', clubhouse:'clubhouse', stables:'stables',
-  lofts:'lofts', training:'training', paddock:'paddock', flats:'flats',
-};
-
 function teleportTo(key, vp) {
   setView(vp.pos, vp.yaw, vp.pitch || 0);
   setCaption(vp.caption);
   if (vp.zoneKey) showZonePanel(vp.zoneKey);
   else hideZonePanel();
-  // Open product panel if this viewpoint has a matching product
-  const productKey = PRODUCT_KEYS[key] || PRODUCT_KEYS[vp.zoneKey];
-  if (productKey) {
-    const fn = window.__moduleReady?.showProductPanel;
-    if (fn) setTimeout(() => fn(productKey), 50);
-  }
 }
 
 //           EXIT WORLD                                                                                                                                                                                              
