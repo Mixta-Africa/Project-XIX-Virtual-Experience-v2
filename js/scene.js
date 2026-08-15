@@ -407,7 +407,7 @@ function loadOneGLB(path, scale, yOff, onDone, onFail) {
 }
 
 function loadClubhouseGLB(){
-  loadOneGLB("assets/clubhouse-mesh.glb", 60.975, 13.38, tmpl=>{
+  loadOneGLB("assets/clubhouse-mesh.glb", 60.975, 0, tmpl=>{
     clubGLBTemplate=tmpl;
     const g=new THREE.Group(); g.position.set(0,0,108); g.rotation.y=Math.PI;
     g.add(tmpl.clone(true)); scene.add(g);
@@ -416,7 +416,7 @@ function loadClubhouseGLB(){
 }
 
 function loadStablesGLB(){
-  loadOneGLB("assets/stables-mesh.glb", 18.846, 2.50, tmpl=>{
+  loadOneGLB("assets/stables-mesh.glb", 18.846, 0, tmpl=>{
     stablesGLBTemplate=tmpl;
     const g=new THREE.Group(); g.position.set(-375,0,90);
     g.add(tmpl.clone(true)); scene.add(g);
@@ -446,7 +446,7 @@ function loadVillaGLB(){
       villaGLBScene = wrapper; // store the wrapper as template
       pendingVillas.forEach(({x,z,ry,plotKey})=>placeVillaGLB(x,z,ry,plotKey));
       pendingVillas=[];
-      console.log("Villa GLB loaded OK -", acc.count, "vertices");
+      console.log("Villa GLB loaded OK");
     },
     xhr=>{ if(xhr.total) console.log("Villa GLB:", Math.round(xhr.loaded/xhr.total*100)+"%"); },
     err=>{ 
