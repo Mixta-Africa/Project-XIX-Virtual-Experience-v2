@@ -172,21 +172,73 @@ export function buildViewpointStrip(container, onSelect) {
   container.innerHTML = "";
 
   Object.entries(VIEWPOINTS).forEach(([key, vp]) => {
-    if (key === "intro") return; // cinematic only
+    if (key === "intro") return;
+
+    const wrapper = document.createElement("div");
+    wrapper.className = "vp-wrapper";
+    wrapper.style.position = "relative";
+    wrapper.style.flexShrink = "0";
+
     const btn = document.createElement("button");
     btn.className = "vp-btn";
     btn.dataset.key = key;
+    const hasSubViews = vp.subViews && vp.subViews.length > 0;
     btn.innerHTML = `
       <span class="vp-icon">${viewpointIcons[vp.icon] || viewpointIcons.pitch}</span>
-      <span class="vp-label">${vp.label}</span>
+      <span class="vp-label">${vp.label}${hasSubViews ? " <span class=\"vp-chevron\">&#9652;</span>" : ""}</span>
     `;
-    btn.addEventListener("click", () => {
-      document.querySelectorAll(".vp-btn").forEach(b => b.classList.remove("active"));
-      btn.classList.add("active");
-      onSelect(key, vp);
-    });
-    container.appendChild(btn);
+
+    if (hasSubViews) {
+      // Build dropdown menu
+      const menu = document.createElement("div");
+      menu.className = "vp-dropdown";
+      menu.style.display = "none";
+
+      vp.subViews.forEach(sv => {
+        const sbtn = document.createElement("button");
+        sbtn.className = "vp-dropdown-item";
+        sbtn.textContent = sv.label;
+        sbtn.addEventListener("click", e => {
+          e.stopPropagation();
+          document.querySelectorAll(".vp-btn").forEach(b => b.classList.remove("active"));
+          btn.classList.add("active");
+          menu.style.display = "none";
+          onSelect(sv.key, sv);
+        });
+        menu.appendChild(sbtn);
+      });
+
+      btn.addEventListener("click", () => {
+        const isOpen = menu.style.display !== "none";
+        // Close all other dropdowns
+        document.querySelectorAll(".vp-dropdown").forEach(d => d.style.display = "none");
+        document.querySelectorAll(".vp-chevron").forEach(ch => ch.innerHTML = "&#9652;");
+        menu.style.display = isOpen ? "none" : "flex";
+        const chevron = btn.querySelector(".vp-chevron");
+        if (chevron) chevron.innerHTML = isOpen ? "&#9652;" : "&#9662;";
+      });
+
+      wrapper.appendChild(btn);
+      wrapper.appendChild(menu);
+    } else {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".vp-btn").forEach(b => b.classList.remove("active"));
+        document.querySelectorAll(".vp-dropdown").forEach(d => d.style.display = "none");
+        btn.classList.add("active");
+        onSelect(key, vp);
+      });
+      wrapper.appendChild(btn);
+    }
+
+    container.appendChild(wrapper);
   });
+
+  // Close dropdowns when clicking elsewhere
+  document.addEventListener("click", e => {
+    if (!e.target.closest(".vp-wrapper")) {
+      document.querySelectorAll(".vp-dropdown").forEach(d => d.style.display = "none");
+    }
+  }, { passive: true });
 }
 
 //           ZONE INFO PANEL                                                                                                                                                                               
@@ -303,4 +355,3 @@ export function hideJoystick() {
 export function isMobile() {
   return /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) || window.innerWidth < 768;
 }
-
