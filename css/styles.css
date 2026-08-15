@@ -1,12 +1,12 @@
-/* ═══════════════════════════════════════════════════════════════
-   PROJECT XIX — DESIGN SYSTEM
+/*                                                                                                                                                                                              
+   PROJECT XIX     DESIGN SYSTEM
    Palette: Deep forest green, polo gold, cream, charcoal
    Typography: Cormorant Garamond (display) + Inter (body/UI)
-   ═══════════════════════════════════════════════════════════════ */
+                                                                                                                                                                                                 */
 
 @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=Inter:wght@300;400;500;600&display=swap');
 
-/* ─── TOKENS ─────────────────────────────────────────────────── */
+/*           TOKENS                                                                                                                                                           */
 
 :root {
   --green-900: #061208;
@@ -31,7 +31,7 @@
   --nav-h: 58px;
 }
 
-/* ─── RESET & BASE ───────────────────────────────────────────── */
+/*           RESET & BASE                                                                                                                                         */
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -51,7 +51,7 @@ a { color: inherit; text-decoration: none; }
 button { cursor: pointer; font: inherit; border: none; background: none; }
 svg { flex-shrink: 0; }
 
-/* ─── TYPOGRAPHY ─────────────────────────────────────────────── */
+/*           TYPOGRAPHY                                                                                                                                               */
 
 .display {
   font-family: "Cormorant Garamond", Georgia, serif;
@@ -77,7 +77,7 @@ h3 { font-size: clamp(1.2rem, 2.5vw, 1.8rem); font-weight: 400; line-height: 1.2
   color: var(--gold-500);
 }
 
-/* ─── LAYOUT ─────────────────────────────────────────────────── */
+/*           LAYOUT                                                                                                                                                           */
 
 .container {
   width: min(1320px, 92%);
@@ -88,7 +88,7 @@ h3 { font-size: clamp(1.2rem, 2.5vw, 1.8rem); font-weight: 400; line-height: 1.2
   padding: 7rem 0;
 }
 
-/* ─── NAV ────────────────────────────────────────────────────── */
+/*           NAV                                                                                                                                                                    */
 
 .topbar {
   position: fixed;
@@ -147,7 +147,7 @@ h3 { font-size: clamp(1.2rem, 2.5vw, 1.8rem); font-weight: 400; line-height: 1.2
   .nav-links { display: none; }
 }
 
-/* ─── HERO SECTION ───────────────────────────────────────────── */
+/*           HERO SECTION                                                                                                                                         */
 
 .hero {
   position: relative;
@@ -278,7 +278,7 @@ h3 { font-size: clamp(1.2rem, 2.5vw, 1.8rem); font-weight: 400; line-height: 1.2
   50%       { opacity: 0.9; transform: scaleY(1.2); }
 }
 
-/* ─── BUTTONS ────────────────────────────────────────────────── */
+/*           BUTTONS                                                                                                                                                        */
 
 .btn {
   display: inline-flex;
@@ -322,7 +322,7 @@ h3 { font-size: clamp(1.2rem, 2.5vw, 1.8rem); font-weight: 400; line-height: 1.2
   transform: translateY(-1px);
 }
 
-/* ─── INTRO STRIP ────────────────────────────────────────────── */
+/*           INTRO STRIP                                                                                                                                            */
 
 .intro-strip {
   background: var(--green-800);
@@ -374,7 +374,7 @@ h3 { font-size: clamp(1.2rem, 2.5vw, 1.8rem); font-weight: 400; line-height: 1.2
   .intro-fact { padding: 1.2rem; }
 }
 
-/* ─── MASTERPLAN SECTION ─────────────────────────────────────── */
+/*           MASTERPLAN SECTION                                                                                                                       */
 
 .masterplan-section {
   background: var(--green-900);
@@ -427,7 +427,7 @@ h3 { font-size: clamp(1.2rem, 2.5vw, 1.8rem); font-weight: 400; line-height: 1.2
   inset: 0;
 }
 
-/* ─── ZONE PANEL ─────────────────────────────────────────────── */
+/*           ZONE PANEL                                                                                                                                               */
 
 #zone-panel {
   position: sticky;
@@ -520,7 +520,7 @@ h3 { font-size: clamp(1.2rem, 2.5vw, 1.8rem); font-weight: 400; line-height: 1.2
 }
 .zone-enter-btn:hover { background: var(--gold-300); }
 
-/* ─── RESIDENCES SECTION ─────────────────────────────────────── */
+/*           RESIDENCES SECTION                                                                                                                       */
 
 .residences-section {
   background: var(--green-800);
@@ -597,7 +597,7 @@ h3 { font-size: clamp(1.2rem, 2.5vw, 1.8rem); font-weight: 400; line-height: 1.2
 
 .residence-card-btn:hover { gap: 0.7rem; }
 
-/* ─── INVESTOR SECTION ───────────────────────────────────────── */
+/*           INVESTOR SECTION                                                                                                                             */
 
 .investor-section {
   background: var(--green-900);
@@ -647,7 +647,7 @@ h3 { font-size: clamp(1.2rem, 2.5vw, 1.8rem); font-weight: 400; line-height: 1.2
   .investor-grid { grid-template-columns: 1fr; }
 }
 
-/* ─── CTA SECTION ────────────────────────────────────────────── */
+/*           CTA SECTION                                                                                                                                            */
 
 .cta-section {
   background: var(--green-700);
@@ -678,7 +678,7 @@ h3 { font-size: clamp(1.2rem, 2.5vw, 1.8rem); font-weight: 400; line-height: 1.2
   flex-wrap: wrap;
 }
 
-/* ─── FOOTER ─────────────────────────────────────────────────── */
+/*           FOOTER                                                                                                                                                           */
 
 footer {
   background: var(--green-900);
@@ -711,7 +711,7 @@ footer {
   color: var(--text-muted);
 }
 
-/* ─── WORLD OVERLAY (3D) ─────────────────────────────────────── */
+/*           WORLD OVERLAY (3D)                                                                                                                       */
 
 #world-overlay {
   position: fixed;
@@ -798,7 +798,7 @@ footer {
   color: var(--cream-100);
 }
 
-/* ─── CANVAS AREA ────────────────────────────────────────────── */
+/*           CANVAS AREA                                                                                                                                            */
 
 .world-body {
   flex: 1;
@@ -815,7 +815,7 @@ footer {
   outline: none;
 }
 
-/* ─── VIEWPOINT STRIP ────────────────────────────────────────── */
+/*           VIEWPOINT STRIP                                                                                                                                */
 
 #viewpoint-strip {
   position: absolute;
@@ -823,6 +823,8 @@ footer {
   left: 0;
   right: 0;
   height: 88px;
+  z-index: 30;
+  pointer-events: auto;
   display: flex;
   align-items: center;
   gap: 0.6rem;
@@ -834,6 +836,8 @@ footer {
 #viewpoint-strip::-webkit-scrollbar { display: none; }
 
 .vp-btn {
+  pointer-events: auto;
+  cursor: pointer;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -874,7 +878,7 @@ footer {
   text-transform: uppercase;
 }
 
-/* ─── MINIMAP ────────────────────────────────────────────────── */
+/*           MINIMAP                                                                                                                                                        */
 
 #minimap {
   position: absolute;
@@ -911,7 +915,7 @@ footer {
   #minimap-canvas { width: 150px; height: 98px; }
 }
 
-/* ─── HUD PROMPTS ────────────────────────────────────────────── */
+/*           HUD PROMPTS                                                                                                                                            */
 
 #enter-prompt {
   position: absolute;
@@ -955,7 +959,7 @@ footer {
 body.pointer-locked .crosshair { opacity: 1; }
 body.pointer-locked #enter-prompt { opacity: 0; }
 
-/* ─── ZONE PANEL IN WORLD ────────────────────────────────────── */
+/*           ZONE PANEL IN WORLD                                                                                                                    */
 
 #world-zone-panel {
   position: absolute;
@@ -979,7 +983,7 @@ body.pointer-locked #enter-prompt { opacity: 0; }
   pointer-events: auto;
 }
 
-/* ─── TOUCH JOYSTICK ─────────────────────────────────────────── */
+/*           TOUCH JOYSTICK                                                                                                                                   */
 
 #joystick-overlay {
   position: absolute;
@@ -1019,7 +1023,7 @@ body.pointer-locked #enter-prompt { opacity: 0; }
   color: rgba(240,236,224,0.4);
 }
 
-/* ─── VR BUTTON ──────────────────────────────────────────────── */
+/*           VR BUTTON                                                                                                                                                  */
 
 #vr-btn {
   display: none;
@@ -1027,7 +1031,7 @@ body.pointer-locked #enter-prompt { opacity: 0; }
   gap: 0.4rem;
 }
 
-/* ─── LOADING SCREEN ─────────────────────────────────────────── */
+/*           LOADING SCREEN                                                                                                                                   */
 
 #loading-screen {
   position: fixed;
@@ -1082,7 +1086,7 @@ body.pointer-locked #enter-prompt { opacity: 0; }
   color: var(--text-muted);
 }
 
-/* ─── SCROLL ANIMATIONS ──────────────────────────────────────── */
+/*           SCROLL ANIMATIONS                                                                                                                          */
 
 .anim-fade {
   opacity: 0;
@@ -1094,7 +1098,7 @@ body.pointer-locked #enter-prompt { opacity: 0; }
   transform: none;
 }
 
-/* ─── UTILITY ────────────────────────────────────────────────── */
+/*           UTILITY                                                                                                                                                        */
 
 .gold { color: var(--gold-500); }
 .cream { color: var(--cream-100); }
@@ -1102,7 +1106,7 @@ body.pointer-locked #enter-prompt { opacity: 0; }
 .italic { font-style: italic; }
 .serif { font-family: "Cormorant Garamond", serif; }
 
-/* ─── VILLA INTERIOR OVERLAY ─────────────────────────────────── */
+/*           VILLA INTERIOR OVERLAY                                                                                                           */
 
 #villa-overlay {
   position: fixed;
@@ -1116,7 +1120,7 @@ body.pointer-locked #enter-prompt { opacity: 0; }
 
 /* Reuse world-topbar, world-body, world-btn styles */
 
-/* ─── VILLA FLOOR PLAN PANEL ─────────────────────────────────── */
+/*           VILLA FLOOR PLAN PANEL                                                                                                           */
 
 .villa-plan-panel {
   position: absolute;
@@ -1255,7 +1259,7 @@ body.pointer-locked #enter-prompt { opacity: 0; }
 }
 .villa-enquire-btn:hover { background: var(--gold-300); }
 
-/* ─── VILLA VIEWPOINT STRIP ─────────────────────────────────── */
+/*           VILLA VIEWPOINT STRIP                                                                                                           */
 
 #villa-vp-strip {
   position: absolute;
@@ -1273,7 +1277,7 @@ body.pointer-locked #enter-prompt { opacity: 0; }
 }
 #villa-vp-strip::-webkit-scrollbar { display: none; }
 
-/* ─── RESIDENCE CARD WALK BUTTON ─────────────────────────────── */
+/*           RESIDENCE CARD WALK BUTTON                                                                                               */
 
 .residence-card-btn[data-villa-enter],
 button.residence-card-btn {
@@ -1284,10 +1288,10 @@ button.residence-card-btn {
   font: inherit;
 }
 
-/* ─── PLAN ROOM CLICK JS BINDING ─────────────────────────────── */
+/*           PLAN ROOM CLICK JS BINDING                                                                                               */
 /* Handled in app.js via data-key delegation */
 
-/* ─── WEATHER / TIME CONTROLS IN WORLD ─────────────────────────── */
+/*           WEATHER / TIME CONTROLS IN WORLD                                                                                   */
 
 .wx-group {
   display: flex;
@@ -1330,6 +1334,7 @@ button.residence-card-btn {
 
 /* Make topbar scroll on small screens */
 .world-topbar {
+  pointer-events: auto;
   flex-wrap: nowrap;
   overflow-x: auto;
   scrollbar-width: none;
@@ -1337,13 +1342,13 @@ button.residence-card-btn {
 }
 .world-topbar::-webkit-scrollbar { display: none; }
 
-/* World zone panel (inside 3D world) ─────────────────────── */
+/* World zone panel (inside 3D world)                                                                       */
 #world-zone-panel {
   max-height: 300px;
   overflow-y: auto;
 }
 
-/* ─── PLOT RESERVATION PANEL ─────────────────────────────────── */
+/*           PLOT RESERVATION PANEL                                                                                                           */
 
 .plot-panel {
   position: absolute;
@@ -1460,7 +1465,7 @@ button.residence-card-btn {
   line-height: 1.6;
 }
 
-/* ─── NOTIFICATION TOAST ─────────────────────────────────────── */
+/*           NOTIFICATION TOAST                                                                                                                       */
 
 .notification {
   position: fixed;
@@ -1485,11 +1490,11 @@ button.residence-card-btn {
   transform: translateX(-50%) translateY(0);
 }
 
-/* ═══════════════════════════════════════════════════════════════
+/*                                                                                                                                                                                              
    RESPONSIVE + TOUCH SYSTEM
-   ═══════════════════════════════════════════════════════════════ */
+                                                                                                                                                                                                 */
 
-/* ─── VIRTUAL JOYSTICK ───────────────────────────────────────── */
+/*           VIRTUAL JOYSTICK                                                                                                                             */
 
 #joystick-overlay {
   position: absolute;
@@ -1524,10 +1529,11 @@ button.residence-card-btn {
   pointer-events: none;
 }
 
-/* ─── WORLD OVERLAY RESPONSIVE ───────────────────────────────── */
+/*           WORLD OVERLAY RESPONSIVE                                                                                                     */
 
 /* Topbar scroll on small screens */
 .world-topbar {
+  pointer-events: auto;
   flex-wrap: nowrap;
   overflow-x: auto;
   overflow-y: hidden;
@@ -1554,7 +1560,7 @@ button.residence-card-btn {
 }
 .vp-btn { scroll-snap-align: start; }
 
-/* ─── MINIMAP RESPONSIVE ─────────────────────────────────────── */
+/*           MINIMAP RESPONSIVE                                                                                                                       */
 
 @media (max-width: 480px) {
   #minimap {
@@ -1565,7 +1571,7 @@ button.residence-card-btn {
   #minimap-canvas { width: 130px; height: 85px; }
 }
 
-/* ─── PLOT PANEL RESPONSIVE ──────────────────────────────────── */
+/*           PLOT PANEL RESPONSIVE                                                                                                              */
 
 @media (max-width: 640px) {
   .plot-panel {
@@ -1583,7 +1589,7 @@ button.residence-card-btn {
   .plot-spec-grid { grid-template-columns: 1fr 1fr; }
 }
 
-/* ─── LANDING PAGE RESPONSIVE ────────────────────────────────── */
+/*           LANDING PAGE RESPONSIVE                                                                                                        */
 
 @media (max-width: 768px) {
   .hero-content { grid-template-columns: 1fr; padding-bottom: 2rem; }
@@ -1611,7 +1617,7 @@ button.residence-card-btn {
   .btn { padding: 0.7rem 1.4rem; font-size: 0.76rem; }
 }
 
-/* ─── TOUCH FRIENDLY ─────────────────────────────────────────── */
+/*           TOUCH FRIENDLY                                                                                                                                   */
 
 /* Ensure tap targets meet 44px minimum */
 .room-btn, .vp-btn, .wx-btn, .world-btn { min-height: 38px; }
@@ -1634,7 +1640,7 @@ button.residence-card-btn {
   padding-bottom: max(0.8rem, env(safe-area-inset-bottom));
 }
 
-/* ─── TABLET (iPad) ──────────────────────────────────────────── */
+/*           TABLET (iPad)                                                                                                                                      */
 
 @media (min-width: 768px) and (max-width: 1024px) {
   .masterplan-shell { grid-template-columns: 1fr 320px; }
@@ -1644,7 +1650,7 @@ button.residence-card-btn {
   .vp-btn { padding: 0.5rem 0.9rem; }
 }
 
-/* ─── WORLD CANVAS SIZING ────────────────────────────────────── */
+/*           WORLD CANVAS SIZING                                                                                                                    */
 
 #world-canvas {
   width: 100% !important;
@@ -1658,7 +1664,7 @@ button.residence-card-btn {
 /* Prevent body scroll while world is open */
 body.world-open { overflow: hidden; position: fixed; width: 100%; }
 
-/* ─── LOOK HINT ON MOBILE ────────────────────────────────────── */
+/*           LOOK HINT ON MOBILE                                                                                                                    */
 
 .look-hint-mobile {
   position: absolute;
@@ -1673,9 +1679,9 @@ body.world-open { overflow: hidden; position: fixed; width: 100%; }
   pointer-events: none;
 }
 
-/* ─── VIEWPOINT DROPDOWN ─────────────────────────────────────── */
+/*           VIEWPOINT DROPDOWN                                                                                                                       */
 
-.vp-wrapper { position: relative; flex-shrink: 0; }
+.vp-wrapper { position: relative; flex-shrink: 0; pointer-events: auto; z-index: 31; }
 
 .vp-chevron {
   font-size: .55rem;
@@ -1687,6 +1693,8 @@ body.world-open { overflow: hidden; position: fixed; width: 100%; }
 .vp-dropdown {
   position: absolute;
   bottom: calc(100% + 6px);
+  z-index: 200;
+  pointer-events: auto;
   left: 0;
   flex-direction: column;
   background: rgba(6, 18, 8, 0.97);
@@ -1718,9 +1726,9 @@ body.world-open { overflow: hidden; position: fixed; width: 100%; }
   color: var(--gold-300);
 }
 
-/* ═══════════════════════════════════════════════════════════════
+/*                                                                                                                                                                                              
    PRODUCT PANEL
-   ═══════════════════════════════════════════════════════════════ */
+                                                                                                                                                                                                 */
 
 .pp-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,.65);
