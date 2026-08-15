@@ -374,8 +374,13 @@ function addLake(){
 
 function addEastLake(){
   const wm=createWaterMat();
-  const el=new THREE.Mesh(new THREE.BoxGeometry(10,.25,38),wm);
-  el.position.set(220,.12,-48); scene.add(el); waterMeshes.push(el);
+  // Pixel-measured: centre x=+267, z=+4, size ~30m E-W x 54m N-S
+  const el=new THREE.Mesh(new THREE.BoxGeometry(30,.28,54),wm);
+  el.position.set(267,.14,4); el.receiveShadow=true;
+  scene.add(el); waterMeshes.push(el);
+  // Shore grass
+  const sg=new THREE.MeshStandardMaterial({color:0x3a7a28,roughness:.9});
+  s(plane(34,58,sg,[267,.12,4])); // slightly larger green border
 }
 
 //        CLUBHOUSE (Audit 4.1, 4.2, 4.3)                                                                                                                               
@@ -551,12 +556,12 @@ function addVillaRing(){
     const z=-82+i*PLOT;
     placeVillaWithLandscape(-192,z,Math.PI/2);
   }
-  // EAST INNER column x=+162 (8 units)
+  // EAST INNER column x=+172 (pixel-measured, was +162)
   for(let i=0;i<8;i++){
     const z=-96+i*PLOT;
-    placeVillaWithLandscape(162,z,-Math.PI/2);
+    placeVillaWithLandscape(172,z,-Math.PI/2);
   }
-  // EAST OUTER column x=+192 (7 units)
+  // EAST OUTER column x=+192 (correct)
   for(let i=0;i<7;i++){
     const z=-82+i*PLOT;
     placeVillaWithLandscape(192,z,-Math.PI/2);
@@ -654,8 +659,8 @@ function addLoftTerraces(){
     placeLoftGLB(x,cz,Math.PI);
   }
   // NORTH CRESCENT - SINGLE ROW, NE ARM
-  // Starts at x=+95 (lake east edge ~x=+90)
-  for(let x=95; x<=310; x+=36){
+  // Pixel-measured start x=+153 (was +95 which overlapped lake)
+  for(let x=153; x<=295; x+=36){
     const cz=-162-Math.abs(x)*.05;
     placeLoftGLB(x,cz,Math.PI);
   }
@@ -734,35 +739,48 @@ function addStables(){
 
 //        PADDOCK (Audit 8.1, 8.2)                                                                                                                                                    
 function addPaddock(){
-  s(plane(40,38,MAT_GRASS_FIELD(),[218,.07,0]));
-  // Post-and-rail fence (Audit 8.1)
-  const post=MATS.railWhite(); const rail=MATS.railWhite();
-  for(let fz=-19;fz<=19;fz+=4){ s(cyl(.1,.1,1.6,6,post,[198,.8,fz])); s(cyl(.1,.1,1.6,6,post,[238,.8,fz])); }
-  for(let fx=198;fx<=238;fx+=4){ s(cyl(.1,.1,1.6,6,post,[fx,.8,-19])); s(cyl(.1,.1,1.6,6,post,[fx,.8,19])); }
-  s(box(.08,.1,38,rail,[198,1.0,0],0,false)); s(box(.08,.1,38,rail,[238,1.0,0],0,false));
-  s(box(40,.1,.08,rail,[218,1.0,-19],0,false)); s(box(40,.1,.08,rail,[218,1.0,19],0,false));
-  s(box(.08,.1,38,rail,[198,1.55,0],0,false)); s(box(.08,.1,38,rail,[238,1.55,0],0,false));
-  s(box(40,.1,.08,rail,[218,1.55,-19],0,false)); s(box(40,.1,.08,rail,[218,1.55,19],0,false));
-  // Green area (Audit 10.3)
-  s(plane(60,60,MATS.grassGreen(),[255,.06,-58]));
-  for(let tx=235;tx<=280;tx+=7) for(let tz=-85;tz<=-30;tz+=7) addTreeAt(tx,.1,tz,.7+Math.random()*.5);
+  // Pixel-measured: centre x=+267, z=+62. Size ~30m E-W x 92m N-S
+  const PX=267, PZ=62, PW=30, PD=92;
+  s(plane(PW,PD,MAT_GRASS_FIELD(),[PX,.07,PZ]));
+  const post=MATS.railWhite(), rail=MATS.railWhite();
+  const x1=PX-PW/2, x2=PX+PW/2, z1=PZ-PD/2, z2=PZ+PD/2;
+  for(let fz=z1;fz<=z2;fz+=5){ s(cyl(.1,.1,1.7,6,post,[x1,.85,fz])); s(cyl(.1,.1,1.7,6,post,[x2,.85,fz])); }
+  for(let fx=x1;fx<=x2;fx+=5){ s(cyl(.1,.1,1.7,6,post,[fx,.85,z1])); s(cyl(.1,.1,1.7,6,post,[fx,.85,z2])); }
+  s(box(.07,.07,PD,rail,[x1,1.1,PZ],0,false)); s(box(.07,.07,PD,rail,[x2,1.1,PZ],0,false));
+  s(box(PW,.07,.07,rail,[PX,1.1,z1],0,false)); s(box(PW,.07,.07,rail,[PX,1.1,z2],0,false));
+  s(box(.07,.07,PD,rail,[x1,1.6,PZ],0,false)); s(box(.07,.07,PD,rail,[x2,1.6,PZ],0,false));
+  s(box(PW,.07,.07,rail,[PX,1.6,z1],0,false)); s(box(PW,.07,.07,rail,[PX,1.6,z2],0,false));
+  // GREEN AREA (NE, x=+271, z=-107 to -53)     dense planting
+  s(plane(50,100,MATS.grassGreen(),[271,.06,-80]));
+  for(let tx=248;tx<=295;tx+=7) for(let tz=-153;tz<=-53;tz+=7)
+    addTreeAt(tx,.1,tz,.8+Math.random()*.6);
 }
 
-function addGamePark(){ // Audit 8.2
-  s(plane(54,44,MAT_GRASS_FIELD(),[218,.07,52]));
+function addGamePark(){
+  // Pixel-measured: x=+267, z=+146
+  s(plane(50,40,MAT_GRASS_FIELD(),[267,.07,146]));
+  // Play equipment
   const cols=[0xe8602a,0x2a88c8,0xe8c82a,0x4ac84a];
   for(let i=0;i<5;i++){
     const h=2.6+i*.4;
-    s(box(3.2,h,3.2,new THREE.MeshStandardMaterial({color:cols[i%4],roughness:.6}),[203+i*7,h/2,50+(i%2)*8]));
+    s(box(3.2,h,3.2,new THREE.MeshStandardMaterial({color:cols[i%4],roughness:.6}),
+      [252+i*7,h/2,144+(i%2)*8]));
   }
+  // Parking east: x=+243, z=+184
+  s(plane(45,25,MATS.roadAsph(),[243,.12,184]));
 }
 
 function addCommercialBlock(){
-  const g=new THREE.Group(); g.position.set(270,0,65);
+  // Pixel-measured: x=+284, z=+184 (SE corner near Lagos Road)
+  const g=new THREE.Group(); g.position.set(284,0,184);
   g.add(box(42,9,26,MATS.flatGrey(),[0,4.5,0]));
   g.add(box(42,.55,28,MAT_WHITE_TRIM(),[0,9.3,0],0,false));
   g.add(box(.4,8.5,22,MAT_GLASS(.5),[-21.2,4.5,0]));
-  scene.add(g);
+  // Second commercial block beside it
+  const g2=new THREE.Group(); g2.position.set(284,0,215);
+  g2.add(box(38,7,22,MATS.flatGrey(),[0,3.5,0]));
+  g2.add(box(38,.4,23,MAT_WHITE_TRIM(),[0,7.2,0],0,false));
+  scene.add(g); scene.add(g2);
 }
 
 function addServiceCompound(){
