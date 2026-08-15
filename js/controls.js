@@ -51,8 +51,21 @@ export function initControls(cam, ren) {
   document.addEventListener('visibilitychange', () => { if (document.hidden) keys.clear(); });
 
   // Pointer lock (desktop mouse look)
-  renderer.domElement.addEventListener('click', () => {
-    if (active && !locked && !isMobile()) renderer.domElement.requestPointerLock();
+  renderer.domElement.addEventListener('click', (e) => {
+    // Only request pointer lock if click is directly on the canvas
+    // (not on overlapping UI elements like viewpoint buttons)
+    if (!active || locked || isMobile()) return;
+    // Check if the actual target is a button or interactive element
+    const tag = e.target.tagName.toLowerCase();
+    if (['button','a','input','select','textarea'].includes(tag)) return;
+    // Check if click is within the viewpoint strip area (bottom 100px)
+    const rect = renderer.domElement.getBoundingClientRect();
+    const fromBottom = rect.bottom - e.clientY;
+    if (fromBottom < 100) return; // bottom nav zone - don't steal
+    // Check if click is within the topbar area (top 60px)  
+    const fromTop = e.clientY - rect.top;
+    if (fromTop < 60) return; // topbar zone - don't steal
+    renderer.domElement.requestPointerLock();
   });
   document.addEventListener('pointerlockchange', () => {
     locked = document.pointerLockElement === renderer.domElement;
