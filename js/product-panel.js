@@ -77,7 +77,9 @@ export const PRODUCTS = {
     title:    "2-Bedroom Loft Terrace",
     type:     "Residential",
     tagline:  "96 units. 125m\u00b2. Lock-up-and-leave. Crescent address.",
-    glb:      null,
+    glb:      "assets/loft-mesh.glb",
+    glbScale: 1.2,
+    glbOffsetY: 0.1,
     specs: [
       { label:"Bedrooms",     value:"2" },
       { label:"Bathrooms",    value:"2" },
