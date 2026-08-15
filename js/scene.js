@@ -407,6 +407,29 @@ function makeDracoLoader() {
   return loader;
 }
 
+// Load a GLB with Draco decompression, apply scale+Y offset, return scene template
+function loadOneGLB(path, scale, yOff, onDone, onFail) {
+  makeDracoLoader().load(path,
+    gltf => {
+      gltf.scene.scale.setScalar(scale);
+      gltf.scene.position.y = yOff;
+      gltf.scene.traverse(child => {
+        if (child.isMesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+          child.frustumCulled = true;
+        }
+      });
+      onDone(gltf.scene);
+    },
+    undefined,
+    err => {
+      console.error("GLB failed:", path, err.message||err);
+      if (onFail) onFail();
+    }
+  );
+}
+
 function loadVillaGLB(){
   loadOneGLB("assets/villa-mesh.glb", VILLA_SCALE, VILLA_Y, tmpl=>{
     villaGLBTemplate=tmpl; villaGLBScene=tmpl;
