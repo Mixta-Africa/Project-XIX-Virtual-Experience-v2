@@ -6,7 +6,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
 
 import { VIEWPOINTS, ZONES, WORLD } from "./data.js";
 import { buildVillaInterior, VILLA_VIEWPOINTS } from "./villa-interior.js";
-import { initScene, getRenderer, getScene, getCamera, getClock, tickScene, updateSky } from "./scene.js";
+import { initScene, getRenderer, getScene, getCamera, getClock, tickScene, updateSky, plotRegistry, reservePlot, getPlotAtRay } from "./scene.js";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR
@@ -36,14 +36,10 @@ const AERIAL_HEIGHT = 200;
 
 //           WEATHER / TIME PRESETS                                                                                                                                                       
 const TIME_PRESETS = {
-  // Morning: soft blue-gold dawn, moderate exposure
-  morning:   { sky:["#203060","#6090c0","#4a7a38"], sunCol:0xffd080, sunInt:2.2, sunPos:[-80,55,-80],   fog:"#88a8c0", fogD:0.007, exp:0.95 },
-  // Afternoon: clear blue sky, full sun
-  afternoon: { sky:["#1a3a6a","#5a9acc","#3a6a30"], sunCol:0xffe8b0, sunInt:2.8, sunPos:[-160,180,100], fog:"#8ab8cc", fogD:0.005, exp:1.05 },
-  // Sunset: warm golden-red
-  sunset:    { sky:["#0a1830","#c84818","#4a2a10"], sunCol:0xff8030, sunInt:1.8, sunPos:[-100,28,60],   fog:"#c06040", fogD:0.010, exp:1.1  },
-  // Night: deep dark, villa lights glow
-  night:     { sky:["#000508","#020a14","#050a08"], sunCol:0x304870, sunInt:0.15,sunPos:[0,40,-80],     fog:"#020810", fogD:0.016, exp:0.55 },
+  morning:   { sky:["#1e3a5a","#7aaac8","#4a7a38"], sunCol:0xffd080, sunInt:1.8, sunPos:[-80,55,-80],   fog:"#8ab8cc", fogD:0.0008, exp:0.92 },
+  afternoon: { sky:["#1a3a6a","#5a9acc","#3a6a30"], sunCol:0xffe8b0, sunInt:2.2, sunPos:[-160,160,100], fog:"#8ab8cc", fogD:0.0009, exp:1.02 },
+  sunset:    { sky:["#0a1830","#c84818","#4a2a10"], sunCol:0xff8030, sunInt:1.6, sunPos:[-100,28,60],   fog:"#c06040", fogD:0.0012, exp:1.05 },
+  night:     { sky:["#000508","#020a14","#050a08"], sunCol:0x304870, sunInt:0.12,sunPos:[0,40,-80],     fog:"#020810", fogD:0.0015, exp:0.55 },
 };
 
 function applyTimePreset(name) {
@@ -95,6 +91,7 @@ document.addEventListener("DOMContentLoaded", () => {
   bindNav();
   bindExitButton();
   bindSectionScrollAnim();
+  bindPlotSystem();
   bindVillaInteriorBtn();
   initAudio();
 });
@@ -301,6 +298,62 @@ function bindMasterplan() {
 }
 
 //           NAV                                                                                                                                                                                                                   
+
+function bindPlotSystem() {
+  // Left-click in 3D world -> check if it hits a plot overlay
+  const canvas = document.getElementById("world-canvas");
+  if (!canvas) return;
+  canvas.addEventListener("click", e => {
+    if (!document.getElementById("world-overlay")?.classList.contains("open")) return;
+    const rect = canvas.getBoundingClientRect();
+    const mouse = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width)  * 2 - 1,
+     -((e.clientY - rect.top)  / rect.height) * 2 + 1
+    );
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(mouse, getCamera());
+    const plotKey = getPlotAtRay(raycaster);
+    if (plotKey) showPlotPanel(plotKey);
+  });
+}
+
+function showPlotPanel(plotKey) {
+  const plot = plotRegistry.get(plotKey);
+  if (!plot) return;
+  const panel = document.getElementById("plot-panel");
+  if (!panel) return;
+  const [x, z] = plotKey.split(",").map(Number);
+  const side = x < 0 ? "West" : x === 0 ? "Centre" : "East";
+  const pos  = z < -50 ? "North" : z > 50 ? "South" : "Mid";
+  panel.querySelector(".plot-id").textContent    = `Plot ${plotKey}`;
+  panel.querySelector(".plot-location").textContent = `${pos} ${side}     Premium Villa`;
+  panel.querySelector(".plot-status").textContent   = plot.status === "available" ? "Available" : "Reserved";
+  panel.querySelector(".plot-status").className  = "plot-status " + plot.status;
+  const btn = panel.querySelector(".plot-reserve-btn");
+  btn.disabled = plot.status !== "available";
+  btn.textContent = plot.status === "available" ? "Reserve This Plot" : "Already Reserved";
+  btn.onclick = () => {
+    if (reservePlot(plotKey)) {
+      showPlotPanel(plotKey); // refresh panel
+      showNotification("Plot reserved! Our team will contact you within 24 hours.");
+    }
+  };
+  panel.classList.add("visible");
+  document.getElementById("plot-panel-close")?.addEventListener("click", ()=> panel.classList.remove("visible"), {once:true});
+}
+
+function showNotification(msg) {
+  const n = document.getElementById("notification");
+  if (!n) return;
+  n.textContent = msg; n.classList.add("show");
+  setTimeout(() => n.classList.remove("show"), 4500);
+}
+
+window.closeWorldAndPlot = function() {
+  document.getElementById("plot-panel")?.classList.remove("visible");
+  document.getElementById("world-overlay")?.classList.remove("open");
+  document.body.style.overflow = "";
+};
 
 function bindNav() {
   document.querySelectorAll("[data-section]").forEach(link => {
