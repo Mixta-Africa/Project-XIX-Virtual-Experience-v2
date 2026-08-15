@@ -16,7 +16,6 @@
  */
 
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
-import { RGBELoader } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/RGBELoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/GLTFLoader.js";
 import { PBR, createWaterMat, addGrassField, tickGrass, tickWater } from "./graphics.js";
 import {
@@ -53,13 +52,12 @@ export function initScene(canvas) {
   renderer.shadowMap.enabled   = true;
   renderer.shadowMap.type      = THREE.PCFSoftShadowMap;
   renderer.toneMapping         = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.05;
+  renderer.toneMappingExposure = 0.88; // reduced - no HDR boost
   renderer.outputColorSpace    = THREE.SRGBColorSpace;
   scene  = new THREE.Scene();
   scene.background = new THREE.Color(0x8ab8cc);
   scene.fog = new THREE.FogExp2(0x8ab8cc, 0.0009); // reduced fog density
   camera = new THREE.PerspectiveCamera(65, 1, 0.1, 1600);
-  loadHDRI();
   buildLighting();
   buildSky();
   buildEnvironment();
@@ -69,12 +67,8 @@ export function initScene(canvas) {
 }
 
 //        HDRI                                                                                                                                                                                                                
-function loadHDRI() {
-  new RGBELoader().load("assets/shanghai_bund_4k.hdr", hdr => {
-    hdr.mapping = THREE.EquirectangularReflectionMapping;
-    scene.environment = hdr;
-  });
-}
+// HDRI removed - caused white glare from Shanghai bund HDR
+function loadHDRI() {} // disabled
 
 //        LIGHTING                                                                                                                                                                                                    
 let sunLight, hemiLight;
@@ -418,32 +412,49 @@ function addUmbrella(parent,pos){
 function loadVillaGLB(){
   new GLTFLoader().load("assets/villa-mesh.glb",
     gltf=>{
-      villaGLBScene=gltf.scene;
-      villaGLBScene.scale.setScalar(VILLA_SCALE);
-      villaGLBScene.position.y=VILLA_Y;
-      villaGLBScene.traverse(c=>{
+      // CRITICAL: Wrap in a Group so clone() picks up scale+position correctly
+      // Setting scale/pos on gltf.scene directly is lost on clone(true)
+      const wrapper = new THREE.Group();
+      wrapper.add(gltf.scene);
+      // Apply scale and ground-sit offset to the WRAPPER, not the scene root
+      gltf.scene.scale.setScalar(VILLA_SCALE);
+      gltf.scene.position.y = VILLA_Y;
+      gltf.scene.traverse(c=>{
         if(c.isMesh){
           c.castShadow=true; c.receiveShadow=true;
-          if(c.material) c.material.envMapIntensity=1.1;
+          if(c.material){
+            c.material.envMapIntensity=0.4; // reduced - no HDR glare
+            c.material.needsUpdate=true;
+          }
         }
       });
+      villaGLBScene = wrapper; // store the wrapper as template
       pendingVillas.forEach(({x,z,ry,plotKey})=>placeVillaGLB(x,z,ry,plotKey));
       pendingVillas=[];
+      console.log("Villa GLB loaded OK -", acc.count, "vertices");
     },
-    null,
-    ()=>{ pendingVillas.forEach(({x,z,ry})=>{ const v=createVillaFallback(); v.position.set(x,0,z); v.rotation.y=ry; scene.add(v); }); pendingVillas=[]; }
+    xhr=>{ if(xhr.total) console.log("Villa GLB:", Math.round(xhr.loaded/xhr.total*100)+"%"); },
+    err=>{ 
+      console.error("Villa GLB failed:", err);
+      pendingVillas.forEach(({x,z,ry})=>{ const v=createVillaFallback(); v.position.set(x,0,z); v.rotation.y=ry; scene.add(v); });
+      pendingVillas=[];
+    }
   );
 }
 
 function loadApartmentGLB(){
   new GLTFLoader().load("assets/apartment-mesh.glb",
     gltf=>{
-      aptGLBScene=gltf.scene;
-      aptGLBScene.scale.setScalar(APT_SCALE);
-      aptGLBScene.position.y=APT_Y;
-      aptGLBScene.traverse(c=>{
-        if(c.isMesh){ c.castShadow=true; c.receiveShadow=true; }
+      const wrapper = new THREE.Group();
+      wrapper.add(gltf.scene);
+      gltf.scene.scale.setScalar(APT_SCALE);
+      gltf.scene.position.y=APT_Y;
+      gltf.scene.traverse(c=>{
+        if(c.isMesh){ c.castShadow=true; c.receiveShadow=true;
+          if(c.material){ c.material.envMapIntensity=0.3; c.material.needsUpdate=true; }
+        }
       });
+      aptGLBScene=wrapper;
       pendingApts.forEach(({x,z,ry})=>placeAptGLB(x,z,ry));
       pendingApts=[];
     },
@@ -779,24 +790,23 @@ function addTreeAt(x,y,z,scale=1){ // generic tropical tree
 
 function addLandscaping(){
   // Lagos Road palm avenue (Audit 10.1)
-  for(let x=-280;x<=280;x+=10){ addPalmSprite(x,.1,206,1.3); addPalmSprite(x,.1,224,1.2); }
+  for(let x=-280;x<=280;x+=28){ addPalmSprite(x,.1,206,1.3); addPalmSprite(x,.1,224,1.2); }
 
   // Ring road palms outer side (Audit 10.1)
-  for(let z=-95;z<=95;z+=15){ addPalmSprite(-160,.1,z,1.1); addPalmSprite(160,.1,z,1.1); }
-  for(let x=-150;x<=150;x+=15){ addPalmSprite(x,.1,-102,1.1); addPalmSprite(x,.1,102,1.1); }
+  for(let z=-95;z<=95;z+=40){ addPalmSprite(-160,.1,z,1.1); addPalmSprite(160,.1,z,1.1); }
+  for(let x=-150;x<=150;x+=40){ addPalmSprite(x,.1,-102,1.1); addPalmSprite(x,.1,102,1.1); }
 
   // North backdrop tree canopy (Audit 10.2)
-  for(let x=-310;x<=310;x+=6){
-    addTreeAt(x,.1,-205,.8+Math.random()*.5);
-    addTreeAt(x+3,.1,-215,.6+Math.random()*.5);
+  for(let x=-310;x<=310;x+=18){
+    addTreeAt(x,.1,-210,.8+Math.random()*.5);
   }
 
   // Perimeter tree belt (all four sides)
-  for(let x=-300;x<=300;x+=12){ addPalmSprite(x,.1,-225,.9+Math.random()*.3); addPalmSprite(x,.1,215,.9+Math.random()*.3); }
-  for(let z=-220;z<=215;z+=14){ addPalmSprite(-310,.1,z,.9+Math.random()*.25); addPalmSprite(310,.1,z,.9+Math.random()*.25); }
+  for(let x=-300;x<=300;x+=35){ addPalmSprite(x,.1,-225,.9+Math.random()*.3); addPalmSprite(x,.1,215,.9+Math.random()*.3); }
+  for(let z=-220;z<=215;z+=35){ addPalmSprite(-310,.1,z,.9+Math.random()*.25); addPalmSprite(310,.1,z,.9+Math.random()*.25); }
 
   // Lake shore palms
-  for(let x=-55;x<=115;x+=16){ addPalmSprite(x,.1,-104,1.1); addPalmSprite(x,.1,-126,1.0); }
+  // Lake shore palms removed - not realistic to have palms at water edge
 
   // Clubhouse avenue flanks
   for(const pz of[95,103,111,119]){ addPalmSprite(-16,.1,pz,1.2); addPalmSprite(16,.1,pz,1.2); }
