@@ -16,7 +16,8 @@
  */
 
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
-import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/GLTFLoader.js";
+import { GLTFLoader }  from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/GLTFLoader.js";
+import { DRACOLoader } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/DRACOLoader.js";
 import { PBR, createWaterMat, addGrassField, tickGrass, tickWater } from "./graphics.js";
 import {
   MAT_GRASS_FIELD, MAT_DIRT, MAT_ASPHALT,
@@ -439,8 +440,16 @@ let villaGLBTemplate = null;
 let aptGLBTemplate   = null;
 let loftGLBTemplate  = null;
 
+function makeDracoLoader() {
+  const draco = new DRACOLoader();
+  draco.setDecoderPath("https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/libs/draco/");
+  const loader = new GLTFLoader();
+  loader.setDRACOLoader(draco);
+  return loader;
+}
+
 function loadVillaGLB(){
-  new GLTFLoader().load("assets/villa-mesh.glb", (gltf) => {
+  makeDracoLoader().load("assets/villa-mesh.glb", (gltf) => {
     gltf.scene.scale.setScalar(VILLA_SCALE);
     gltf.scene.position.y = VILLA_Y;
     gltf.scene.traverse(child => {
@@ -458,7 +467,7 @@ function loadVillaGLB(){
 }
 
 function loadApartmentGLB(){
-  new GLTFLoader().load("assets/apartment-mesh.glb", (gltf) => {
+  makeDracoLoader().load("assets/apartment-mesh.glb", (gltf) => {
     gltf.scene.scale.setScalar(APT_SCALE);
     gltf.scene.position.y = APT_Y;
     gltf.scene.traverse(child => {
@@ -476,7 +485,7 @@ function loadApartmentGLB(){
 }
 
 function loadLoftGLB(){
-  new GLTFLoader().load("assets/loft-mesh.glb", (gltf) => {
+  makeDracoLoader().load("assets/loft-mesh.glb", (gltf) => {
     gltf.scene.scale.setScalar(LOFT_SCALE);
     gltf.scene.position.y = LOFT_Y;
     gltf.scene.traverse(child => {
