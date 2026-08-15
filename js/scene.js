@@ -363,59 +363,12 @@ function addEastLake(){
 }
 
 //        CLUBHOUSE (Audit 4.1, 4.2, 4.3)                                                                                                                               
-function addClubhouse(){ /* replaced by clubhouse GLB */ return;
-  // legacy below kept for parking/surroundings
-  const G=new THREE.Group(); G.position.set(0,0,108);
-  // Parking
-  const am=MATS.roadAsph();
-  s(plane(55,28,am,[-65,.13,175]));
-  s(plane(55,28,am,[ 65,.13,175]));
-  const g=new THREE.Group(); g.position.set(0,0,108);
-  const cm=MATS.clubWhite();
-  const gw=MAT_GLASS_WARM(.55);
-  const gm=MAT_GLASS(.48);
-  const tm=MAT_TIMBER();
-  const wm=MAT_WHITE_TRIM();
-  const gld=MAT_GOLD();
-
-  // Main building 110m wide (Audit 4.2)
-  g.add(box(110,4.8,26,cm,[0,2.4,0]));
-  // Bleachers facing north
-  for(let i=0;i<8;i++)
-    g.add(box(92,.45,2.2,new THREE.MeshStandardMaterial({color:0xd0c8b8,roughness:.7}),
-      [0,.55+i*.52,-12.5+i*1.6],0,false));
-  for(let x=-50;x<=50;x+=12) g.add(box(1.1,5.2,1.1,cm,[x,2.7,-13]));
-  // Floor 1
-  g.add(box(122,4.6,27,cm,[0,7.3,.5]));
-  g.add(box(110,3.4,.45,gw,[0,7.3,-13.2]));
-  g.add(box(110,.95,.3,gld,[0,5.3,-13.2],0,false));
-  for(const ux of[-35,0,35]) addUmbrella(g,[ux,5.9,-10]);
-  // Floor 2
-  g.add(box(130,4.4,28,cm,[0,12.1,1.0]));
-  g.add(box(118,3.4,.45,gm,[0,12.1,-13.4]));
-  // Slab overhangs
-  [4.85,9.65,14.55].forEach(y=>g.add(box(135,.65,30,wm,[0,y,1.0],0,false)));
-  for(let x=-55;x<=55;x+=12){
-    g.add(box(.7,4.5,.7,wm,[x,7.3,-13]));
-    g.add(box(.7,4.3,.7,wm,[x,12.1,-13.2]));
-  }
-  for(const side of[-48,48]){
-    g.add(box(16,6.5,16,cm,[side,18.0,.5]));
-    g.add(box(17.5,.7,17.5,wm,[side,21.5,.5],0,false));
-  }
-  g.add(box(14,5.2,1.0,tm,[0,2.6,-13.5]));
-  scene.add(g);
-
-  // PARKING both sides (Audit 4.1) - 50x20m each
-  const am=MATS.roadAsph();
-  const bayM=MATS.railWhite();
-  s(plane(50,20,am,[-68,.13,128]));
-  s(plane(50,20,am,[ 68,.13,128]));
-  for(const bx of[-68,68]) for(let i=-22;i<=22;i+=4.5)
-    s(box(.06,.04,5.5,bayM,[bx+i,.16,128],0,false));
-
-  // Clubhouse avenue - double row of 8 palms (Audit 10.1)
-  for(let pz=93;pz<=113;pz+=8){ addPalmSprite(-12,.1,pz,1.3); addPalmSprite(12,.1,pz,1.3); }
+function addClubhouse(){
+  // Clubhouse visual handled by clubhouse-mesh.glb
+  // Add parking lots beside it
+  const parkM=MATS.roadAsph();
+  s(plane(55,28,parkM,[-65,.13,128]));
+  s(plane(55,28,parkM,[ 65,.13,128]));
 }
 
 function addUmbrella(parent,pos){
