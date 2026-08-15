@@ -1740,14 +1740,15 @@ body.world-open { overflow: hidden; position: fixed; width: 100%; }
 .product-panel {
   position: fixed;
   top: 0; right: 0; bottom: 0;
-  width: min(92vw, 1000px);
+  width: min(95vw, 1100px);
   background: var(--green-900);
   border-left: 1px solid rgba(201,168,76,.2);
-  z-index: 900;
+  z-index: 901;              /* above overlay */
   display: flex; flex-direction: column;
   transform: translateX(100%);
   transition: transform .4s cubic-bezier(.22,.61,.36,1);
   overflow: hidden;
+  will-change: transform;   /* GPU compositing */
 }
 .product-panel.open { transform: translateX(0); }
 
@@ -1847,9 +1848,9 @@ body.world-open { overflow: hidden; position: fixed; width: 100%; }
 .pp-cta { display: flex; gap: .7rem; flex-wrap: wrap; margin-top: auto; padding-top: 1rem; }
 .pp-cta .btn { flex: 1; text-align: center; justify-content: center; min-width: 140px; }
 
-/* ═══════════════════════════════════════════════════════════════
+/*                                                                                                                                                                                              
    INTERIOR WALKTHROUGH OVERLAY
-   ═══════════════════════════════════════════════════════════════ */
+                                                                                                                                                                                                 */
 
 .interior-overlay {
   position: fixed;
@@ -1996,7 +1997,7 @@ body.interior-open { overflow: hidden; }
   transition: opacity 1s;
 }
 
-/* "View from inside" button — added to product panel */
+/* "View from inside" button     added to product panel */
 .pp-interior-btn {
   width: 100%;
   margin-bottom: .6rem;
@@ -2025,7 +2026,7 @@ body.interior-open { overflow: hidden; }
   .int-controls-hint { display: none; }
 }
 
-/* ─── TOUCH SPRINT BUTTON ────────────────────────────────────── */
+/*           TOUCH SPRINT BUTTON                                                                                                                    */
 .touch-sprint-btn {
   position: absolute;
   bottom: 108px;
