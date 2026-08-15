@@ -343,6 +343,14 @@
         <button class="wx-btn wx-weather-btn"        data-weather="cloudy" onclick="applyWeather('cloudy')">Cloudy</button>
         <button class="wx-btn wx-weather-btn"        data-weather="rain"   onclick="applyWeather('rain')">Rain</button>
       </div>
+      <!-- GLB orientation calibration (hidden after confirmed) -->
+      <div class="wx-group" id="glb-orient-group" role="group" aria-label="Villa orientation">
+        <span style="font-size:.6rem;color:rgba(255,255,255,.4);padding:0 .3rem">Villa:</span>
+        <button class="wx-btn" onclick="rotateVillaGLB(0)"    title="No rotation">0&deg;</button>
+        <button class="wx-btn" onclick="rotateVillaGLB(90)"   title="Rotate 90deg">90&deg;</button>
+        <button class="wx-btn" onclick="rotateVillaGLB(180)"  title="Rotate 180deg">180&deg;</button>
+        <button class="wx-btn" onclick="rotateVillaGLB(270)"  title="Rotate 270deg">270&deg;</button>
+      </div>
       <!-- Aerial -->
       <button class="world-btn world-btn-aerial" id="btn-aerial" aria-label="Toggle aerial orbit view" onclick="toggleAerial(this)">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>
