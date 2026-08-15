@@ -223,6 +223,17 @@ function addGround(){
 }
 
 //        POLO FIELD                                                                                                                                                                                                 
+// GRASS CARD RING (alpha blades around field perimeter)
+function addGrassRing(){
+  const cards = [
+    ...addGrassField( 0, -115, 140, 12, 250),
+    ...addGrassField( 0,  115, 140, 12, 250),
+    ...addGrassField(-165,  0,  12, 90, 160),
+    ...addGrassField( 165,  0,  12, 90, 160),
+  ];
+  cards.forEach(card => scene.add(card));
+}
+
 function addPoloField(){
   const sc=document.createElement("canvas"); sc.width=512; sc.height=256;
   const ctx=sc.getContext("2d");
@@ -286,20 +297,27 @@ function addRoads(){
     s(plane(8,8,am,[x,Y,cz]));
   }
 
-  // RING ROAD around polo oval (Audit 1.2)
-  s(plane(8,200,am,[-152,Y,0]));    // W ring N-S
-  s(plane(8,200,am,[ 152,Y,0]));    // E ring N-S
-  s(plane(310,8,am,[0,Y,-97]));     // N ring E-W
-  s(plane(310,8,am,[0,Y,97]));      // S ring E-W
-  for(const[cx,cz] of[[-145,-92],[145,-92],[-145,92],[145,92]])
-    s(plane(18,18,am,[cx,Y,cz]));
+  // RING ROAD: sits BETWEEN safety zone edge and inner villa front face
+  // W: safety zone edge x=-148, inner villa x=-162 -> road centreline x=-155
+  // E: safety zone edge x=+148, inner villa x=+162 -> road centreline x=+155
+  // N: safety zone edge z=-98,  inner villa z~-132 -> road centreline z=-104
+  // S: safety zone edge z=+98,  inner villa z~+105 -> road centreline z=+104
+  s(plane(8,220,am,[-155,Y,0]));    // W ring N-S (between safety zone and W villas)
+  s(plane(8,220,am,[ 155,Y,0]));    // E ring N-S (between safety zone and E villas)
+  s(plane(320,8,am,[0,Y,-104]));    // N ring E-W (between safety zone and N villas)
+  s(plane(320,8,am,[0,Y,104]));     // S ring E-W (between safety zone and S villas)
+  // Corner sweeps
+  for(const[cx,cz] of[[-150,-100],[150,-100],[-150,100],[150,100]])
+    s(plane(16,16,am,[cx,Y,cz]));
 
-  // INTERNAL ACCESS ROAD (between inner and outer villa columns)
-  s(plane(8,220,am,[-174,Y,-5]));
-  s(plane(8,220,am,[ 174,Y,-5]));
+  // INTERNAL ACCESS ROAD (between inner x=-162 and outer x=-192 villa columns)
+  // Sits at x=-177 (midpoint between -162 and -192)
+  s(plane(8,220,am,[-177,Y,-5]));   // W internal lane
+  s(plane(8,220,am,[ 177,Y,-5]));   // E internal lane
 
-  // NORTH access: between ring road z=-97 and south face of villa row z~-108
-  s(plane(320,7,am,[30,Y,-101]));
+  // NORTH SETBACK ROAD (between north ring road z=-104 and villa south face z~-132)
+  // Runs at z=-118     directly in front of north villa row
+  s(plane(320,7,am,[30,Y,-118]));
 
   // SOUTH INTERNAL E-W connector + forecourt
   s(plane(400,8,am,[0,Y,128]));
