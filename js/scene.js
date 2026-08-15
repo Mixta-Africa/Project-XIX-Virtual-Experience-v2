@@ -29,14 +29,20 @@ let scene, renderer, camera, clock, skyMesh;
 let waterMeshes = [], palmBillboards = [];
 
 // Villa GLB (3-bed premium villa mesh)
-const VILLA_SCALE = 12.558;
+const VILLA_SCALE = 12.56;
 const VILLA_Y     = 4.94;
 let villaGLBScene = null;
 let pendingVillas  = [];
 
 // Apartment GLB
-const APT_SCALE = 28.417;
-const APT_Y     = 7.25;
+const APT_SCALE = 31.18;
+const APT_Y     = 7.95;
+
+// Loft Terrace GLB
+const LOFT_SCALE = 20.0;
+const LOFT_Y     = 1.34;
+let loftGLBScene = null;
+let pendingLofts  = [];
 let aptGLBScene  = null;
 let pendingApts  = [];
 
@@ -58,17 +64,32 @@ export function initScene(canvas) {
   scene.background = new THREE.Color(0x8ab8cc);
   scene.fog = new THREE.FogExp2(0x8ab8cc, 0.0009); // reduced fog density
   camera = new THREE.PerspectiveCamera(65, 1, 0.1, 1600);
+  loadHDRI();
   buildLighting();
   buildSky();
   buildEnvironment();
   loadVillaGLB();
   loadApartmentGLB();
+  loadLoftGLB();
   return { scene, renderer, camera, clock };
 }
 
 //        HDRI                                                                                                                                                                                                                
 // HDRI removed - caused white glare from Shanghai bund HDR
-function loadHDRI() {} // disabled
+function loadHDRI() {
+  // Generate soft environment map from scene colours (no HDR file needed)
+  // Gives glass and metal surfaces subtle reflections without glare
+  try {
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    pmrem.compileEquirectangularShader();
+    const envC = document.createElement("canvas"); envC.width=4; envC.height=4;
+    const ex = envC.getContext("2d"); ex.fillStyle="#88aac8"; ex.fillRect(0,0,4,4);
+    const envTex = new THREE.CanvasTexture(envC);
+    envTex.mapping = THREE.EquirectangularReflectionMapping;
+    scene.environment = pmrem.fromEquirectangular(envTex).texture;
+    pmrem.dispose(); envTex.dispose();
+  } catch(e) { console.warn("PMREM env skipped:", e.message); }
+}
 
 //        LIGHTING                                                                                                                                                                                                    
 let sunLight, hemiLight;
@@ -77,11 +98,15 @@ export function getHemiLight() { return hemiLight; }
 
 function buildLighting() {
   // Hemisphere (sky/ground bounce)
-  hemiLight = new THREE.HemisphereLight(0xd4e8ff, 0x4a6a30, 1.2);
+  // Hemisphere: warm sky colour to match tropical Lagos afternoon
+  hemiLight = new THREE.HemisphereLight(0xb8d4f0, 0x6a8040, 1.4);
   scene.add(hemiLight);
-  // Main sun - late afternoon SW position for dramatic field shadows
-  sunLight = new THREE.DirectionalLight(0xffe8b0, 2.6);
-  sunLight.position.set(-180, 160, 100); // SW elevation ~35 deg
+  // Second ambient fill so GLB underfaces aren't black
+  const ambFill = new THREE.AmbientLight(0xfff8f0, 0.55);
+  scene.add(ambFill);
+  // Main sun - afternoon SW elevation to show front face of villas
+  sunLight = new THREE.DirectionalLight(0xffe8b0, 2.8);
+  sunLight.position.set(-180, 200, 100);
   sunLight.castShadow = true;
   sunLight.shadow.camera.left = sunLight.shadow.camera.bottom = -420;
   sunLight.shadow.camera.right = sunLight.shadow.camera.top   =  420;
@@ -419,13 +444,15 @@ function loadVillaGLB(){
       // Apply scale and ground-sit offset to the WRAPPER, not the scene root
       gltf.scene.scale.setScalar(VILLA_SCALE);
       gltf.scene.position.y = VILLA_Y;
-      gltf.scene.traverse(c=>{
-        if(c.isMesh){
-          c.castShadow=true; c.receiveShadow=true;
-          if(c.material){
-            c.material.envMapIntensity=0.4; // reduced - no HDR glare
-            c.material.needsUpdate=true;
-          }
+      gltf.scene.traverse(child=>{
+        if(child.isMesh){
+          child.castShadow    = true;
+          child.receiveShadow = true;
+          child.userData.fromGLB = true;
+          // DO NOT touch material properties - GLB materials are already
+          // perfectly calibrated. Changing envMapIntensity, roughness etc
+          // destroys the warm windows, stone texture, wood louvres that
+          // make the building look like the architect render.
         }
       });
       villaGLBScene = wrapper; // store the wrapper as template
@@ -449,10 +476,8 @@ function loadApartmentGLB(){
       wrapper.add(gltf.scene);
       gltf.scene.scale.setScalar(APT_SCALE);
       gltf.scene.position.y=APT_Y;
-      gltf.scene.traverse(c=>{
-        if(c.isMesh){ c.castShadow=true; c.receiveShadow=true;
-          if(c.material){ c.material.envMapIntensity=0.3; c.material.needsUpdate=true; }
-        }
+      gltf.scene.traverse(child=>{
+        if(child.isMesh){ child.castShadow=true; child.receiveShadow=true; child.userData.fromGLB=true; }
       });
       aptGLBScene=wrapper;
       pendingApts.forEach(({x,z,ry})=>placeAptGLB(x,z,ry));
@@ -530,6 +555,44 @@ export function getPlotAtRay(raycaster){
   scene.traverse(o=>{ if(o.userData.isPlotOverlay) overlays.push(o); });
   const hits=raycaster.intersectObjects(overlays,false);
   return hits.length>0 ? hits[0].object.userData.plotKey : null;
+}
+
+
+//        LOFT TERRACE GLB                                                                                                                                                                            
+function loadLoftGLB(){
+  new GLTFLoader().load("assets/loft-mesh.glb",
+    gltf=>{
+      const wrapper=new THREE.Group();
+      wrapper.add(gltf.scene);
+      gltf.scene.scale.setScalar(LOFT_SCALE);
+      gltf.scene.position.y=LOFT_Y;
+      gltf.scene.traverse(child=>{
+        if(child.isMesh){
+          child.castShadow=true; child.receiveShadow=true;
+          if(child.material){ child.material.envMapIntensity=0.3; child.material.needsUpdate=true; }
+        }
+      });
+      loftGLBScene=wrapper;
+      pendingLofts.forEach(({x,z,ry})=>placeLoftGLB(x,z,ry));
+      pendingLofts=[];
+      console.log("Loft GLB loaded OK");
+    },
+    null,
+    err=>{
+      console.error("Loft GLB failed:",err);
+      pendingLofts.forEach(({x,z,ry})=>{ scene.add(createLoftBlock(x,z,ry)); });
+      pendingLofts=[];
+    }
+  );
+}
+
+function placeLoftGLB(x,z,ry){
+  ry = ry || 0;
+  if(!loftGLBScene){ pendingLofts.push({x,z,ry}); return; }
+  const clone=loftGLBScene.clone(true);
+  clone.position.set(x,0,z);
+  clone.rotation.y=ry;
+  scene.add(clone);
 }
 
 //        VILLA RING (all using GLB mesh, standalone plots, Audit 3.1-3.6)                               
@@ -627,24 +690,26 @@ function createVillaFallback(){
   return g;
 }
 
-//        LOFT TERRACES (Audit 5.1-5.4)                                                                                                                                     
+//        LOFT TERRACES                                                                                                                                                                                        
+// Single row north crescent (NW arm + NE arm). West compound between villas and flats.
 function addLoftTerraces(){
-  // CRESCENT ROW 1 (curved with road, Audit 5.1)
-  // NW arm: x=-310 to -85, NE arm: x=+85 to +265, gap abs(x)<80 (Audit 5.2)
-  for(let x=-310;x<=280;x+=28){
-    if(Math.abs(x)<82) continue; // wider gap over lake
-    const cz=-168-Math.abs(x)*.05; // parabolic curve (Audit 5.1)
-    s(createLoftBlock(x,cz,Math.PI)); // face south
+  // NORTH CRESCENT - SINGLE ROW, NW ARM
+  // Parabolic curve: z = -162 - abs(x)*0.05
+  // Stops at x=-110 (lake west edge ~x=-110)
+  for(let x=-310; x<=-110; x+=36){
+    const cz=-162-Math.abs(x)*.05;
+    placeLoftGLB(x,cz,Math.PI);
   }
-  // CRESCENT ROW 2 (outer row, z   -182)
-  for(let x=-295;x<=265;x+=28){
-    if(Math.abs(x)<82) continue;
-    const cz=-182-Math.abs(x)*.04;
-    s(createLoftBlock(x,cz,Math.PI));
+  // NORTH CRESCENT - SINGLE ROW, NE ARM
+  // Starts at x=+95 (lake east edge ~x=+90)
+  for(let x=95; x<=310; x+=36){
+    const cz=-162-Math.abs(x)*.05;
+    placeLoftGLB(x,cz,Math.PI);
   }
-  // WEST COMPOUND loft clusters (Audit 5.4)
-  s(createLoftBlock(-285,-38,-Math.PI/2));
-  s(createLoftBlock(-285, 29,-Math.PI/2));
+  // WEST COMPOUND LOFTS
+  // Sit between outer villa column (x=-192) and flats (x=-248), centred at x=-220
+  placeLoftGLB(-220,-40,-Math.PI/2);
+  placeLoftGLB(-220, 40,-Math.PI/2);
 }
 
 function createLoftBlock(x,z,ry){
