@@ -41,13 +41,19 @@ export const VIEWPOINTS = {
   field_south:  { label:"South Goal",       pos:[0,1.65,100],  yaw:Math.PI,     pitch:0,     caption:"South goal line - Clubhouse behind you",            icon:"pitch"    },
   clubhouse:    { label:"Clubhouse",        pos:[0,4,148],     yaw:Math.PI,     pitch:-0.05, caption:"Clubhouse terrace - looking north over the field",   icon:"clubhouse", zoneKey:"clubhouse" },
   lake_north:   { label:"The Lake",         pos:[0,1.65,-108], yaw:0,           pitch:0,     caption:"Crescent lake - between safety zone and villas",     icon:"lake",    zoneKey:"lake"     },
-  villa_west:   { label:"Villa Row",        pos:[-92,4,0],     yaw:Math.PI/2,   pitch:0,     caption:"West villa row - pony line side, facing the field",  icon:"villa",   zoneKey:"villas"   },
-  villa_north:  { label:"North Villa",      pos:[0,4,-132],    yaw:Math.PI,     pitch:0,     caption:"North arc villa - lake behind, field ahead",         icon:"villa",   zoneKey:"villas"   },
+  villas:       { label:"Villas",           pos:[-92,4,0],     yaw:Math.PI/2,   pitch:0,     caption:"Premium Villas - click to explore all sides",         icon:"villa",   zoneKey:"villas",
+    subViews: [
+      { key:"villa_west",  label:"West Row",   pos:[-92,4,0],    yaw:Math.PI/2,  pitch:0, caption:"West villa row - facing the polo field" },
+      { key:"villa_east",  label:"East Row",   pos:[92,4,0],     yaw:-Math.PI/2, pitch:0, caption:"East villa row - facing the polo field" },
+      { key:"villa_north", label:"North Arc",  pos:[0,4,-132],   yaw:Math.PI,    pitch:0, caption:"North arc - lake behind, field ahead" },
+      { key:"villa_south", label:"South Arc",  pos:[80,4,105],   yaw:0,          pitch:0, caption:"South arc - clubhouse behind, field ahead" },
+    ]
+  },
   stables:      { label:"Stables",          pos:[-220,1.65,80],yaw:Math.PI/2,   pitch:0,     caption:"Horse stables - equestrian compound, southwest",     icon:"stables", zoneKey:"stables"  },
   training:     { label:"Training Field",   pos:[-175,1.65,0], yaw:Math.PI/2,   pitch:0,     caption:"Training field - polo academy, perpendicular axis",   icon:"pitch",   zoneKey:"training" },
   lofts:        { label:"Loft Terrace",     pos:[-218,1.65,-5], yaw:-Math.PI/2, pitch:0,     caption:"West compound loft terraces - beside training field", icon:"loft",    zoneKey:"lofts"    },
   paddock:      { label:"Paddock",          pos:[155,1.65,-60],yaw:-Math.PI/2,  pitch:0,     caption:"Northeast paddock - post and rail enclosed",         icon:"pitch",   zoneKey:"paddock"  },
-  villa_glb:    { label:"Villa     GLB Mesh",   pos:[-162,5,-55],  yaw:-Math.PI/2, pitch:-0.08, caption:"3D mesh villa - real generated model", icon:"villa", zoneKey:"villas" },
+
   aerial:       { label:"Aerial View",      pos:[0,200,0],     yaw:0,           pitch:-Math.PI/2, caption:"Estate overview - 18.8 hectares, Lakowe",       icon:"aerial"  },
 };
 
