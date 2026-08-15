@@ -3,7 +3,7 @@
  * PS3-level realism via Three.js post-processing + PBR surfaces.
  *
  * Pipeline:
- *   Renderer -> EffectComposer -> RenderPass -> SSAOPass -> UnrealBloomPass -> OutputPass
+ *   Renderer -> EffectComposer -> RenderPass -> UnrealBloomPass -> OutputPass
  *
  * Techniques used:
  *   - SSAO  (screen-space ambient occlusion  -- contact shadows at building bases)
@@ -21,10 +21,9 @@ import { EffectComposer }  from "https://cdn.jsdelivr.net/npm/three@0.165.0/exam
 import { RenderPass }      from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass }      from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/postprocessing/OutputPass.js";
-import { SSAOPass }        from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/postprocessing/SSAOPass.js";
 import { SMAAPass }        from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/postprocessing/SMAAPass.js";
 
-let composer, bloomPass, ssaoPass;
+let composer, bloomPass;
 
 //        INIT POST-PROCESSING PIPELINE                                                                                                                                     
 export function initPostProcessing(renderer, scene, camera) {
@@ -36,20 +35,13 @@ export function initPostProcessing(renderer, scene, camera) {
   // 1. Base render
   composer.addPass(new RenderPass(scene, camera));
 
-  // 2. SSAO -- ambient occlusion (contact shadows at building bases, grass edges)
-  ssaoPass = new SSAOPass(scene, camera, w, h);
-  ssaoPass.kernelRadius = 16;      // sampling radius in pixels
-  ssaoPass.minDistance  = 0.005;   // min depth delta to trigger occlusion
-  ssaoPass.maxDistance  = 0.3;     // max depth delta
-  ssaoPass.output = SSAOPass.OUTPUT.Default; // blend with scene
-  composer.addPass(ssaoPass);
-
-  // 3. Bloom -- HDR glow (glass reflections, lake highlights, window emissives, sun)
+  // SSAO removed for performance - too expensive for 9M vertex scene
+  // 3. Bloom
   bloomPass = new UnrealBloomPass(
     new THREE.Vector2(w, h),
-    0.35,   // strength  (was 1.5 which causes washed-out glow -- PS3 uses subtle bloom)
+    0.18,   // strength (reduced for perf)  (was 1.5 which causes washed-out glow -- PS3 uses subtle bloom)
     0.5,    // radius
-    0.82    // threshold (only very bright surfaces bloom -- sky, glass, water specular)
+    0.88    // threshold (only very bright surfaces bloom -- sky, glass, water specular)
   );
   composer.addPass(bloomPass);
 
@@ -67,7 +59,7 @@ export function resizeComposer(w, h) {
   if (!composer) return;
   composer.setSize(w, h);
   if (bloomPass) bloomPass.resolution.set(w, h);
-  if (ssaoPass)  ssaoPass.setSize(w, h);
+  
 }
 
 //        RENDER (replaces renderer.render each frame)                                                                                           
