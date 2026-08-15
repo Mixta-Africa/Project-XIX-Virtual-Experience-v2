@@ -171,16 +171,20 @@ export function buildViewpointStrip(container, onSelect) {
   if (!container) return;
   container.innerHTML = "";
 
+  // Map viewpoint keys to product panel keys
+  const PRODUCT_MAP = {
+    villas:"villas", clubhouse:"clubhouse", stables:"stables",
+    lofts:"lofts", training:"training", paddock:"paddock", flats:"flats",
+  };
+
   Object.entries(VIEWPOINTS).forEach(([key, vp]) => {
     if (key === "intro") return;
 
     const wrapper = document.createElement("div");
     wrapper.className = "vp-wrapper";
-    wrapper.style.position = "relative";
-    wrapper.style.flexShrink = "0";
 
     const btn = document.createElement("button");
-    btn.className = "vp-btn";
+    btn.className   = "vp-btn";
     btn.dataset.key = key;
     const hasSubViews = vp.subViews && vp.subViews.length > 0;
     btn.innerHTML = `
@@ -189,58 +193,69 @@ export function buildViewpointStrip(container, onSelect) {
     `;
 
     if (hasSubViews) {
-      // Build dropdown menu
+      // Dropdown for viewpoints with sub-views (e.g. Villas: West/East/North/South)
       const menu = document.createElement("div");
       menu.className = "vp-dropdown";
       menu.style.display = "none";
 
       vp.subViews.forEach(sv => {
         const sbtn = document.createElement("button");
-        sbtn.className = "vp-dropdown-item";
+        sbtn.className   = "vp-dropdown-item";
         sbtn.textContent = sv.label;
         sbtn.addEventListener("click", e => {
           e.stopPropagation();
-          document.querySelectorAll(".vp-btn").forEach(b => b.classList.remove("active"));
+          document.querySelectorAll(".vp-btn").forEach(b=>b.classList.remove("active"));
           btn.classList.add("active");
           menu.style.display = "none";
+          btn.querySelector(".vp-chevron").innerHTML = "&#9652;";
+          // Teleport
           onSelect(sv.key, sv);
+          // Open product panel
+          const fn = window.__moduleReady?.showProductPanel;
+          if (fn) fn(PRODUCT_MAP[key] || PRODUCT_MAP[sv.key]);
         });
         menu.appendChild(sbtn);
       });
 
       btn.addEventListener("click", () => {
         const isOpen = menu.style.display !== "none";
-        // Close all other dropdowns
-        document.querySelectorAll(".vp-dropdown").forEach(d => d.style.display = "none");
-        document.querySelectorAll(".vp-chevron").forEach(ch => ch.innerHTML = "&#9652;");
+        document.querySelectorAll(".vp-dropdown").forEach(d=>d.style.display="none");
+        document.querySelectorAll(".vp-chevron").forEach(ch=>ch.innerHTML="&#9652;");
         menu.style.display = isOpen ? "none" : "flex";
-        const chevron = btn.querySelector(".vp-chevron");
-        if (chevron) chevron.innerHTML = isOpen ? "&#9652;" : "&#9662;";
+        btn.querySelector(".vp-chevron").innerHTML = isOpen ? "&#9652;" : "&#9662;";
       });
 
       wrapper.appendChild(btn);
       wrapper.appendChild(menu);
+
     } else {
+      // Simple button: teleport + open product panel
       btn.addEventListener("click", () => {
-        document.querySelectorAll(".vp-btn").forEach(b => b.classList.remove("active"));
-        document.querySelectorAll(".vp-dropdown").forEach(d => d.style.display = "none");
+        document.querySelectorAll(".vp-btn").forEach(b=>b.classList.remove("active"));
+        document.querySelectorAll(".vp-dropdown").forEach(d=>d.style.display="none");
         btn.classList.add("active");
+        // Teleport immediately
         onSelect(key, vp);
+        // Open product panel if this key has one
+        const productKey = PRODUCT_MAP[key];
+        if (productKey) {
+          const fn = window.__moduleReady?.showProductPanel;
+          if (fn) fn(productKey);
+        }
       });
       wrapper.appendChild(btn);
     }
 
     container.appendChild(wrapper);
   });
-  
-  // Product panel is now opened inside onSelect callback in app.js
 
-  // Close dropdowns when clicking elsewhere
+  // Close dropdowns on outside click
   document.addEventListener("click", e => {
     if (!e.target.closest(".vp-wrapper")) {
-      document.querySelectorAll(".vp-dropdown").forEach(d => d.style.display = "none");
+      document.querySelectorAll(".vp-dropdown").forEach(d=>d.style.display="none");
+      document.querySelectorAll(".vp-chevron").forEach(ch=>ch.innerHTML="&#9652;");
     }
-  }, { passive: true });
+  }, { passive:true });
 }
 
 //           ZONE INFO PANEL                                                                                                                                                                               
