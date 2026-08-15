@@ -296,8 +296,8 @@ function addRoads(){
   s(plane(8,220,am,[-174,Y,-5]));
   s(plane(8,220,am,[ 174,Y,-5]));
 
-  // NORTH ARC ACCESS (behind tier1 villas between them and lake)
-  s(plane(300,7,am,[0,Y,-104]));
+  // NORTH access: between ring road z=-97 and south face of villa row z~-108
+  s(plane(320,7,am,[30,Y,-101]));
 
   // SOUTH INTERNAL E-W connector + forecourt
   s(plane(400,8,am,[0,Y,128]));
@@ -319,16 +319,16 @@ function addLake(){
   const wm=MAT_WATER();
   // Crescent shape: offset east (lake centre x=-10 per measurements)
   const lb=new THREE.Mesh(new THREE.BoxGeometry(195,.35,22),wm);
-  lb.position.set(-10,.16,-78); lb.receiveShadow=true; scene.add(lb); waterMeshes.push(lb);
-  // End caps
-  for(const[ex,sc2] of[[-107,.9],[ 85,1.1]]){
+  lb.position.set(30,.16,-115); lb.receiveShadow=true; scene.add(lb); waterMeshes.push(lb);
+  // West cap x=30-90=-60, east cap x=30+90=120
+  for(const[ex,sc2] of[[-60,.9],[120,1.0]]){
     const ep=new THREE.Mesh(new THREE.SphereGeometry(13,16,4),wm);
-    ep.position.set(ex,.05,-78); ep.scale.set(1,.2,sc2); scene.add(ep); waterMeshes.push(ep);
+    ep.position.set(ex,.05,-115); ep.scale.set(1,.2,sc2); scene.add(ep); waterMeshes.push(ep);
   }
-  // Shore grass
+  // Shore grass: south shore z=-104, north shore z=-126
   const sg=MATS.grassGreen();
-  s(plane(220,6,sg,[-10,.12,-67]));
-  s(plane(220,6,sg,[-10,.12,-91]));
+  s(plane(220,6,sg,[30,.12,-104]));
+  s(plane(220,6,sg,[30,.12,-126]));
 }
 
 function addEastLake(){
@@ -525,14 +525,15 @@ function addVillaRing(){
     const z=-82+i*PLOT;
     placeVillaWithLandscape(192,z,-Math.PI/2);
   }
-  // NORTH WEST ROW (straight, z=-108, west of lake gap x<-115)
-  for(const x of[-168,-140,-112,-84,-56,-28]){
-    placeVillaWithLandscape(x,-108,0); // face south
-  }
-  // NORTH EAST ROW (straight, z=-108, east of lake gap x>+90)
-  for(const x of[96,124,152,180,208,236,264]){
-    placeVillaWithLandscape(x,-108,0);
-  }
+  // ONE continuous north row bowing over the lake.
+  // Lake centre x=+30, radius=90m, peak bow=17m northward at lake centre.
+  const LAKE_CX=30, LAKE_R=90, BOW=17;
+  const northX=[-140,-116,-92,-68,-44,-20,4,28,52,76,100,124,148,172,196];
+  northX.forEach(x=>{
+    const dx=x-LAKE_CX;
+    const bow=dx*dx<LAKE_R*LAKE_R ? BOW*(1-(dx*dx)/(LAKE_R*LAKE_R)) : 0;
+    placeVillaWithLandscape(x, -108-bow, 0);
+  });
   // SOUTH SW arc (5 units, face north ry=0, Audit 3.6)
   for(const side of[-1,1]){
     [20,48,76,104,132].forEach(xabs=>{
@@ -773,7 +774,7 @@ function addLandscaping(){
   for(let z=-220;z<=215;z+=14){ addPalmSprite(-310,.1,z,.9+Math.random()*.25); addPalmSprite(310,.1,z,.9+Math.random()*.25); }
 
   // Lake shore palms
-  for(let x=-100;x<=85;x+=16){ addPalmSprite(x,.1,-64,1.1); addPalmSprite(x,.1,-94,1.0); }
+  for(let x=-55;x<=115;x+=16){ addPalmSprite(x,.1,-104,1.1); addPalmSprite(x,.1,-126,1.0); }
 
   // Clubhouse avenue flanks
   for(const pz of[142,150,158,166]){ addPalmSprite(-16,.1,pz,1.2); addPalmSprite(16,.1,pz,1.2); }
