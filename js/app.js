@@ -6,7 +6,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
 
 import { VIEWPOINTS, ZONES, WORLD } from "./data.js";
 import { buildVillaInterior, VILLA_VIEWPOINTS } from "./villa-interior.js";
-import { initScene, getRenderer, getScene, getCamera, getClock, tickScene, updateSky, plotRegistry, reservePlot, getPlotAtRay } from "./scene.js?v=18";
+import { initScene, getRenderer, getScene, getCamera, getClock, tickScene, updateSky, plotRegistry, reservePlot, getPlotAtRay } from "./scene.js?v=19";
 import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime } from "./graphics.js";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
