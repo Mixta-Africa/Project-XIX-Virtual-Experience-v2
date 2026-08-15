@@ -38,30 +38,49 @@ const AERIAL_HEIGHT = 200;
 
 //           WEATHER / TIME PRESETS                                                                                                                                                       
 const TIME_PRESETS = {
-  morning:   { sky:["#1e3a5a","#7aaac8","#4a7a38"], sunCol:0xffd080, sunInt:1.8, sunPos:[-80,55,-80],   fog:"#8ab8cc", fogD:0.0008, exp:0.92 },
-  afternoon: { sky:["#1a3a6a","#5a9acc","#3a6a30"], sunCol:0xffe8b0, sunInt:2.2, sunPos:[-160,160,100], fog:"#8ab8cc", fogD:0.0009, exp:1.02 },
-  sunset:    { sky:["#0a1830","#c84818","#4a2a10"], sunCol:0xff8030, sunInt:1.6, sunPos:[-100,28,60],   fog:"#c06040", fogD:0.0012, exp:1.05 },
-  night:     { sky:["#000508","#020a14","#050a08"], sunCol:0x304870, sunInt:0.12,sunPos:[0,40,-80],     fog:"#020810", fogD:0.0015, exp:0.55 },
+  morning:   { sky:["#1e3a5a","#7aaac8","#4a7a38"], sunCol:0xffd080, sunInt:1.8, sunPos:[-80,55,-80],   fog:"#8ab8cc", fogD:0.0008, exp:0.92, hemiInt:0.9 },
+  afternoon: { sky:["#1a3a6a","#5a9acc","#3a6a30"], sunCol:0xffe8b0, sunInt:2.2, sunPos:[-160,160,100], fog:"#8ab8cc", fogD:0.0009, exp:1.02, hemiInt:1.2 },
+  sunset:    { sky:["#0a1830","#c84818","#4a2a10"], sunCol:0xff8030, sunInt:1.6, sunPos:[-100,28,60],   fog:"#c06040", fogD:0.0012, exp:1.05, hemiInt:0.8 },
+  night:     { sky:["#000508","#020a14","#050a08"], sunCol:0x304870, sunInt:0.12,sunPos:[0,40,-80],     fog:"#020810", fogD:0.0015, exp:0.55, hemiInt:0.15 },
 };
 
 function applyTimePreset(name) {
   const p = TIME_PRESETS[name]; if (!p) return;
-  document.querySelectorAll(".wx-time-btn").forEach(b => b.classList.toggle("active", b.dataset.time === name));
-  updateSky(...p.sky);
-  setBloomForTime(name);
-  const s = getScene(); if (!s) return;
-  s.fog.color.set(p.fog); s.fog.density = p.fogD;
-  const sun = s.children.find(o => o.isDirectionalLight && o.castShadow);
-  if (sun) { sun.color.setHex(p.sunCol); sun.intensity = p.sunInt; sun.position.set(...p.sunPos); }
-  getRenderer().toneMappingExposure = p.exp;
+  document.querySelectorAll(".wx-time-btn").forEach(b =>
+    b.classList.toggle("active", b.dataset.time === name));
+  try { updateSky(...p.sky); } catch(e){}
+  try { setBloomForTime(name); } catch(e){}
+  const s = getScene();
+  if (s && s.fog) {
+    s.fog.color.set(p.fog);
+    s.fog.density = p.fogD;
+  }
+  if (s) {
+    // Find directional sun light
+    s.traverse(o => {
+      if (o.isDirectionalLight && o.castShadow) {
+        o.color.setHex(p.sunCol);
+        o.intensity = p.sunInt;
+        o.position.set(...p.sunPos);
+      }
+      if (o.isHemisphereLight) {
+        o.intensity = p.hemiInt || 1.2;
+      }
+    });
+  }
+  const r = getRenderer();
+  if (r) r.toneMappingExposure = p.exp;
 }
 
 function applyWeather(w) {
-  document.querySelectorAll(".wx-weather-btn").forEach(b => b.classList.toggle("active", b.dataset.weather === w));
-  const s = getScene(); if (!s) return;
-  if (w === "rain")   s.fog.density = 0.025;
-  if (w === "cloudy") s.fog.density = 0.012;
-  if (w === "clear")  s.fog.density = TIME_PRESETS.afternoon.fogD;
+  document.querySelectorAll(".wx-weather-btn").forEach(b =>
+    b.classList.toggle("active", b.dataset.weather === w));
+  const s = getScene();
+  if (!s || !s.fog) return;
+  const baseD = TIME_PRESETS.afternoon.fogD;
+  if (w === "rain")   s.fog.density = baseD * 3.5;
+  else if (w === "cloudy") s.fog.density = baseD * 1.8;
+  else s.fog.density = baseD;
 }
 
 window.applyTimePreset = applyTimePreset;
@@ -97,6 +116,14 @@ document.addEventListener("DOMContentLoaded", () => {
   bindPlotSystem();
   bindVillaInteriorBtn();
   initAudio();
+  // Register module functions with the window bridge (fixes onclick in non-module HTML)
+  window.__moduleReady = {
+    applyTimePreset, applyWeather, toggleAerial, rotateVillaGLB,
+  };
+  (window._pendingCalls || []).forEach(({fn,args}) => {
+    if(window.__moduleReady[fn]) window.__moduleReady[fn](...args);
+  });
+  window._pendingCalls = [];
 });
 
 //           HERO CANVAS ANIMATION                                                                                                                                                             
