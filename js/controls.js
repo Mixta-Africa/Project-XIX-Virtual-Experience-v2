@@ -98,14 +98,18 @@ export function initControls(cam, ren) {
 }
 
 //        JOYSTICK UI                                                                                                                                                                                              
+// Touch sprint state
+let touchSprint = false;
+
 function buildJoystickUI() {
-  // Only show on mobile
-  if (!isMobile()) return;
+  // Show on ANY touch-capable device (not just phones)
+  const hasTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+  if (!hasTouch) return;
 
   const overlay = document.getElementById('joystick-overlay');
   if (!overlay) return;
 
-  // Base ring
+  // Base ring (spawns at touch point)
   joystickEl = document.createElement('div');
   joystickEl.className = 'vj-base';
   overlay.appendChild(joystickEl);
@@ -114,6 +118,24 @@ function buildJoystickUI() {
   joystickDotEl = document.createElement('div');
   joystickDotEl.className = 'vj-dot';
   joystickEl.appendChild(joystickDotEl);
+
+  // Sprint toggle button (bottom-left, above joystick area)
+  const sprintBtn = document.createElement('button');
+  sprintBtn.id        = 'touch-sprint-btn';
+  sprintBtn.className = 'touch-sprint-btn';
+  sprintBtn.textContent = 'SPRINT';
+  sprintBtn.setAttribute('aria-label', 'Sprint toggle');
+  sprintBtn.addEventListener('touchstart', e => {
+    e.preventDefault();
+    touchSprint = true;
+    sprintBtn.classList.add('active');
+  }, { passive: false });
+  sprintBtn.addEventListener('touchend', e => {
+    e.preventDefault();
+    touchSprint = false;
+    sprintBtn.classList.remove('active');
+  }, { passive: false });
+  overlay.appendChild(sprintBtn);
 }
 
 function updateJoystickDot() {
@@ -208,7 +230,7 @@ function onGyro(e) {
 export function updateControls(delta) {
   if (!active || !camera) return;
 
-  const speed   = keys.has('shift') ? SPRINT : WALK;
+  const speed   = (keys.has('shift') || touchSprint) ? SPRINT : WALK;
   const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
   const right   = new THREE.Vector3( Math.cos(yaw), 0, -Math.sin(yaw));
   const move    = new THREE.Vector3();
@@ -243,12 +265,25 @@ export function updateControls(delta) {
 }
 
 //        HELPERS                                                                                                                                                                                                          
-export function activate()   { active = true;  keys.clear(); }
+export function activate()   {
+  active = true;
+  keys.clear();
+  // Show joystick overlay on touch devices
+  const hasTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+  if (hasTouch) {
+    const overlay = document.getElementById('joystick-overlay');
+    if (overlay) overlay.style.display = 'block';
+    if (joystickEl) joystickEl.style.opacity = '0.35';
+  }
+}
 export function deactivate() {
   active = false; keys.clear();
   joyOrigin = null; joyDelta = { x:0, y:0 };
   lookTouch = null; lookLast = null;
+  touchSprint = false;
   if (joystickEl) joystickEl.style.opacity = '0.35';
+  const overlay = document.getElementById('joystick-overlay');
+  if (overlay) overlay.style.display = 'none';
 }
 export function setView(pos, newYaw = Math.PI, newPitch = 0) {
   if (!camera) return;
