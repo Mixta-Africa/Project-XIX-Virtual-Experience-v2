@@ -1,21 +1,30 @@
 /**
- * Project XIX - Scene v11 (Full Commercial Grade - All 36 Audit Items)
+ * Project XIX     Scene v20
+ * SINGLE SOURCE OF TRUTH: PROJECT_XIX_COMPLETE_VR_DEVELOPER_BRIEF v3.0
+ * All positions, dimensions, materials from the authoritative ECAD brief.
  *
- * GROUND TRUTH (from pixel-measured plan-2d.png):
- *   North=-Z  South=+Z  East=+X  West=-X  Origin=field centre
- *   Polo field: 274m E-W x 146m N-S
- *   Safety zone: N z=-73 to -98, S z=+73 to +98, W x=-137 to -148, E x=+137 to +148
- *   Lake: centre x=-10,z=-78. Spans x=-115 to +90. Between safety zone and Tier1 villas.
- *   Ring road: runs BETWEEN safety zone outer edge and inner villa column
- *   Villas inner: W x=-162, E x=+162. Outer: W x=-185, E x=+185
- *   Clubhouse: x=0, z=+152 (centred, south of field)
- *   Blocks of flats: x=-248, N z=-25, S z=+55 (WEST compound, E-W oriented)
- *   Training field: x=-390, z=0 (N-S oriented)
- *   Stables: x=-375, z=+90
- *   Crescent road: z=-168 (north, curved parabolic: z = -168 - abs(x)*0.05)
+ * COORDINATE SYSTEM (locked):
+ *   Origin = field centre. X=East(+)/West(-). Z=South(+)/North(-). Y=up.
+ *   Eye height = 1.65m.
+ *
+ * KEY POSITIONS (from brief Section 2):
+ *   Field: 274m E-W x 146m N-S
+ *   Safety zone: N z=-98, S z=+98, W x=-148, E x=+148
+ *   Ring road: W x=-152, E x=+152
+ *   Villa inner: W x=-162, E x=+162. Outer: W x=-192, E x=+192
+ *   Lake: centre (x=+30, z=-115), W cap x=-70, E cap x=+120
+ *   Crescent road: z=-168 (parabolic bow, formula in addLoftTerraces)
+ *   N villa row: z=-132 base (bow peak z=-149)
+ *   Clubhouse: x=+80, z=+155 (east of centreline)
+ *   Training field: x=-390, z=+195
+ *   Stables: x=-375, z=+80 to +100
+ *   Apartment blocks: x=-248
+ *   Paddock: x=+212
+ *   Commercial plots: x=+240, z=-185 (LASG Road frontage, NE)
  */
 
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
+import { RGBELoader } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/RGBELoader.js";
 import { GLTFLoader }  from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/GLTFLoader.js";
 import { DRACOLoader } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/DRACOLoader.js";
 import { PBR, createWaterMat, addGrassField, tickGrass, tickWater } from "./graphics.js";
@@ -25,45 +34,41 @@ import {
   MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL, MAT_WATER,
 } from "./materials.js";
 
-//        MODULE STATE                                                                                                                                                                                        
+//        MODULE STATE                                                                                                                                                                                           
 let scene, renderer, camera, clock, skyMesh;
 let waterMeshes = [], palmBillboards = [];
 
-// Villa GLB (3-bed premium villa mesh)
-const VILLA_SCALE = 12.56;
-const VILLA_Y     = 4.94;
-let villaGLBScene = null;
-let pendingVillas  = [];
+// GLB templates (load once, clone per instance)
+let villaGLBTemplate=null, aptGLBTemplate=null, loftGLBTemplate=null;
+let clubGLBTemplate=null,   stablesGLBTemplate=null;
 
-// Apartment GLB
-const APT_SCALE = 31.18;
-const APT_Y     = 7.95;
+// Pending queues while GLBs load async
+let pendingVillas=[], pendingApts=[], pendingLofts=[];
 
-// Loft Terrace GLB
-const LOFT_SCALE = 20.0;
-const LOFT_Y     = 1.34;
-let loftGLBScene = null;
-let pendingLofts  = [];
-let aptGLBScene  = null;
-let pendingApts  = [];
+// Plot reservation
+export const plotRegistry = new Map();
+export let onPlotSelected = null;
 
-// Plot reservation system
-export const plotRegistry = new Map(); // key="x,z"     {status:"available"|"reserved"|"sold", color, mesh}
-export let onPlotSelected = null;      // callback set by app.js
+// GLB constants (scale to real-world dimensions)
+const VILLA_SCALE=12.56, VILLA_Y=4.94;    // 16.5m wide, 11.6m tall
+const APT_SCALE=31.18,   APT_Y=7.95;     // 42m wide, 23m tall
+const LOFT_SCALE=20.0,   LOFT_Y=1.34;    // 34m wide, 6.9m tall
+const CLUB_SCALE=60.975, CLUB_Y=13.38;   // 110m wide, 29.6m tall
+const STAB_SCALE=18.846, STAB_Y=2.50;    // 36m wide, 4.9m tall
 
-//        INIT                                                                                                                                                                                                                
+//        INIT                                                                                                                                                                                                                   
 export function initScene(canvas) {
   clock = new THREE.Clock();
-  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  renderer.shadowMap.enabled   = true;
-  renderer.shadowMap.type      = THREE.PCFSoftShadowMap;
-  renderer.toneMapping         = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.88; // reduced - no HDR boost
-  renderer.outputColorSpace    = THREE.SRGBColorSpace;
+  renderer = new THREE.WebGLRenderer({ canvas, antialias:true, powerPreference:"high-performance" });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
+  renderer.shadowMap.enabled  = true;
+  renderer.shadowMap.type     = THREE.PCFSoftShadowMap;
+  renderer.toneMapping        = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure= 0.88;
+  renderer.outputColorSpace   = THREE.SRGBColorSpace;
   scene  = new THREE.Scene();
-  scene.background = new THREE.Color(0x8ab8cc);
-  scene.fog = new THREE.FogExp2(0x8ab8cc, 0.0009); // reduced fog density
+  scene.background = new THREE.Color(0x88b8cc);
+  scene.fog = new THREE.FogExp2(0x88b8cc, 0.0009);
   camera = new THREE.PerspectiveCamera(65, 1, 0.1, 1600);
   loadHDRI();
   buildLighting();
@@ -77,16 +82,13 @@ export function initScene(canvas) {
   return { scene, renderer, camera, clock };
 }
 
-//        HDRI                                                                                                                                                                                                                
-// HDRI removed - caused white glare from Shanghai bund HDR
+//        HDRI (soft procedural env for glass reflections)                                                                            
 function loadHDRI() {
-  // Generate soft environment map from scene colours (no HDR file needed)
-  // Gives glass and metal surfaces subtle reflections without glare
   try {
     const pmrem = new THREE.PMREMGenerator(renderer);
     pmrem.compileEquirectangularShader();
     const envC = document.createElement("canvas"); envC.width=4; envC.height=4;
-    const ex = envC.getContext("2d"); ex.fillStyle="#88aac8"; ex.fillRect(0,0,4,4);
+    const ex = envC.getContext("2d"); ex.fillStyle="#88b8cc"; ex.fillRect(0,0,4,4);
     const envTex = new THREE.CanvasTexture(envC);
     envTex.mapping = THREE.EquirectangularReflectionMapping;
     scene.environment = pmrem.fromEquirectangular(envTex).texture;
@@ -94,61 +96,50 @@ function loadHDRI() {
   } catch(e) { console.warn("PMREM env skipped:", e.message); }
 }
 
-//        LIGHTING                                                                                                                                                                                                    
+//        LIGHTING                                                                                                                                                                                                       
 let sunLight, hemiLight;
-export function getSunLight() { return sunLight; }
+export function getSunLight()  { return sunLight; }
 export function getHemiLight() { return hemiLight; }
 
 function buildLighting() {
-  // Hemisphere (sky/ground bounce)
-  // Hemisphere: warm sky colour to match tropical Lagos afternoon
   hemiLight = new THREE.HemisphereLight(0xb8d4f0, 0x6a8040, 1.4);
   scene.add(hemiLight);
-  // Second ambient fill so GLB underfaces aren't black
   const ambFill = new THREE.AmbientLight(0xfff8f0, 0.55);
   scene.add(ambFill);
-  // Main sun - afternoon SW elevation to show front face of villas
   sunLight = new THREE.DirectionalLight(0xffe8b0, 2.8);
   sunLight.position.set(-180, 200, 100);
   sunLight.castShadow = true;
   sunLight.shadow.camera.left = sunLight.shadow.camera.bottom = -300;
-  sunLight.shadow.camera.right = sunLight.shadow.camera.top   =  300;
+  sunLight.shadow.camera.right = sunLight.shadow.camera.top  =  300;
   sunLight.shadow.camera.far   = 700;
-  sunLight.shadow.mapSize.set(1024, 1024); // 1024 - significant perf gain
+  sunLight.shadow.mapSize.set(1024, 1024);
   sunLight.shadow.bias        = -0.0003;
   sunLight.shadow.normalBias  =  0.02;
   sunLight.shadow.radius      =  2;
   scene.add(sunLight);
-  // Soft fill
   const fill = new THREE.DirectionalLight(0xb8d0e8, 0.45);
   fill.position.set(120, 80, -100); scene.add(fill);
-  // Clubhouse interior glow
-  [[-40,8,115],[0,8,115],[40,8,115]].forEach(p => {
-    const pt = new THREE.PointLight(0xffe0a0, 2.0, 48, 2);
+  // Clubhouse warm glow (x=+80, z=+155)
+  [[-30,8,162],[80,8,155],[190,8,162]].forEach(p => {
+    const pt = new THREE.PointLight(0xffe0a0, 1.8, 48, 2);
     pt.position.set(...p); scene.add(pt);
   });
 }
 
 //        SKY                                                                                                                                                                                                                      
 function buildSky() {
-  const makeGrad = (top,hor,gnd) => {
-    const c = document.createElement("canvas"); c.width=4; c.height=256;
-    const sx = c.getContext("2d");
-    const g  = sx.createLinearGradient(0,0,0,256);
-    g.addColorStop(0,top); g.addColorStop(.45,hor); g.addColorStop(1,gnd);
-    sx.fillStyle=g; sx.fillRect(0,0,4,256);
-    return new THREE.CanvasTexture(c);
-  };
-  const st = makeGrad("#1a3a6a","#5a9acc","#c8d8e0");
-  st.colorSpace = THREE.SRGBColorSpace;
+  const skyC = document.createElement("canvas"); skyC.width=4; skyC.height=256;
+  const sc = skyC.getContext("2d");
+  const g = sc.createLinearGradient(0,0,0,256);
+  g.addColorStop(0,"#1a3a6a"); g.addColorStop(.45,"#5a9acc"); g.addColorStop(1,"#c8d8e0");
+  sc.fillStyle=g; sc.fillRect(0,0,4,256);
+  const st = new THREE.CanvasTexture(skyC); st.colorSpace=THREE.SRGBColorSpace;
   skyMesh = new THREE.Mesh(new THREE.SphereGeometry(900,32,16),
     new THREE.MeshBasicMaterial({map:st, side:THREE.BackSide}));
   scene.add(skyMesh);
-  // Sun disc
   const sunM = new THREE.Mesh(new THREE.SphereGeometry(15,16,8),
     new THREE.MeshBasicMaterial({color:0xffe8b0}));
   sunM.position.set(-300,310,180); scene.add(sunM);
-  // Clouds
   const cm = new THREE.MeshBasicMaterial({color:0xfdfcfa,transparent:true,opacity:.65,side:THREE.DoubleSide});
   [[-180,260,-300],[80,270,-350],[220,250,-280],[-300,240,-180],[140,268,-400]].forEach(([x,y,z])=>{
     for(let i=0;i<4;i++){
@@ -160,7 +151,7 @@ function buildSky() {
 }
 
 export function updateSky(top,hor,gnd) {
-  if (!skyMesh) return;
+  if(!skyMesh) return;
   const c=document.createElement("canvas"); c.width=4; c.height=256;
   const sx=c.getContext("2d");
   const g=sx.createLinearGradient(0,0,0,256);
@@ -170,7 +161,7 @@ export function updateSky(top,hor,gnd) {
   skyMesh.material.needsUpdate=true;
 }
 
-//        GEOMETRY HELPERS                                                                                                                                                                            
+//        HELPERS                                                                                                                                                                                                          
 function box(w,h,d,mat,pos=[0,0,0],ry=0,shadow=true){
   const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);
   m.position.set(...pos); m.rotation.y=ry;
@@ -186,219 +177,22 @@ function cyl(rt,rb,h,seg,mat,pos=[0,0,0]){
 }
 function s(...o){ o.forEach(x=>x&&scene.add(x)); }
 
-// Distinct materials for each typology (Audit 3.3)
+// Distinct material palette
 const MATS = {
-  villaBody:  ()=>new THREE.MeshStandardMaterial({color:0xF5E6B0,roughness:.75,metalness:.02}), // warm cream-yellow
-  villaRoof:  ()=>new THREE.MeshStandardMaterial({color:0xC9A84C,roughness:.65,metalness:.08}), // ochre gold
-  loftBody:   ()=>new THREE.MeshStandardMaterial({color:0xE8E0D0,roughness:.78}),
-  loftRoof:   ()=>new THREE.MeshStandardMaterial({color:0xD4622A,roughness:.7}),  // terracotta orange
-  flatGrey:   ()=>new THREE.MeshStandardMaterial({color:0xDDDDDD,roughness:.7}),
-  clubWhite:  ()=>new THREE.MeshStandardMaterial({color:0xF0ECE0,roughness:.7}),
-  stableBrick:()=>new THREE.MeshStandardMaterial({color:0xC4A882,roughness:.88}),
-  stableRoof: ()=>new THREE.MeshStandardMaterial({color:0x8B6914,roughness:.8}),
-  roadAsph:   ()=>new THREE.MeshStandardMaterial({color:0x1a1e1c,roughness:.88}),
-  safetyBrown:()=>new THREE.MeshStandardMaterial({color:0x8B4513,roughness:.95}), // saddle brown
-  grassGreen: ()=>new THREE.MeshStandardMaterial({color:0x3a7a28,roughness:.92}),
-  lawnGreen:  ()=>new THREE.MeshStandardMaterial({color:0x4a8a38,roughness:.9}),
-  hedgeGreen: ()=>new THREE.MeshStandardMaterial({color:0x2a5a20,roughness:.95}),
-  cobble:     ()=>new THREE.MeshStandardMaterial({color:0x9A7A5A,roughness:.9}),
-  concrete:   ()=>new THREE.MeshStandardMaterial({color:0xc8c0b0,roughness:.8}),
-  railWhite:  ()=>new THREE.MeshStandardMaterial({color:0xfcfaf8,roughness:.5}),
-  plotAvail:  ()=>new THREE.MeshStandardMaterial({color:0x00ff88,transparent:true,opacity:.35}),
-  plotReserved:()=>new THREE.MeshStandardMaterial({color:0xff4444,transparent:true,opacity:.5}),
+  safetyBrown: ()=>new THREE.MeshStandardMaterial({color:0x8B4513,roughness:.95}),
+  grassGreen:  ()=>new THREE.MeshStandardMaterial({color:0x4a8a38,roughness:.92}),
+  hedgeGreen:  ()=>new THREE.MeshStandardMaterial({color:0x2a5a20,roughness:.95}),
+  lawnGreen:   ()=>new THREE.MeshStandardMaterial({color:0x4a8a38,roughness:.9}),
+  roadAsph:    ()=>new THREE.MeshStandardMaterial({color:0x1a1e1c,roughness:.88}),
+  concrete:    ()=>new THREE.MeshStandardMaterial({color:0xc8c0b0,roughness:.8}),
+  cobble:      ()=>new THREE.MeshStandardMaterial({color:0x9A7A5A,roughness:.9}),
+  flatGrey:    ()=>new THREE.MeshStandardMaterial({color:0xDDDDDD,roughness:.7}),
+  railWhite:   ()=>new THREE.MeshStandardMaterial({color:0xfcfaf8,roughness:.5}),
+  stableRoof:  ()=>new THREE.MeshStandardMaterial({color:0xB05020,roughness:.8}),
+  stableBrick: ()=>new THREE.MeshStandardMaterial({color:0xC04020,roughness:.85}),
 };
 
-//        ENVIRONMENT                                                                                                                                                                                              
-function buildEnvironment(){
-  addGround();
-  addPoloField();
-  addGrassRing();   // per-blade grass cards around field
-  addSafetyZone();
-  addYardMarkings();
-  addRoads();
-  addLake();
-  addEastLake();
-  addClubhouse();
-  addVillaRing();        // GLB-based, with plot reservation
-  addLoftTerraces();
-  addWestCompound();     // west: loft column + flats + training field
-  addStables();
-  addPaddock();
-  addGamePark();
-  addCommercialBlock();
-  addServiceCompound();
-  addLandscaping();      // systematic palms + trees (Audit 10.x)
-}
-
-//        GROUND (6 distinct materials - Audit 1.1)                                                                                                    
-function addGround(){
-  // Base laterite (only shows where nothing else is placed)
-  // PBR ground surfaces
-  s(plane(900,700,PBR.dirt(),[0,0,30]));
-  s(plane(500,400,PBR.grass(),[0,.01,0]));
-  // Clubhouse forecourt paving
-  s(plane(180,80,MATS.concrete(),[0,.02,122]));
-  // Stables courtyard
-  s(plane(90,70,MATS.cobble(),[-355,.02,90]));
-  // West compound ground
-  s(plane(200,280,MATS.lawnGreen(),[-310,.01,30]));
-}
-
-//        POLO FIELD                                                                                                                                                                                                 
-// GRASS CARD RING (alpha blades around field perimeter)
-function addGrassRing(){
-  const cards = [
-    ...addGrassField( 0, -115, 140, 12, 60),
-    ...addGrassField( 0,  115, 140, 12, 60),
-    ...addGrassField(-165,  0,  12, 90, 40),
-    ...addGrassField( 165,  0,  12, 90, 40),
-  ];
-  cards.forEach(card => scene.add(card));
-}
-
-function addPoloField(){
-  const sc=document.createElement("canvas"); sc.width=512; sc.height=256;
-  const ctx=sc.getContext("2d");
-  for(let i=0;i<14;i++){
-    ctx.fillStyle=i%2===0?"#5a9448":"#4a8038";
-    ctx.fillRect(0,i*(256/14),512,256/14+1);
-  }
-  const st=new THREE.CanvasTexture(sc);
-  st.colorSpace=THREE.SRGBColorSpace; st.wrapS=st.wrapT=THREE.RepeatWrapping; st.repeat.set(1,1);
-  const fm=MAT_GRASS_FIELD(); fm.map=st;
-  s(plane(274,146,fm,[0,.12,0]));
-  // Centre lines
-  const lm=new THREE.MeshStandardMaterial({color:0xf8f5e0,roughness:.4});
-  s(box(.5,.05,146,lm,[0,.14,0],0,false));
-  s(box(274,.05,.5,lm,[0,.14,0],0,false));
-}
-
-//        SAFETY ZONE (saddle brown - Audit 2.3)                                                                                                             
-function addSafetyZone(){
-  const dm=PBR.dirt(); dm.color.set(0x8B4513); // saddle brown override on dirt PBR
-  s(plane(298,25,dm,[0,.11,-85.5]));   // North
-  s(plane(298,25,dm,[0,.11, 85.5]));   // South
-  s(plane(11,146,dm,[-142.5,.11,0]));  // West
-  s(plane(11,146,dm,[ 142.5,.11,0]));  // East
-  for(const [cx,cz] of [[-132,-80],[132,-80],[-132,80],[132,80]])
-    s(plane(20,20,dm,[cx,.11,cz]));
-}
-
-//        YARD MARKINGS (correct 30/40/60yd positions - Audit 2.1)                                                       
-function addYardMarkings(){
-  const lm=new THREE.MeshStandardMaterial({color:0xf8f5e0,roughness:.4});
-  // From each goal (x=  137), 30yd=27.4m, 40yd=36.6m, 60yd=54.9m
-  for(const side of[-1,1]) for(const d of[27.4,36.6,54.9])
-    s(box(.5,.05,146,lm,[side*(137-d),.14,0],0,false));
-  // Goal posts at BOTH east AND west ends (Audit 2.2)
-  const pm=MATS.railWhite(); pm.metalness=.2;
-  for(const gx of[-137,137]) for(const pz of[0,-7.3,7.3])
-    s(cyl(.12,.12,3,8,pm,[gx,1.5,pz]));
-  // Training field yard markings (Audit 7.1) + goalposts (Audit 7.2)
-  for(const z of[-55,0,55]) s(box(100,.05,.4,lm,[-390,.14,z],0,false));
-  for(const gz of[-80,80]) for(const pz of[0,-7.3,7.3])
-    s(cyl(.12,.12,3,8,pm,[-390,1.5,gz+pz]));
-}
-
-//        ROADS (full network - Audit 1.2, 1.3, 1.4)                                                                                                 
-function addRoads(){
-  const am=PBR.asphalt();
-  const lm=new THREE.MeshStandardMaterial({color:0xf0ecd0,roughness:.5});
-  const Y=.13;
-
-  // LAGOS ROAD - dual carriageway 30m wide (Audit 1.4)
-  s(plane(700,30,am,[0,Y,215]));
-  s(plane(700,4,MATS.grassGreen(),[0,Y+.01,215])); // median strip
-  for(let x=-300;x<=300;x+=18) s(box(8,.04,.35,lm,[x,Y+.03,215],0,false));
-  // Palms along Lagos Road (Audit 10.1)
-  for(let x=-280;x<=280;x+=10) addPalmSprite(x,Y+.1,206,1.3);
-
-  // CRESCENT ROAD (north, z=-168, curved)
-  for(let x=-260;x<=260;x+=8){
-    const cz=-168-Math.abs(x)*.05;
-    s(plane(8,8,am,[x,Y,cz]));
-  }
-
-  // RING ROAD: sits BETWEEN safety zone edge and inner villa front face
-  // W: safety zone edge x=-148, inner villa x=-162 -> road centreline x=-155
-  // E: safety zone edge x=+148, inner villa x=+162 -> road centreline x=+155
-  // N: safety zone edge z=-98,  inner villa z~-132 -> road centreline z=-104
-  // S: safety zone edge z=+98,  inner villa z~+105 -> road centreline z=+104
-  s(plane(8,220,am,[-155,Y,0]));    // W ring N-S (between safety zone and W villas)
-  s(plane(8,220,am,[ 155,Y,0]));    // E ring N-S (between safety zone and E villas)
-  s(plane(320,8,am,[0,Y,-104]));    // N ring E-W (between safety zone and N villas)
-  s(plane(320,8,am,[0,Y,104]));     // S ring E-W (between safety zone and S villas)
-  // Corner sweeps
-  for(const[cx,cz] of[[-150,-100],[150,-100],[-150,100],[150,100]])
-    s(plane(16,16,am,[cx,Y,cz]));
-
-  // INTERNAL ACCESS ROAD (between inner x=-162 and outer x=-192 villa columns)
-  // Sits at x=-177 (midpoint between -162 and -192)
-  s(plane(8,220,am,[-177,Y,-5]));   // W internal lane
-  s(plane(8,220,am,[ 177,Y,-5]));   // E internal lane
-
-  // NORTH SETBACK ROAD (between north ring road z=-104 and villa south face z~-132)
-  // Runs at z=-118     directly in front of north villa row
-  s(plane(320,7,am,[30,Y,-118]));
-
-  // SOUTH INTERNAL E-W connector + forecourt
-  s(plane(400,8,am,[0,Y,128]));
-  s(plane(130,35,am,[0,Y,148]));
-
-  // WEST COMPOUND roads (Audit 1.3)
-  s(plane(8,280,am,[-270,Y,20]));   // main N-S spine
-  s(plane(8,280,am,[-310,Y,20]));   // road between training field and flats
-  s(plane(8,200,am,[-230,Y,10]));   // secondary E road beside lofts+villas
-  s(plane(150,8,am,[-310,Y,145]));  // E-W to stables
-  s(plane(8,100,am,[-170,Y,10]));   // east side of training field
-
-  // EAST COMPOUND road
-  s(plane(8,250,am,[200,Y,10]));
-  s(plane(55,8,am,[215,Y,120]));
-}
-
-//        LAKE (north, between safety zone and tier1 villas)                                                                         
-function addLake(){
-  const wm=createWaterMat();
-  // Flat PlaneGeometry only - no SphereGeometry caps (those cause the edge bulges)
-  const main=new THREE.Mesh(new THREE.PlaneGeometry(190,22),wm);
-  main.rotation.x=-Math.PI/2; main.position.set(30,.15,-115);
-  main.receiveShadow=true; scene.add(main); waterMeshes.push(main);
-  // West crescent arm (angled plane, no bump)
-  const wA=new THREE.Mesh(new THREE.PlaneGeometry(28,16),wm);
-  wA.rotation.x=-Math.PI/2; wA.rotation.z=.18; wA.position.set(-67,.14,-116);
-  scene.add(wA); waterMeshes.push(wA);
-  // East crescent arm
-  const eA=new THREE.Mesh(new THREE.PlaneGeometry(28,16),wm);
-  eA.rotation.x=-Math.PI/2; eA.rotation.z=-.12; eA.position.set(118,.14,-115);
-  scene.add(eA); waterMeshes.push(eA);
-  // Shore grass
-  s(plane(230,5,MATS.grassGreen(),[30,.12,-103]));
-  s(plane(230,5,MATS.grassGreen(),[30,.12,-128]));
-}
-
-function addEastLake(){
-  const wm=createWaterMat();
-  // Pixel-measured: centre x=+267, z=+4, size ~30m E-W x 54m N-S
-  const el=new THREE.Mesh(new THREE.BoxGeometry(30,.28,54),wm);
-  el.position.set(267,.14,4); el.receiveShadow=true;
-  scene.add(el); waterMeshes.push(el);
-  // Shore grass
-  const sg=new THREE.MeshStandardMaterial({color:0x3a7a28,roughness:.9});
-  s(plane(34,58,sg,[267,.12,4])); // slightly larger green border
-}
-
-//        CLUBHOUSE (Audit 4.1, 4.2, 4.3)                                                                                                                               
-// Clubhouse: rendered by clubhouse-mesh.glb (loadClubhouseGLB)
-function addClubhouse(){ /* replaced by GLB */ }
-
-
-// GLB LOADING SYSTEM
-// Pattern: load once, store template, clone per placement
-let villaGLBTemplate = null;
-let aptGLBTemplate   = null;
-let loftGLBTemplate  = null;
-
+//        GLB LOADING SYSTEM                                                                                                                                                                         
 function makeDracoLoader() {
   const draco = new DRACOLoader();
   draco.setDecoderPath("https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/libs/draco/");
@@ -407,7 +201,6 @@ function makeDracoLoader() {
   return loader;
 }
 
-// Load a GLB with Draco decompression, apply scale+Y offset, return scene template
 function loadOneGLB(path, scale, yOff, onDone, onFail) {
   makeDracoLoader().load(path,
     gltf => {
@@ -423,10 +216,7 @@ function loadOneGLB(path, scale, yOff, onDone, onFail) {
       onDone(gltf.scene);
     },
     undefined,
-    err => {
-      console.error("GLB failed:", path, err.message||err);
-      if (onFail) onFail();
-    }
+    err => { console.error("GLB failed:", path, err.message||err); if(onFail) onFail(); }
   );
 }
 
@@ -454,98 +244,281 @@ function loadLoftGLB(){
   }, ()=>{pendingLofts=[];});
 }
 
-function placeVillaGLB(x, z, ry, plotKey) {
-  ry = ry || 0;
-  if (!villaGLBTemplate) { pendingVillas.push({x, z, ry, plotKey}); return; }
-  const container = new THREE.Group();
-  container.position.set(x, 0, z);
-  container.rotation.y = ry;
-  container.userData.isVillaGLB = true;
-  container.userData.baseRotY   = ry;
-  container.userData.plotKey    = plotKey;
-  container.add(villaGLBTemplate.clone(true));
-  scene.add(container);
-  if (plotKey) addPlotOverlay(x, z, ry, plotKey, container);
-}
-
-function placeAptGLB(x, z, ry) {
-  ry = ry || 0;
-  if (!aptGLBTemplate) { pendingApts.push({x, z, ry}); return; }
-  const container = new THREE.Group();
-  container.position.set(x, 0, z);
-  container.rotation.y = ry;
-  container.add(aptGLBTemplate.clone(true));
-  scene.add(container);
-}
-
-function placeLoftGLB(x, z, ry) {
-  ry = ry || 0;
-  if (!loftGLBTemplate) { pendingLofts.push({x, z, ry}); return; }
-  const container = new THREE.Group();
-  container.position.set(x, 0, z);
-  container.rotation.y = ry;
-  container.add(loftGLBTemplate.clone(true));
-  scene.add(container);
-}
-
 function loadClubhouseGLB(){
-  // Scale: 60.975x -> 110m wide, 29.6m tall, 50m deep. Y=13.38m
-  loadOneGLB("assets/clubhouse-mesh.glb", 60.975, 13.38, tmpl => {
-    clubGLBTemplate = tmpl;
-    // Place clubhouse at x=0, z=+108
-    const g=new THREE.Group(); g.position.set(0,0,108); g.rotation.y=Math.PI;
+  // Clubhouse: x=+80, z=+155 (east of centreline), facing north (ry=PI)
+  loadOneGLB("assets/clubhouse-mesh.glb", CLUB_SCALE, CLUB_Y, tmpl=>{
+    clubGLBTemplate=tmpl;
+    const g=new THREE.Group(); g.position.set(80,0,155); g.rotation.y=Math.PI;
     g.add(tmpl.clone(true)); scene.add(g);
-    console.log("Clubhouse GLB loaded");
+    console.log("Clubhouse GLB OK");
   });
 }
 
 function loadStablesGLB(){
-  // Scale: 18.846x -> 36m wide, 4.9m tall. Y=2.50m
-  loadOneGLB("assets/stables-mesh.glb", 18.846, 2.50, tmpl => {
-    stablesGLBTemplate = tmpl;
-    // Place stables compound at SW: x=-380, z=+185
-    const g=new THREE.Group(); g.position.set(-380,0,185);
+  // Stables: SW compound, x=-375, z=+80 to +100 (brief Section 2)
+  loadOneGLB("assets/stables-mesh.glb", STAB_SCALE, STAB_Y, tmpl=>{
+    stablesGLBTemplate=tmpl;
+    const g=new THREE.Group(); g.position.set(-375,0,90);
     g.add(tmpl.clone(true)); scene.add(g);
-    console.log("Stables GLB loaded");
+    console.log("Stables GLB OK");
   });
 }
 
-//        VILLA RING (all using GLB mesh, standalone plots, Audit 3.1-3.6)                               
-function addVillaRing(){
-  const PLOT=28; // 28m spacing - 14m villa + 7m gap each side (Audit 3.5 fix)
+let villaGLBScene=null; // alias for legacy code
+let aptGLBScene=null;
+let loftGLBScene=null;
 
-  // WEST INNER column x=-162, z=-96 to +96 (8 units, 28m spacing)
+function placeVillaGLB(x,z,ry,plotKey) {
+  ry=ry||0;
+  if(!villaGLBTemplate){pendingVillas.push({x,z,ry,plotKey}); return;}
+  const container=new THREE.Group();
+  container.position.set(x,0,z); container.rotation.y=ry;
+  container.userData.isVillaGLB=true; container.userData.baseRotY=ry;
+  container.userData.plotKey=plotKey;
+  container.add(villaGLBTemplate.clone(true));
+  scene.add(container);
+  if(plotKey) addPlotOverlay(x,z,ry,plotKey,container);
+}
+
+function placeAptGLB(x,z,ry=0){
+  if(!aptGLBTemplate){pendingApts.push({x,z,ry}); return;}
+  const g=new THREE.Group(); g.position.set(x,0,z); g.rotation.y=ry;
+  g.add(aptGLBTemplate.clone(true)); scene.add(g);
+}
+
+function placeLoftGLB(x,z,ry){
+  ry=ry||0;
+  if(!loftGLBTemplate){pendingLofts.push({x,z,ry}); return;}
+  const g=new THREE.Group(); g.position.set(x,0,z); g.rotation.y=ry;
+  g.add(loftGLBTemplate.clone(true)); scene.add(g);
+}
+
+//        ENVIRONMENT                                                                                                                                                                                              
+function buildEnvironment(){
+  addGround();
+  addPoloField();
+  addSafetyZone();
+  addYardMarkings();
+  addRoads();
+  addLake();
+  addEastLake();
+  addClubhouse();
+  addVillaRing();
+  addLoftTerraces();
+  addWestCompound();
+  addPaddock();
+  addGamePark();
+  addCommercialPlots();
+  addServiceCompound();
+  addGrassRing();
+  addLandscaping();
+}
+
+//        GROUND                                                                                                                                                                                                             
+function addGround(){
+  // Estate grass base (no orange dirt     brief Section 11)
+  s(plane(900,700,MATS.lawnGreen(),[0,0,30]));
+  s(plane(500,400,MATS.grassGreen(),[0,.01,0]));
+  // Clubhouse forecourt paving (x=+80, z=+178)
+  s(plane(120,50,MATS.concrete(),[80,.02,178]));
+  // Stables courtyard cobblestone (brief: #9A7A5A)
+  s(plane(90,60,MATS.cobble(),[-355,.02,90]));
+  // West compound lawn
+  s(plane(200,320,MATS.lawnGreen(),[-310,.01,100]));
+}
+
+//        POLO FIELD (brief Section 5, Zone E)                                                                                                                
+function addPoloField(){
+  const sc=document.createElement("canvas"); sc.width=512; sc.height=256;
+  const ctx=sc.getContext("2d");
+  for(let i=0;i<14;i++){
+    ctx.fillStyle=i%2===0?"#5a9448":"#4a8038";
+    ctx.fillRect(0,i*(256/14),512,256/14+1);
+  }
+  const st=new THREE.CanvasTexture(sc);
+  st.colorSpace=THREE.SRGBColorSpace; st.wrapS=st.wrapT=THREE.RepeatWrapping; st.repeat.set(1,1);
+  const fm=MAT_GRASS_FIELD(); fm.map=st;
+  s(plane(274,146,fm,[0,.12,0]));
+  // Centre line (Z axis, full field length)
+  const lm=new THREE.MeshStandardMaterial({color:0xF8F5E0,roughness:.4});
+  s(box(.5,.05,146,lm,[0,.14,0],0,false));
+  // East-West centre line
+  s(box(274,.05,.5,lm,[0,.14,0],0,false));
+}
+
+//        SAFETY ZONE (brief: #8B4513, N z=-98, S z=+98, W x=-148, E x=+148)                   
+function addSafetyZone(){
+  const dm=MATS.safetyBrown();
+  s(plane(298,25,dm,[0,.11,-85.5]));   // N cap z=-73 to -98
+  s(plane(298,25,dm,[0,.11, 85.5]));   // S cap
+  s(plane(11,146,dm,[-142.5,.11,0]));  // W strip
+  s(plane(11,146,dm,[ 142.5,.11,0]));  // E strip
+  for(const [cx,cz] of [[-132,-80],[132,-80],[-132,80],[132,80]])
+    s(plane(20,20,dm,[cx,.11,cz]));
+}
+
+//        YARD MARKINGS (brief: 30yd=27.43m, 40yd=36.58m, 60yd=54.86m)                                     
+function addYardMarkings(){
+  const lm=new THREE.MeshStandardMaterial({color:0xF8F5E0,roughness:.4});
+  for(const side of [-1,1]) for(const d of [27.43,36.58,54.86])
+    s(box(.5,.05,146,lm,[side*(137-d),.14,0],0,false));
+  // Goalposts BOTH ends (brief: at x=-137 AND x=+137)
+  const pm=MATS.railWhite(); pm.metalness=.2;
+  for(const gx of [-137,137]) for(const pz of [0,-7.3,7.3])
+    s(cyl(.12,.12,3,8,pm,[gx,1.5,pz]));
+  // Training field yard markings (brief Zone K)
+  for(const mz of [+155,+195,+235])
+    s(box(100,.05,.4,lm,[-390,.14,mz],0,false));
+  // Training field goalposts
+  for(const gz of [+155,+235]) for(const pz of [0,-7.3,7.3])
+    s(cyl(.12,.12,3,8,pm,[-390,1.5,gz+pz]));
+}
+
+//        ROADS (brief Section 7)                                                                                                                                                          
+function addRoads(){
+  const am=MATS.roadAsph();
+  const lm=new THREE.MeshStandardMaterial({color:0xf0ecd0,roughness:.5});
+  const Y=.13;
+
+  // Lagos Road z=+215, 30m wide dual carriageway
+  s(plane(700,30,am,[0,Y,215]));
+  s(plane(700,4,MATS.grassGreen(),[0,Y+.01,215])); // 4m median
+  for(let x=-300;x<=300;x+=18) s(box(8,.04,.35,lm,[x,Y+.03,215],0,false));
+
+  // LASG Road z=-200, 20m wide
+  s(plane(700,20,am,[0,Y,-200]));
+
+  // Crescent road z=-168 (parabolic, brief Zone B formula)
+  for(let x=-310;x<=265;x+=8){
+    const bow = 8*(1-Math.min(1,(Math.abs(x)-82)/130));
+    const cz = -168 - (Math.abs(x)<82 ? bow : 0);
+    s(plane(8,8,am,[x,Y,cz]));
+  }
+
+  // Ring road (brief Section 7): W x=-152, E x=+152, N z=-104, S z=+104
+  s(plane(8,210,am,[-152,Y,0]));
+  s(plane(8,210,am,[ 152,Y,0]));
+  s(plane(310,8,am,[0,Y,-104]));
+  s(plane(310,8,am,[0,Y,104]));
+  for(const [cx,cz] of [[-148,-100],[148,-100],[-148,100],[148,100]])
+    s(plane(16,16,am,[cx,Y,cz]));
+
+  // Internal villa lanes (brief: W x=-174, E x=+174)
+  s(plane(8,220,am,[-174,Y,0]));
+  s(plane(8,220,am,[ 174,Y,0]));
+
+  // North setback road (between ring z=-104 and N villa row z~-132)
+  s(plane(320,7,am,[30,Y,-118]));
+
+  // South internal E-W connector + clubhouse approach
+  s(plane(400,8,am,[0,Y,128]));
+  // Clubhouse forecourt road and palm avenue axis (x=+80)
+  s(plane(55,8,am,[80,Y,120]));
+  s(plane(55,40,MATS.concrete(),[80,Y,175])); // forecourt paving
+
+  // West compound roads (brief Section 7)
+  s(plane(8,320,am,[-270,Y,80]));  // main N-S spine x=-270
+  s(plane(8,320,am,[-230,Y,80]));  // secondary x=-230
+  s(plane(150,8,am,[-310,Y,145])); // E-W stables access z=+145
+  s(plane(8,140,am,[-170,Y,110])); // training field east side x=-170
+
+  // East compound road (brief: x=+200)
+  s(plane(8,260,am,[200,Y,10]));
+
+  // Clubhouse entrance road from east (brief: east boundary access)
+  s(plane(55,8,am,[200,Y,155]));
+}
+
+//        LAKE (brief Zone C: centre x=+30,z=-115, W cap x=-70, E cap x=+120)                
+function addLake(){
+  const wm=createWaterMat();
+  // Flat PlaneGeometry     no sphere caps (they cause edge bulges)
+  const main=new THREE.Mesh(new THREE.PlaneGeometry(190,26),wm);
+  main.rotation.x=-Math.PI/2; main.position.set(30,.15,-115);
+  main.receiveShadow=true; scene.add(main); waterMeshes.push(main);
+  // West arm to x=-70
+  const wA=new THREE.Mesh(new THREE.PlaneGeometry(28,18),wm);
+  wA.rotation.x=-Math.PI/2; wA.rotation.z=.18; wA.position.set(-67,.14,-116);
+  scene.add(wA); waterMeshes.push(wA);
+  // East arm to x=+120
+  const eA=new THREE.Mesh(new THREE.PlaneGeometry(28,18),wm);
+  eA.rotation.x=-Math.PI/2; eA.rotation.z=-.12; eA.position.set(118,.14,-115);
+  scene.add(eA); waterMeshes.push(eA);
+  // Shore grass strips (6m wide each, brief Section 8)
+  s(plane(230,6,MATS.grassGreen(),[30,.12,-102])); // south shore z=-102
+  s(plane(230,6,MATS.grassGreen(),[30,.12,-128])); // north shore z=-128
+  // Lake south shore palms: 1 every 16m at z=-104 (brief Section 8)
+  for(let x=-90;x<=115;x+=16) addPalmSprite(x,.1,-104,1.1);
+}
+
+//        EAST LAKE (brief Zone I: paddock side water feature)                                                                
+function addEastLake(){
+  const wm=createWaterMat();
+  const el=new THREE.Mesh(new THREE.PlaneGeometry(20,40),wm);
+  el.rotation.x=-Math.PI/2; el.position.set(215,.14,-40);
+  scene.add(el); waterMeshes.push(el);
+}
+
+//        CLUBHOUSE (brief: x=+80,z=+155, GLB handles visual, add surroundings)             
+function addClubhouse(){
+  // Parking (brief: ~28 bays, z~+178, x=+80)
+  const am=MATS.roadAsph();
+  const bayM=MATS.railWhite();
+  s(plane(50,22,am,[40,.13,185]));
+  s(plane(50,22,am,[120,.13,185]));
+  for(const bx of [40,120]) for(let i=-22;i<=22;i+=4.5)
+    s(box(.06,.04,5.5,bayM,[bx+i,.16,185],0,false));
+  // Clubhouse approach avenue palms (brief Section 8: x=+-12 to +-16, z=+95 to +140)
+  for(let pz=95;pz<=140;pz+=8){
+    addPalmSprite(68,.1,pz,1.3);   // west of approach axis
+    addPalmSprite(92,.1,pz,1.3);   // east
+  }
+}
+
+//        VILLA RING                                                                                                                                                                                                 
+// 43 villas total (brief Section 3).
+// West: ONE inner column x=-162. East: inner x=+162 AND outer x=+192.
+// North: 15 villas in one parabolic E-W row (brief Zone D formula).
+// South: small arc flanking clubhouse.
+function addVillaRing(){
+  const PLOT=28; // 22m villa + 5m minimum gap (brief: 5m minimum)
+
+  // WEST INNER column (x=-162, 8 units, facing east toward field)
   for(let i=0;i<8;i++){
     const z=-96+i*PLOT;
     placeVillaWithLandscape(-162,z,Math.PI/2);
   }
-  // WEST outer column replaced by loft terraces (handled in addWestCompound)
-  // EAST INNER column x=+162 (8 units, facing west toward field)
+
+  // EAST INNER column (x=+162, 8 units, facing west toward field)
   for(let i=0;i<8;i++){
     const z=-96+i*PLOT;
     placeVillaWithLandscape(162,z,-Math.PI/2);
   }
-  // EAST OUTER column x=+192 (7 units, staggered)
+
+  // EAST OUTER column (x=+192, 7 units staggered, brief east compound)
   for(let i=0;i<7;i++){
     const z=-82+i*PLOT;
     placeVillaWithLandscape(192,z,-Math.PI/2);
   }
-  // ONE continuous north row bowing over the lake.
-  // Lake centre x=+30, radius=90m, peak bow=17m northward at lake centre.
-  const LAKE_CX=30, LAKE_R=90, BOW=17;
+
+  // NORTH ROW     15 villas, one continuous E-W row with parabolic bow
+  // Brief Zone D formula (authoritative):
+  // base z=-132, peak bow=-17m at lake centre x=+30, radius=90m
+  const LAKE_CX=30, LAKE_R=90, MAX_BOW=17;
   const northX=[-140,-116,-92,-68,-44,-20,4,28,52,76,100,124,148,172,196];
   northX.forEach(x=>{
     const dx=x-LAKE_CX;
-    const bow=dx*dx<LAKE_R*LAKE_R ? BOW*(1-(dx*dx)/(LAKE_R*LAKE_R)) : 0;
-    placeVillaWithLandscape(x, -132-bow, 0);
+    const bow=dx*dx<LAKE_R*LAKE_R ? MAX_BOW*(1-(dx*dx)/(LAKE_R*LAKE_R)) : 0;
+    placeVillaWithLandscape(x,-132-bow,0); // all face south (ry=0)
   });
-  // SOUTH ARC: gap at centre for clubhouse (x=0, width 110m, so |x|<55 is blocked)
-  // Only place where |x|>=65. Base z=105 flush with clubhouse front.
-  for(const side of[-1,1]){
+
+  // SOUTH ARC     flanking clubhouse, |x|>=65 only (brief: gap for clubhouse at x=+80)
+  // South villa arc z~+105 to +118 (brief Section 2)
+  for(const side of [-1,1]){
     [65,93,121].forEach(xabs=>{
       const x=side*xabs;
       const z=105+Math.abs(x)*.04;
-      placeVillaWithLandscape(x,z,0);
+      placeVillaWithLandscape(x,z,0); // face north toward field
     });
   }
 }
@@ -554,260 +527,159 @@ function placeVillaWithLandscape(x,z,ry){
   const plotKey=`${Math.round(x)},${Math.round(z)}`;
   placeVillaGLB(x,z,ry,plotKey);
   addPlotLandscaping(x,z,ry);
-  // 2 cypress trees per villa (Audit 3.5)
-  const forwardX=Math.sin(ry)*(-9);
-  const forwardZ=Math.cos(ry)*(-9);
-  const rightX=Math.cos(ry)*8;
-  const rightZ=-Math.sin(ry)*8;
-  addCypressAt(x+rightX+forwardX, z+rightZ+forwardZ);
-  addCypressAt(x-rightX+forwardX, z-rightZ+forwardZ);
 }
 
 function addPlotLandscaping(vx,vz,ry){
   const hm=MATS.hedgeGreen();
-  const gm2=new THREE.MeshStandardMaterial({color:0x8a7050,roughness:.7,metalness:.2});
+  const gm=new THREE.MeshStandardMaterial({color:0x8a7050,roughness:.7,metalness:.2});
   const pm=new THREE.MeshStandardMaterial({color:0xd0c8b4,roughness:.8});
   const g=new THREE.Group(); g.position.set(vx,0,vz); g.rotation.y=ry;
-  // Side hedges with CLEAR 7m gap from next villa (Audit 3.5)
   const hl=new THREE.Mesh(new THREE.BoxGeometry(.4,1.1,18),hm);
-  hl.position.set(-10,.55,0); hl.receiveShadow=true; hl.castShadow=true; g.add(hl);
+  hl.position.set(-10,.55,0); g.add(hl);
   const hr=hl.clone(); hr.position.set(10,.55,0); g.add(hr);
   const hf=new THREE.Mesh(new THREE.BoxGeometry(18,.7,.4),hm);
-  hf.position.set(0,.35,-10); hf.receiveShadow=true; g.add(hf);
-  for(const gx of[-2.5,2.5]){
-    const gp=new THREE.Mesh(new THREE.BoxGeometry(.3,1.5,.3),gm2);
-    gp.position.set(gx,.75,-10); gp.castShadow=true; g.add(gp);
+  hf.position.set(0,.35,-10); g.add(hf);
+  for(const gx of [-2.5,2.5]){
+    const gp=new THREE.Mesh(new THREE.BoxGeometry(.3,1.5,.3),gm);
+    gp.position.set(gx,.75,-10); g.add(gp);
   }
   const dp=new THREE.Mesh(new THREE.PlaneGeometry(4.5,5),pm);
-  dp.rotation.x=-Math.PI/2; dp.position.set(0,.02,-7.5); dp.receiveShadow=true; g.add(dp);
+  dp.rotation.x=-Math.PI/2; dp.position.set(0,.02,-7.5); g.add(dp);
   scene.add(g);
+  // 2 cypress trees per villa, flanking undercroft entry (brief Section 8)
+  const fwdX=Math.sin(ry)*(-9), fwdZ=Math.cos(ry)*(-9);
+  const rX=Math.cos(ry)*8,      rZ=-Math.sin(ry)*8;
+  addCypressAt(vx+rX+fwdX, vz+rZ+fwdZ);
+  addCypressAt(vx-rX+fwdX, vz-rZ+fwdZ);
 }
 
-function createVillaFallback(){
-  const g=new THREE.Group();
-  const bm=MATS.villaBody(); const rm=MATS.villaRoof();
-  const wm=MAT_WHITE_TRIM(); const gw=MAT_GLASS_WARM(.55);
-  // Undercroft plinth
-  g.add(box(16,2.1,13,new THREE.MeshStandardMaterial({color:0xb0a898,roughness:.8}),[0,1.05,0]));
-  // Main body
-  g.add(box(16,5.8,13,bm,[0,5.15,0]));
-  g.add(box(15,2.2,.4,gw,[0,5.5,-6.6]));
-  // Hip roof (Audit 3.4)
-  const roofPyramid=new THREE.ConeGeometry(12,3.5,4);
-  const rm2=new THREE.Mesh(roofPyramid,rm);
-  rm2.position.set(0,9.85,0); rm2.rotation.y=Math.PI/4; g.add(rm2);
-  // Cantilevered terrace slab
-  g.add(box(16,.18,4,wm,[0,4.03,-8.5],0,false));
-  return g;
-}
-
-//        LOFT TERRACES                                                                                                                                                                                        
-// Single row north crescent (NW arm + NE arm). West compound between villas and flats.
+//        LOFT TERRACES (brief Zone B + Zone N)                                                                                                             
+// Zone B: 88 units on crescent road, groups of 4, step=28m
+// Brief formula: const bow=8*(1-Math.min(1,(Math.abs(x)-82)/130));
+//               const z=-168-bow; skip abs(x)<82
+// Zone N: 2 south compound clusters at (-80,+170) and (+10,+170)
 function addLoftTerraces(){
-  // NORTH WEST COMPOUND ROW (above training field, z~-169)
-  // Two distinct E-W groups above the west compound
-  // Left group: above training field (x=-414 to -291)
-  for (let x = -400; x <= -295; x += 36) {
-    placeLoftGLB(x, -169, 0);   // face south
-  }
-  // Right group: above flats+loft zone (x=-248 to -163)
-  for (let x = -245; x <= -163; x += 36) {
-    placeLoftGLB(x, -169, 0);   // face south
-  }
-
-  // NORTH CRESCENT - SINGLE ROW, NW ARM
-  // Parabolic curve: z = -162 - abs(x)*0.05
-  // Stops at x=-110 (lake west edge ~x=-110)
-  for(let x=-310; x<=-110; x+=36){
-    const cz=-162-Math.abs(x)*.05;
+  // CRESCENT ROAD LOFT ROW (Zone B)
+  // West arm x=-310 to -82, step 28m, facing south
+  for(let x=-310;x<=-82;x+=28){
+    const bow=8*(1-Math.min(1,(Math.abs(x)-82)/130));
+    const cz=-168-bow;
     placeLoftGLB(x,cz,Math.PI);
   }
-  // NORTH CRESCENT - SINGLE ROW, NE ARM (x=+95 to +295)
-  for(let x=95; x<=295; x+=36){
-    const cz=-162-Math.abs(x)*.05;
+  // East arm x=+82 to +265, step 28m
+  for(let x=82;x<=265;x+=28){
+    const bow=8*(1-Math.min(1,(Math.abs(x)-82)/130));
+    const cz=-168-bow;
     placeLoftGLB(x,cz,Math.PI);
   }
-  // WEST COMPOUND LOFTS
-  // Pixel-measured: x=-218, z matches flat blocks (-14 and +112)
-  // Face east toward polo field
-  placeLoftGLB(-218, -14, -Math.PI/2);
-  placeLoftGLB(-218, 112, -Math.PI/2);
+
+  // ZONE N     South compound loft clusters (brief Section 5, Zone N)
+  placeLoftGLB(-80,170,0);  // SW cluster, face north
+  placeLoftGLB( 10,170,0);  // SE cluster, face north
 }
 
-function createLoftBlock(x,z,ry){
-  const g=new THREE.Group(); g.position.set(x,0,z); g.rotation.y=ry;
-  // Smaller than villa (Audit 5.3) - 10m wide per unit, 4 units = 40m total
-  const UNITS=4, UW=10.0, UD=11.0;
-  const TW=UNITS*UW;
-  const bm=MATS.loftBody(); const rm=MATS.loftRoof();
-  const gw=MAT_GLASS_WARM(.6); const tm=MAT_TIMBER();
-  // Ground floor stone base
-  g.add(box(TW,3.2,UD,new THREE.MeshStandardMaterial({color:0x9a8a78,roughness:.9}),[0,1.6,0]));
-  // Upper floor concrete
-  g.add(box(TW,3.2,UD,bm,[0,4.85,0]));
-  // Windows rhythm
-  for(let u=0;u<UNITS;u++){
-    const ux=-TW/2+UW/2+u*UW;
-    g.add(box(7.5,2.6,.06,gw,[ux,3.0,-UD/2-.03]));
-    g.add(box(7.5,2.5,.06,gw,[ux,4.85,-UD/2-.03]));
-    // Timber pier
-    g.add(box(.4,6.4,.4,tm,[ux-UW/2,3.2,-UD/2]));
-  }
-  // Flat roof (Audit 5.3 - orange tile material)
-  g.add(box(TW+.4,.4,UD+.4,rm,[0,6.65,0],0,false));
-  // Floor slab
-  g.add(box(TW+.2,.18,UD+.2,MAT_WHITE_TRIM(),[0,3.19,0],0,false));
-  return g;
-}
-
-//        WEST COMPOUND (Audit 6.1, 6.2, 7.1, 7.2)                                                                                                    
+//        WEST COMPOUND (brief Zone K)                                                                                                                                        
+// ORDER (field outward east to west):
+// 1. One villa column x=-162 (done in addVillaRing)
+// 2. Loft terraces x=-192 (N-S column, face east)
+// 3. Block of flats x=-248 (E-W oriented, brief: 80m x 28m)
+// 4. Training field x=-390, z=+195 centre (brief Section 2)
+// Stables: x=-375, z=+80 to +100 (brief Section 2, handled by GLB)
 function addWestCompound(){
   const gm=MAT_GRASS_FIELD(); const dm=MATS.safetyBrown();
   const PLOT=28;
 
-  // CORRECT WEST ORDER (field outward, east to west):
-  // 1. ONE villa column at x=-162 (done in addVillaRing     outer removed)
-  // 2. LOFT TERRACES at x=-192 (N-S, 7 units, face east toward field)
-  // 3. BLOCK OF FLATS at x=-248 (two GLB blocks, E-W oriented)
-  // 4. TRAINING FIELD at x=-347 (N-S, 100x200m)
-  // Stables: SW corner x=-395, z=+160 (south of training, NOT on top of it)
-
-  // LOFT TERRACES west column (x=-192, same x as old outer villas)
+  // LOFT TERRACES column (x=-192, N-S, face east)
   for(let i=0;i<7;i++){
-    const z=-82+i*PLOT;
-    placeLoftGLB(-192, z, Math.PI/2);  // face east toward polo field
+    placeLoftGLB(-192,-82+i*PLOT,Math.PI/2);
   }
 
-  // BLOCK OF FLATS (x=-248, two blocks)
+  // APARTMENT BLOCKS (x=-248, two blocks, brief: N z=-14, S z=+112... adjust to brief)
+  // Brief says apartment blocks at x~-248, orientation E-W
   placeAptGLB(-248, -14, Math.PI/2);
   placeAptGLB(-248, 112, Math.PI/2);
 
-  // TRAINING FIELD (x=-347, N-S oriented)
-  s(plane(120,220,dm,[-347,.06,42]));
-  s(plane(100,200,gm,[-347,.10,42]));
-  const lm=new THREE.MeshStandardMaterial({color:0xf5f0d5,roughness:.4});
-  for(const mz of[-66,42,149]) s(box(100,.05,.4,lm,[-347,.15,mz],0,false));
-  const pm2=MATS.railWhite();
-  for(const gz of[-66,149]) for(const pz of[0,-7.3,7.3])
-    s(cyl(.12,.12,3,8,pm2,[-347,1.5,gz+pz]));
+  // TRAINING FIELD (brief: x=-390, z=+195 centre, N-S oriented ~80m x 100m)
+  s(plane(120,130,dm,[-390,.06,195]));
+  s(plane(100,110,gm,[-390,.10,195]));
 
-  // West internal roads
+  // West compound internal roads (brief Section 7)
   const am=MATS.roadAsph();
-  s(plane(8,220,am,[-170,.12,20]));  // between villa (-162) and loft (-192)
-  s(plane(8,220,am,[-220,.12,20]));  // between loft (-192) and flats (-248)
-  s(plane(8,280,am,[-297,.12,20]));  // between flats (-248) and training (-347)
+  s(plane(8,220,am,[-170,.12,80]));   // x=-170 training field east
+  s(plane(8,320,am,[-220,.12,100]));  // x=-220 between lofts and flats
+  s(plane(8,280,am,[-300,.12,100]));  // x=-300 between flats and training
 }
 
-// East compound removed - east side uses standard villa inner+outer columns
-// NE crescent loft row handled in addLoftTerraces
-
-function createFlatBlock(x,z){ // fallback if GLB fails
-  const g=new THREE.Group(); g.position.set(x,0,z);
-  const bm=MATS.flatGrey(); const wm=MAT_WHITE_TRIM();
-  // 80m E-W x 28m N-S (Audit 6.2 correct orientation)
-  g.add(box(80,20,28,bm,[0,10,0]));
-  g.add(box(82,.3,30,wm,[0,20.1,0],0,false));
-  scene.add(g); return g;
-}
-
-//        STABLES (Audit 9.1, 9.2)                                                                                                                                                    
-// Stables: rendered by stables-mesh.glb (loadStablesGLB)
-function addStables(){ /* replaced by GLB */ }
-
-//        PADDOCK (Audit 8.1, 8.2)                                                                                                                                                    
+//        PADDOCK (brief Zone I: x~+212, post-and-rail)                                                                                     
 function addPaddock(){
-  // Pixel-measured: centre x=+267, z=+62. Size ~30m E-W x 92m N-S
-  const PX=267, PZ=62, PW=30, PD=92;
+  const PX=212, PZ=0, PW=30, PD=90;
   s(plane(PW,PD,MAT_GRASS_FIELD(),[PX,.07,PZ]));
   const post=MATS.railWhite(), rail=MATS.railWhite();
   const x1=PX-PW/2, x2=PX+PW/2, z1=PZ-PD/2, z2=PZ+PD/2;
   for(let fz=z1;fz<=z2;fz+=5){ s(cyl(.1,.1,1.7,6,post,[x1,.85,fz])); s(cyl(.1,.1,1.7,6,post,[x2,.85,fz])); }
   for(let fx=x1;fx<=x2;fx+=5){ s(cyl(.1,.1,1.7,6,post,[fx,.85,z1])); s(cyl(.1,.1,1.7,6,post,[fx,.85,z2])); }
-  s(box(.07,.07,PD,rail,[x1,1.1,PZ],0,false)); s(box(.07,.07,PD,rail,[x2,1.1,PZ],0,false));
-  s(box(PW,.07,.07,rail,[PX,1.1,z1],0,false)); s(box(PW,.07,.07,rail,[PX,1.1,z2],0,false));
-  s(box(.07,.07,PD,rail,[x1,1.6,PZ],0,false)); s(box(.07,.07,PD,rail,[x2,1.6,PZ],0,false));
-  s(box(PW,.07,.07,rail,[PX,1.6,z1],0,false)); s(box(PW,.07,.07,rail,[PX,1.6,z2],0,false));
-  // GREEN AREA (NE, x=+271, z=-107 to -53)     dense planting
-  s(plane(50,100,MATS.grassGreen(),[271,.06,-80]));
-  for(let tx=248;tx<=295;tx+=14) for(let tz=-153;tz<=-53;tz+=14)
-    addTreeAt(tx,.1,tz,.8+Math.random()*.6);
+  for(const h of [1.1,1.6]){
+    s(box(.07,.07,PD,rail,[x1,h,PZ],0,false)); s(box(.07,.07,PD,rail,[x2,h,PZ],0,false));
+    s(box(PW,.07,.07,rail,[PX,h,z1],0,false)); s(box(PW,.07,.07,rail,[PX,h,z2],0,false));
+  }
+  // East green area (brief Zone I: x=+240 to +290, z=-80 to -20)
+  s(plane(50,60,MATS.grassGreen(),[265,.06,-50]));
+  for(let tx=244;tx<=290;tx+=14) for(let tz=-78;tz<=-22;tz+=14)
+    addTreeAt(tx,.1,tz,.8+Math.random()*.5);
 }
 
+//        GAME PARK / PLAY GROUND (brief Zone I, beside paddock)                                                          
 function addGamePark(){
-  // Pixel-measured: x=+267, z=+146
-  s(plane(50,40,MAT_GRASS_FIELD(),[267,.07,146]));
-  // Play equipment
+  s(plane(40,36,MAT_GRASS_FIELD(),[212,.07,62]));
   const cols=[0xe8602a,0x2a88c8,0xe8c82a,0x4ac84a];
   for(let i=0;i<5;i++){
     const h=2.6+i*.4;
     s(box(3.2,h,3.2,new THREE.MeshStandardMaterial({color:cols[i%4],roughness:.6}),
-      [252+i*7,h/2,144+(i%2)*8]));
+      [197+i*7,h/2,60+(i%2)*7]));
   }
-  // Parking east: x=+243, z=+184
-  s(plane(45,25,MATS.roadAsph(),[243,.12,184]));
 }
 
-function addCommercialBlock(){
-  // Pixel-measured: x=+284, z=+184 (SE corner near Lagos Road)
-  const g=new THREE.Group(); g.position.set(284,0,184);
-  g.add(box(42,9,26,MATS.flatGrey(),[0,4.5,0]));
-  g.add(box(42,.55,28,MAT_WHITE_TRIM(),[0,9.3,0],0,false));
-  g.add(box(.4,8.5,22,MAT_GLASS(.5),[-21.2,4.5,0]));
-  // Second commercial block beside it
-  const g2=new THREE.Group(); g2.position.set(284,0,215);
-  g2.add(box(38,7,22,MATS.flatGrey(),[0,3.5,0]));
-  g2.add(box(38,.4,23,MAT_WHITE_TRIM(),[0,7.2,0],0,false));
-  scene.add(g); scene.add(g2);
+//        COMMERCIAL PLOTS (brief Zone A: LASG Road frontage, NE corner)                                     
+// Commercial Plot A: 917sqm, Plot B: 786sqm     at NE, LASG Road frontage
+// Brief: north-east, z~-185, x~+240
+function addCommercialPlots(){
+  const gm=MATS.flatGrey(); const wm=MAT_WHITE_TRIM();
+  // Plot A (917sqm ~30x30m)
+  const gA=new THREE.Group(); gA.position.set(240,0,-185);
+  gA.add(box(32,9,28,gm,[0,4.5,0]));
+  gA.add(box(32,.55,30,wm,[0,9.3,0],0,false));
+  scene.add(gA);
+  // Plot B (786sqm ~28x28m)
+  const gB=new THREE.Group(); gB.position.set(278,0,-185);
+  gB.add(box(28,8,26,gm,[0,4.0,0]));
+  gB.add(box(28,.5,28,wm,[0,8.1,0],0,false));
+  scene.add(gB);
 }
 
+//        SERVICE COMPOUND (brief Zone M)                                                                                                                               
 function addServiceCompound(){
-  // Pixel-measured positions from layout
-  // Service centre (RED) at world (-261, +245)
-  const redMat = new THREE.MeshStandardMaterial({color:0xcc2200,roughness:.7});
-  const greyM  = MATS.flatGrey();
-  const brickM = new THREE.MeshStandardMaterial({color:0xc8a870,roughness:.85});
-  const concM  = MATS.concrete();
-
-  // Red service building
-  s(box(18, 5.2, 14, redMat, [-261, 2.6, 195]));
-  s(box(19, .5,  15, new THREE.MeshStandardMaterial({color:0xaa1800,roughness:.7}), [-261, 5.3, 195], 0, false));
-
-  // Mechanical/electrical block at (-218, 245)
-  s(box(28, 6.5, 18, greyM,  [-218, 3.25, 195]));
-  // FM building
-  s(box(14, 4.2, 12, concM,  [-290, 2.1,  195]));
-  // Trucks parking
-  s(plane(30, 18, MATS.roadAsph(), [-320, .12, 195]));
-
-  // STABLES compound at (-383, 245) -- rows of stable blocks
-  s(plane(65, 45, MATS.cobble(), [-383, .02, 225]));  // courtyard
-  // Stable rows (4 blocks E-W)
-  for (let sx = -405; sx <= -355; sx += 18) {
-    const sg = new THREE.Group(); sg.position.set(sx, 0, 218);
-    sg.add(box(16, 4.0, 10, brickM, [0, 2.0, 0]));
-    const rL = box(17, .4, 13, MATS.stableRoof(), [0, 4.2, 0]);
-    rL.rotation.z = .18; sg.add(rL);
-    const rR = box(17, .4, 13, MATS.stableRoof(), [0, 4.2, 0]);
-    rR.rotation.z = -.18; sg.add(rR);
-    for (let dp = -6; dp <= 6; dp += 3)
-      sg.add(cyl(.12,.12,3.8,6,MAT_DARK_METAL(),[dp,2.0,-5.2]));
-    scene.add(sg);
-  }
-  // Vet clinic
-  s(box(12, 3.8, 10, concM,  [-350, 1.9, 218]));
-  // Storage building
-  s(box(14, 4.5, 10, greyM,  [-338, 2.25, 232]));
-
-  // MINI PADDOCKS x2 (pixel-measured: x=-389,-359, z=+186)
-  const fenceM = new THREE.MeshStandardMaterial({color:0xfcfaf5,roughness:.6});
-  for (const [px, pz] of [[-389, 170], [-359, 170]]) {
-    s(plane(22, 18, MAT_GRASS_FIELD(), [px, .06, pz]));
-    // Post and rail fence
-    for (let fz = pz-9; fz <= pz+9; fz += 4) {
+  const redMat=new THREE.MeshStandardMaterial({color:0xcc2200,roughness:.7});
+  const greyM=MATS.flatGrey(); const concM=MATS.concrete();
+  // Service centre (red building, brief: position ~x=-240, z=+100)
+  s(box(18,5.2,14,redMat,[-240,2.6,100]));
+  s(box(19,.5,15,new THREE.MeshStandardMaterial({color:0xaa1800,roughness:.7}),[-240,5.1,100],0,false));
+  // Mechanical & electrical (brief: x=-240, z=+100)
+  s(box(30,6.5,17,greyM,[-280,3.25,100]));
+  // FM/utility building
+  s(box(20,4,12,concM,[-310,2,95]));
+  // Quarantine / Vet (brief: x=-300, z=+95)
+  s(box(20,4,10,concM,[-300,2,95]));
+  // Trucks park (brief: x=-310, z=+120, hardstand)
+  s(plane(50,30,MATS.roadAsph(),[-310,.12,120]));
+  // Mini paddocks x2 (brief: beside stables)
+  const fenceM=MATS.railWhite();
+  for(const [px,pz] of [[-398,72],[-358,72]]){
+    s(plane(22,18,MAT_GRASS_FIELD(),[px,.06,pz]));
+    for(let fz=pz-9;fz<=pz+9;fz+=4){
       s(cyl(.08,.08,1.5,6,fenceM,[px-11,.75,fz]));
       s(cyl(.08,.08,1.5,6,fenceM,[px+11,.75,fz]));
     }
-    for (let fx = px-11; fx <= px+11; fx += 4) {
+    for(let fx=px-11;fx<=px+11;fx+=4){
       s(cyl(.08,.08,1.5,6,fenceM,[fx,.75,pz-9]));
       s(cyl(.08,.08,1.5,6,fenceM,[fx,.75,pz+9]));
     }
@@ -818,10 +690,41 @@ function addServiceCompound(){
   }
 }
 
-//        SYSTEMATIC LANDSCAPING (Audit 10.1, 10.2, 10.3)                                                                            
+//        GRASS CARD RING (brief: polo field perimeter density)                                                             
+function addGrassRing(){
+  const cards=[
+    ...addGrassField(0,-115,140,12,60),
+    ...addGrassField(0, 115,140,12,60),
+    ...addGrassField(-165,0,12,90,40),
+    ...addGrassField( 165,0,12,90,40),
+  ];
+  cards.forEach(card=>scene.add(card));
+}
+
+//        LANDSCAPING SYSTEM (brief Section 8)                                                                                                                
+function addLandscaping(){
+  // Lagos Road z=+215: 1 palm every 10m both sides (brief)
+  for(let x=-280;x<=280;x+=10){ addPalmSprite(x,.1,206,1.3); addPalmSprite(x,.1,224,1.2); }
+  // LASG Road z=-200: 1 palm every 12m inside edge
+  for(let x=-280;x<=280;x+=12) addPalmSprite(x,.1,-196,1.0);
+  // Ring road outer: 1 palm every 15m all 4 segments (brief)
+  for(let z=-100;z<=100;z+=15){ addPalmSprite(-160,.1,z,1.1); addPalmSprite(160,.1,z,1.1); }
+  for(let x=-150;x<=150;x+=15){ addPalmSprite(x,.1,-108,1.1); addPalmSprite(x,.1,108,1.1); }
+  // North canopy backdrop z=-205 to -220 (brief Section 8)
+  for(let x=-310;x<=310;x+=18) addTreeAt(x,.1,-210,.8+Math.random()*.5);
+  // East green area dense trees (brief Section 8: x=+240 to +290, z=-80 to -20)
+  for(let tx=244;tx<=290;tx+=14) for(let tz=-78;tz<=-22;tz+=14)
+    addTreeAt(tx,.1,tz,.7+Math.random()*.6);
+  // Perimeter belt
+  for(let x=-300;x<=300;x+=35){ addPalmSprite(x,.1,-225,.9); addPalmSprite(x,.1,218,.9); }
+  for(let z=-220;z<=218;z+=35){ addPalmSprite(-315,.1,z,.9); addPalmSprite(315,.1,z,.9); }
+  // Stables compound: 1 palm at each corner of each block (brief Section 8)
+  [[-395,78],[-395,100],[-355,78],[-355,100]].forEach(([x,z])=>addPalmSprite(x,.1,z,1.1));
+}
+
+//        PALM SPRITES                                                                                                                                                                                           
 const PALM_SRCS=["assets/palm-sprite.png","assets/palm-sprite-2.png"];
 const palmMats=[];
-
 function initPalmMats(){
   if(palmMats.length) return;
   const tl=new THREE.TextureLoader();
@@ -830,110 +733,78 @@ function initPalmMats(){
     palmMats.push(new THREE.MeshBasicMaterial({map:t,transparent:true,alphaTest:.1,depthWrite:false,side:THREE.DoubleSide}));
   });
 }
-
 function addPalmSprite(x,y,z,scale=1){
   initPalmMats();
   const mat=palmMats[Math.floor(Math.random()*palmMats.length)];
   const h=(13+Math.random()*5)*scale, w=h*.5;
-  for(const ry of[0,Math.PI/2]){
+  for(const ry of [0,Math.PI/2]){
     const m=new THREE.Mesh(new THREE.PlaneGeometry(w,h),mat);
     m.position.set(x,y+h/2,z); m.rotation.y=ry;
     scene.add(m); palmBillboards.push(m);
   }
 }
-
-function addCypressAt(x,z){ // slender accent tree per villa
-  cyl(.25,.38,5,8,MATS.stableRoof(),[x,2.5,z]);
-  const cone=new THREE.Mesh(new THREE.ConeGeometry(.7,4.5,8),MATS.hedgeGreen());
+function addCypressAt(x,z){
+  const trunkM=new THREE.MeshStandardMaterial({color:0x4a3010,roughness:.9});
+  const coneM=MATS.hedgeGreen();
+  s(cyl(.18,.24,5,8,trunkM,[x,2.5,z]));
+  const cone=new THREE.Mesh(new THREE.ConeGeometry(.65,4.5,8),coneM);
   cone.position.set(x,5.5,z); cone.castShadow=true; scene.add(cone);
 }
-
-function addTreeAt(x,y,z,scale=1){ // generic tropical tree
-  cyl(.15,.22,4*scale,8,new THREE.MeshStandardMaterial({color:0x5c3c18,roughness:.88}),[x,2*scale,z]);
-  const cr=new THREE.Mesh(new THREE.SphereGeometry(1.8*scale,8,6),MATS.grassGreen());
-  cr.position.set(x,(4+1.8)*scale,z); cr.castShadow=true; scene.add(cr);
+function addTreeAt(x,y,z,scale=1){
+  const trunkM=new THREE.MeshStandardMaterial({color:0x5c3c18,roughness:.88});
+  const leafM=MATS.grassGreen();
+  s(cyl(.14,.2,4*scale,8,trunkM,[x,2*scale,z]));
+  const cr=new THREE.Mesh(new THREE.SphereGeometry(1.6*scale,8,6),leafM);
+  cr.position.set(x,(4+1.6)*scale,z); cr.castShadow=true; scene.add(cr);
 }
 
-function addLandscaping(){
-  // Lagos Road palm avenue (Audit 10.1)
-  for(let x=-280;x<=280;x+=28){ addPalmSprite(x,.1,206,1.3); addPalmSprite(x,.1,224,1.2); }
-
-  // Ring road palms outer side (Audit 10.1)
-  for(let z=-95;z<=95;z+=40){ addPalmSprite(-160,.1,z,1.1); addPalmSprite(160,.1,z,1.1); }
-  for(let x=-150;x<=150;x+=40){ addPalmSprite(x,.1,-102,1.1); addPalmSprite(x,.1,102,1.1); }
-
-  // North backdrop tree canopy (Audit 10.2)
-  for(let x=-310;x<=310;x+=18){
-    addTreeAt(x,.1,-210,.8+Math.random()*.5);
-  }
-
-  // Perimeter tree belt (all four sides)
-  for(let x=-300;x<=300;x+=35){ addPalmSprite(x,.1,-225,.9+Math.random()*.3); addPalmSprite(x,.1,215,.9+Math.random()*.3); }
-  for(let z=-220;z<=215;z+=35){ addPalmSprite(-310,.1,z,.9+Math.random()*.25); addPalmSprite(310,.1,z,.9+Math.random()*.25); }
-
-  // Lake shore palms
-  // Lake shore palms removed - not realistic to have palms at water edge
-
-  // Clubhouse avenue flanks
-  for(const pz of[95,103,111,119]){ addPalmSprite(-16,.1,pz,1.2); addPalmSprite(16,.1,pz,1.2); }
-
-  // East green area dense planting (Audit 10.3)
-  for(let tx=240;tx<=290;tx+=7) for(let tz=-80;tz<=-20;tz+=7) addTreeAt(tx,.1,tz,.7+Math.random()*.6);
-
-  // Stables compound trees
-  [[-400,78],[-400,100],[-340,78],[-340,100]].forEach(([x,z])=>addPalmSprite(x,.1,z,1.1));
-}
-
-// PLOT RESERVATION SYSTEM
-function addPlotOverlay(x, z, ry, plotKey, villaClone){
-  const mat = new THREE.MeshStandardMaterial({color:0x00ff88,transparent:true,opacity:.35});
-  const overlay = new THREE.Mesh(new THREE.PlaneGeometry(20,18), mat);
-  overlay.rotation.x = -Math.PI/2;
-  overlay.rotation.y = ry;
-  overlay.position.set(x, .25, z);
-  overlay.userData.plotKey       = plotKey;
-  overlay.userData.isPlotOverlay = true;
-  overlay.userData.villaClone    = villaClone;
+//        PLOT RESERVATION SYSTEM                                                                                                                                                          
+function addPlotOverlay(x,z,ry,plotKey,villaClone){
+  const mat=new THREE.MeshStandardMaterial({color:0x00ff88,transparent:true,opacity:.35});
+  const overlay=new THREE.Mesh(new THREE.PlaneGeometry(20,18),mat);
+  overlay.rotation.x=-Math.PI/2; overlay.rotation.y=ry;
+  overlay.position.set(x,.25,z);
+  overlay.userData.plotKey=plotKey;
+  overlay.userData.isPlotOverlay=true;
+  overlay.userData.villaClone=villaClone;
   scene.add(overlay);
-  plotRegistry.set(plotKey, { status:"available", overlay, villaClone, x, z, ry });
+  plotRegistry.set(plotKey,{status:"available",overlay,villaClone,x,z,ry});
 }
 
 export function reservePlot(plotKey){
-  const plot = plotRegistry.get(plotKey);
-  if (!plot || plot.status === "reserved") return false;
-  plot.status = "reserved";
-  if (plot.villaClone) plot.villaClone.traverse(child => {
-    if (child.isMesh && child.material){
-      child.material = child.material.clone();
-      child.material.color.set(0x888888);
-      child.material.opacity = .7;
-      child.material.transparent = true;
+  const plot=plotRegistry.get(plotKey);
+  if(!plot||plot.status==="reserved") return false;
+  plot.status="reserved";
+  if(plot.villaClone) plot.villaClone.traverse(c=>{
+    if(c.isMesh&&c.material){
+      c.material=c.material.clone();
+      c.material.color.set(0x888888);
+      c.material.opacity=.7; c.material.transparent=true;
     }
   });
-  if (plot.overlay){
-    plot.overlay.material = new THREE.MeshStandardMaterial({color:0xff4444,transparent:true,opacity:.5});
+  if(plot.overlay){
+    plot.overlay.material=new THREE.MeshStandardMaterial({color:0xff4444,transparent:true,opacity:.5});
   }
-  plotRegistry.set(plotKey, plot);
-  return true;
+  plotRegistry.set(plotKey,plot); return true;
 }
 
 export function getPlotAtRay(raycaster){
-  const overlays = [];
-  scene.traverse(o => { if (o.userData.isPlotOverlay) overlays.push(o); });
-  const hits = raycaster.intersectObjects(overlays, false);
-  return hits.length > 0 ? hits[0].object.userData.plotKey : null;
+  const overlays=[];
+  scene.traverse(o=>{if(o.userData.isPlotOverlay) overlays.push(o);});
+  const hits=raycaster.intersectObjects(overlays,false);
+  return hits.length>0 ? hits[0].object.userData.plotKey : null;
 }
 
-//        TICK
+//        TICK                                                                                                                                                                                                                   
 export function tickScene(elapsed,camera){
-  tickWater(waterMeshes, elapsed);
+  tickWater(waterMeshes,elapsed);
   tickGrass(camera);
   palmBillboards.forEach(s=>{
     s.rotation.y=Math.atan2(camera.position.x-s.position.x,camera.position.z-s.position.z);
   });
 }
 
-export function getRenderer() { return renderer; }
-export function getScene()    { return scene;    }
-export function getCamera()   { return camera;   }
-export function getClock()    { return clock;    }
+export function getRenderer(){ return renderer; }
+export function getScene()   { return scene;    }
+export function getCamera()  { return camera;   }
+export function getClock()   { return clock;    }
