@@ -112,7 +112,7 @@ function buildLighting() {
   sunLight.shadow.camera.left = sunLight.shadow.camera.bottom = -420;
   sunLight.shadow.camera.right = sunLight.shadow.camera.top   =  420;
   sunLight.shadow.camera.far   = 1000;
-  sunLight.shadow.mapSize.set(4096, 4096);
+  sunLight.shadow.mapSize.set(2048, 2048); // 2048 is PS3-quality with 2x perf gain
   sunLight.shadow.bias        = -0.0002;
   sunLight.shadow.normalBias  =  0.02;
   sunLight.shadow.radius      =  3.5;
@@ -219,7 +219,8 @@ function buildEnvironment(){
   addClubhouse();
   addVillaRing();        // GLB-based, with plot reservation
   addLoftTerraces();
-  addWestCompound();     // flats GLB + training field
+  addWestCompound();     // west: flats GLB + training field
+  addEastCompound();     // east: loft column + flats + training field
   addStables();
   addPaddock();
   addGamePark();
@@ -246,10 +247,10 @@ function addGround(){
 // GRASS CARD RING (alpha blades around field perimeter)
 function addGrassRing(){
   const cards = [
-    ...addGrassField( 0, -115, 140, 12, 250),
-    ...addGrassField( 0,  115, 140, 12, 250),
-    ...addGrassField(-165,  0,  12, 90, 160),
-    ...addGrassField( 165,  0,  12, 90, 160),
+    ...addGrassField( 0, -115, 140, 12, 120),
+    ...addGrassField( 0,  115, 140, 12, 120),
+    ...addGrassField(-165,  0,  12, 90,  80),
+    ...addGrassField( 165,  0,  12, 90,  80),
   ];
   cards.forEach(card => scene.add(card));
 }
@@ -556,15 +557,11 @@ function addVillaRing(){
     const z=-82+i*PLOT;
     placeVillaWithLandscape(-192,z,Math.PI/2);
   }
-  // EAST INNER column x=+172 (pixel-measured, was +162)
+  // EAST - SINGLE villa column x=+162 (directly beside polo field pony line)
+  // NOTE: East side has ONE villa column only. Behind it: lofts, then flats, then training.
   for(let i=0;i<8;i++){
     const z=-96+i*PLOT;
-    placeVillaWithLandscape(172,z,-Math.PI/2);
-  }
-  // EAST OUTER column x=+192 (correct)
-  for(let i=0;i<7;i++){
-    const z=-82+i*PLOT;
-    placeVillaWithLandscape(192,z,-Math.PI/2);
+    placeVillaWithLandscape(162,z,-Math.PI/2);
   }
   // ONE continuous north row bowing over the lake.
   // Lake centre x=+30, radius=90m, peak bow=17m northward at lake centre.
@@ -658,12 +655,7 @@ function addLoftTerraces(){
     const cz=-162-Math.abs(x)*.05;
     placeLoftGLB(x,cz,Math.PI);
   }
-  // NORTH CRESCENT - SINGLE ROW, NE ARM
-  // Pixel-measured start x=+153 (was +95 which overlapped lake)
-  for(let x=153; x<=295; x+=36){
-    const cz=-162-Math.abs(x)*.05;
-    placeLoftGLB(x,cz,Math.PI);
-  }
+  // NE ARM: handled in addEastCompound() to keep east zone logic together
   // WEST COMPOUND LOFTS
   // Pixel-measured: x=-218, z matches flat blocks (-14 and +112)
   // Face east toward polo field
@@ -711,6 +703,51 @@ function addWestCompound(){
   placeAptGLB(-275, 112, Math.PI/2);
 }
 
+function addEastCompound(){
+  // EAST SIDE ORDER (field outward, west to east):
+  // 1. Villas at x=+162 (done in addVillaRing)
+  // 2. Loft terraces at x=+192 - run N-S beside villa column
+  // 3. Block of flats at x=+248 - two blocks, E-W oriented
+  // 4. Training field at x=+347 - N-S, mirror of west training field
+
+  const gm=MAT_GRASS_FIELD(); const dm=MATS.safetyBrown();
+  const PLOT=28;
+
+  // LOFT TERRACES (x=+192, N-S column, facing west toward field)
+  // 7 loft blocks stepping north to south alongside villa column
+  for(let i=0;i<7;i++){
+    const z=-82+i*PLOT;
+    placeLoftGLB(192, z, -Math.PI/2); // face west (toward field)
+  }
+
+  // BLOCKS OF FLATS (x=+248, two blocks)
+  // N block z=-14, S block z=+112 (mirroring west side)
+  placeAptGLB(248, -14, Math.PI/2);
+  placeAptGLB(248, 112, Math.PI/2);
+
+  // EAST TRAINING FIELD (x=+347, N-S oriented, mirror of west)
+  s(plane(120,220,dm,[347,.06,42]));
+  s(plane(100,200,gm,[347,.10,42]));
+  // Yard markings
+  const lm=new THREE.MeshStandardMaterial({color:0xf5f0d5,roughness:.4});
+  for(const mz of[-55,42,149]) s(box(100,.05,.4,lm,[347,.15,mz],0,false));
+  // Goal posts
+  const pm=MATS.railWhite();
+  for(const gz of[-66,149]) for(const pz of[0,-7.3,7.3])
+    s(cyl(.12,.12,3,8,pm,[347,1.5,gz+pz]));
+
+  // EAST internal roads (between each zone)
+  const am=MATS.roadAsph();
+  s(plane(8,220,am,[177,.12,20]));  // road between villas (162) and lofts (192)
+  s(plane(8,220,am,[220,.12,20]));  // road between lofts (192) and flats (248)
+  s(plane(8,220,am,[298,.12,20]));  // road between flats (248) and training (347)
+  // North strip east loft row (crescent road level)
+  for(let x=153; x<=295; x+=36){
+    const cz=-162-Math.abs(x)*.05;
+    placeLoftGLB(x,cz,Math.PI);
+  }
+}
+
 function createFlatBlock(x,z){ // fallback if GLB fails
   const g=new THREE.Group(); g.position.set(x,0,z);
   const bm=MATS.flatGrey(); const wm=MAT_WHITE_TRIM();
@@ -752,7 +789,7 @@ function addPaddock(){
   s(box(PW,.07,.07,rail,[PX,1.6,z1],0,false)); s(box(PW,.07,.07,rail,[PX,1.6,z2],0,false));
   // GREEN AREA (NE, x=+271, z=-107 to -53)     dense planting
   s(plane(50,100,MATS.grassGreen(),[271,.06,-80]));
-  for(let tx=248;tx<=295;tx+=7) for(let tz=-153;tz<=-53;tz+=7)
+  for(let tx=248;tx<=295;tx+=14) for(let tz=-153;tz<=-53;tz+=14)
     addTreeAt(tx,.1,tz,.8+Math.random()*.6);
 }
 
