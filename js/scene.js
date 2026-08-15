@@ -72,6 +72,8 @@ export function initScene(canvas) {
   loadVillaGLB();
   loadApartmentGLB();
   loadLoftGLB();
+  loadClubhouseGLB();
+  loadStablesGLB();
   return { scene, renderer, camera, clock };
 }
 
@@ -109,13 +111,13 @@ function buildLighting() {
   sunLight = new THREE.DirectionalLight(0xffe8b0, 2.8);
   sunLight.position.set(-180, 200, 100);
   sunLight.castShadow = true;
-  sunLight.shadow.camera.left = sunLight.shadow.camera.bottom = -420;
-  sunLight.shadow.camera.right = sunLight.shadow.camera.top   =  420;
-  sunLight.shadow.camera.far   = 1000;
-  sunLight.shadow.mapSize.set(2048, 2048); // 2048 is PS3-quality with 2x perf gain
-  sunLight.shadow.bias        = -0.0002;
+  sunLight.shadow.camera.left = sunLight.shadow.camera.bottom = -300;
+  sunLight.shadow.camera.right = sunLight.shadow.camera.top   =  300;
+  sunLight.shadow.camera.far   = 700;
+  sunLight.shadow.mapSize.set(1024, 1024); // 1024 - significant perf gain
+  sunLight.shadow.bias        = -0.0003;
   sunLight.shadow.normalBias  =  0.02;
-  sunLight.shadow.radius      =  3.5;
+  sunLight.shadow.radius      =  2;
   scene.add(sunLight);
   // Soft fill
   const fill = new THREE.DirectionalLight(0xb8d0e8, 0.45);
@@ -246,10 +248,10 @@ function addGround(){
 // GRASS CARD RING (alpha blades around field perimeter)
 function addGrassRing(){
   const cards = [
-    ...addGrassField( 0, -115, 140, 12, 120),
-    ...addGrassField( 0,  115, 140, 12, 120),
-    ...addGrassField(-165,  0,  12, 90,  80),
-    ...addGrassField( 165,  0,  12, 90,  80),
+    ...addGrassField( 0, -115, 140, 12, 60),
+    ...addGrassField( 0,  115, 140, 12, 60),
+    ...addGrassField(-165,  0,  12, 90, 40),
+    ...addGrassField( 165,  0,  12, 90, 40),
   ];
   cards.forEach(card => scene.add(card));
 }
@@ -358,18 +360,21 @@ function addRoads(){
 //        LAKE (north, between safety zone and tier1 villas)                                                                         
 function addLake(){
   const wm=createWaterMat();
-  // Crescent shape: offset east (lake centre x=-10 per measurements)
-  const lb=new THREE.Mesh(new THREE.BoxGeometry(195,.35,22),wm);
-  lb.position.set(30,.16,-115); lb.receiveShadow=true; scene.add(lb); waterMeshes.push(lb);
-  // West cap x=30-90=-60, east cap x=30+90=120
-  for(const[ex,sc2] of[[-60,.9],[120,1.0]]){
-    const ep=new THREE.Mesh(new THREE.SphereGeometry(13,16,4),wm);
-    ep.position.set(ex,.05,-115); ep.scale.set(1,.2,sc2); scene.add(ep); waterMeshes.push(ep);
-  }
-  // Shore grass: south shore z=-104, north shore z=-126
-  const sg=MATS.grassGreen();
-  s(plane(220,6,sg,[30,.12,-104]));
-  s(plane(220,6,sg,[30,.12,-126]));
+  // Flat PlaneGeometry only - no SphereGeometry caps (those cause the edge bulges)
+  const main=new THREE.Mesh(new THREE.PlaneGeometry(190,22),wm);
+  main.rotation.x=-Math.PI/2; main.position.set(30,.15,-115);
+  main.receiveShadow=true; scene.add(main); waterMeshes.push(main);
+  // West crescent arm (angled plane, no bump)
+  const wA=new THREE.Mesh(new THREE.PlaneGeometry(28,16),wm);
+  wA.rotation.x=-Math.PI/2; wA.rotation.z=.18; wA.position.set(-67,.14,-116);
+  scene.add(wA); waterMeshes.push(wA);
+  // East crescent arm
+  const eA=new THREE.Mesh(new THREE.PlaneGeometry(28,16),wm);
+  eA.rotation.x=-Math.PI/2; eA.rotation.z=-.12; eA.position.set(118,.14,-115);
+  scene.add(eA); waterMeshes.push(eA);
+  // Shore grass
+  s(plane(230,5,MATS.grassGreen(),[30,.12,-103]));
+  s(plane(230,5,MATS.grassGreen(),[30,.12,-128]));
 }
 
 function addEastLake(){
@@ -384,61 +389,9 @@ function addEastLake(){
 }
 
 //        CLUBHOUSE (Audit 4.1, 4.2, 4.3)                                                                                                                               
-function addClubhouse(){
-  const g=new THREE.Group(); g.position.set(0,0,108);
-  const cm=MATS.clubWhite();
-  const gw=MAT_GLASS_WARM(.55);
-  const gm=MAT_GLASS(.48);
-  const tm=MAT_TIMBER();
-  const wm=MAT_WHITE_TRIM();
-  const gld=MAT_GOLD();
+// Clubhouse: rendered by clubhouse-mesh.glb (loadClubhouseGLB)
+function addClubhouse(){ /* replaced by GLB */ }
 
-  // Main building 110m wide (Audit 4.2)
-  g.add(box(110,4.8,26,cm,[0,2.4,0]));
-  // Bleachers facing north
-  for(let i=0;i<8;i++)
-    g.add(box(92,.45,2.2,new THREE.MeshStandardMaterial({color:0xd0c8b8,roughness:.7}),
-      [0,.55+i*.52,-12.5+i*1.6],0,false));
-  for(let x=-50;x<=50;x+=12) g.add(box(1.1,5.2,1.1,cm,[x,2.7,-13]));
-  // Floor 1
-  g.add(box(122,4.6,27,cm,[0,7.3,.5]));
-  g.add(box(110,3.4,.45,gw,[0,7.3,-13.2]));
-  g.add(box(110,.95,.3,gld,[0,5.3,-13.2],0,false));
-  for(const ux of[-35,0,35]) addUmbrella(g,[ux,5.9,-10]);
-  // Floor 2
-  g.add(box(130,4.4,28,cm,[0,12.1,1.0]));
-  g.add(box(118,3.4,.45,gm,[0,12.1,-13.4]));
-  // Slab overhangs
-  [4.85,9.65,14.55].forEach(y=>g.add(box(135,.65,30,wm,[0,y,1.0],0,false)));
-  for(let x=-55;x<=55;x+=12){
-    g.add(box(.7,4.5,.7,wm,[x,7.3,-13]));
-    g.add(box(.7,4.3,.7,wm,[x,12.1,-13.2]));
-  }
-  for(const side of[-48,48]){
-    g.add(box(16,6.5,16,cm,[side,18.0,.5]));
-    g.add(box(17.5,.7,17.5,wm,[side,21.5,.5],0,false));
-  }
-  g.add(box(14,5.2,1.0,tm,[0,2.6,-13.5]));
-  scene.add(g);
-
-  // PARKING both sides (Audit 4.1) - 50x20m each
-  const am=MATS.roadAsph();
-  const bayM=MATS.railWhite();
-  s(plane(50,20,am,[-68,.13,128]));
-  s(plane(50,20,am,[ 68,.13,128]));
-  for(const bx of[-68,68]) for(let i=-22;i<=22;i+=4.5)
-    s(box(.06,.04,5.5,bayM,[bx+i,.16,128],0,false));
-
-  // Clubhouse avenue - double row of 8 palms (Audit 10.1)
-  for(let pz=93;pz<=113;pz+=8){ addPalmSprite(-12,.1,pz,1.3); addPalmSprite(12,.1,pz,1.3); }
-}
-
-function addUmbrella(parent,pos){
-  const g=new THREE.Group(); g.position.set(...pos);
-  g.add(cyl(.08,.08,3.0,6,MAT_GOLD(),[0,1.5,0]));
-  g.add(cyl(3.2,3.6,.45,16,new THREE.MeshStandardMaterial({color:0xf0e8d8,roughness:.7}),[0,3.2,0]));
-  parent.add(g);
-}
 
 // GLB LOADING SYSTEM
 // Pattern: load once, store template, clone per placement
@@ -455,57 +408,27 @@ function makeDracoLoader() {
 }
 
 function loadVillaGLB(){
-  makeDracoLoader().load("assets/villa-mesh.glb", (gltf) => {
-    gltf.scene.scale.setScalar(VILLA_SCALE);
-    gltf.scene.position.y = VILLA_Y;
-    gltf.scene.traverse(child => {
-      if (child.isMesh) { child.castShadow = true; child.receiveShadow = true; }
-    });
-    villaGLBTemplate = gltf.scene;
-    villaGLBScene    = gltf.scene;
-    console.log("Villa GLB loaded");
-    pendingVillas.forEach(p => placeVillaGLB(p.x, p.z, p.ry, p.plotKey));
-    pendingVillas = [];
-  }, undefined, err => {
-    console.error("Villa GLB failed:", err);
-    pendingVillas = [];
-  });
+  loadOneGLB("assets/villa-mesh.glb", VILLA_SCALE, VILLA_Y, tmpl=>{
+    villaGLBTemplate=tmpl; villaGLBScene=tmpl;
+    pendingVillas.forEach(p=>placeVillaGLB(p.x,p.z,p.ry,p.plotKey));
+    pendingVillas=[]; console.log("Villa GLB OK");
+  }, ()=>{pendingVillas=[];});
 }
 
 function loadApartmentGLB(){
-  makeDracoLoader().load("assets/apartment-mesh.glb", (gltf) => {
-    gltf.scene.scale.setScalar(APT_SCALE);
-    gltf.scene.position.y = APT_Y;
-    gltf.scene.traverse(child => {
-      if (child.isMesh) { child.castShadow = true; child.receiveShadow = true; }
-    });
-    aptGLBTemplate = gltf.scene;
-    aptGLBScene    = gltf.scene;
-    console.log("Apartment GLB loaded");
-    pendingApts.forEach(p => placeAptGLB(p.x, p.z, p.ry));
-    pendingApts = [];
-  }, undefined, err => {
-    console.error("Apt GLB failed:", err);
-    pendingApts = [];
-  });
+  loadOneGLB("assets/apartment-mesh.glb", APT_SCALE, APT_Y, tmpl=>{
+    aptGLBTemplate=tmpl; aptGLBScene=tmpl;
+    pendingApts.forEach(p=>placeAptGLB(p.x,p.z,p.ry));
+    pendingApts=[]; console.log("Apt GLB OK");
+  }, ()=>{pendingApts=[];});
 }
 
 function loadLoftGLB(){
-  makeDracoLoader().load("assets/loft-mesh.glb", (gltf) => {
-    gltf.scene.scale.setScalar(LOFT_SCALE);
-    gltf.scene.position.y = LOFT_Y;
-    gltf.scene.traverse(child => {
-      if (child.isMesh) { child.castShadow = true; child.receiveShadow = true; }
-    });
-    loftGLBTemplate = gltf.scene;
-    loftGLBScene    = gltf.scene;
-    console.log("Loft GLB loaded");
-    pendingLofts.forEach(p => placeLoftGLB(p.x, p.z, p.ry));
-    pendingLofts = [];
-  }, undefined, err => {
-    console.error("Loft GLB failed:", err);
-    pendingLofts = [];
-  });
+  loadOneGLB("assets/loft-mesh.glb", LOFT_SCALE, LOFT_Y, tmpl=>{
+    loftGLBTemplate=tmpl; loftGLBScene=tmpl;
+    pendingLofts.forEach(p=>placeLoftGLB(p.x,p.z,p.ry));
+    pendingLofts=[]; console.log("Loft GLB OK");
+  }, ()=>{pendingLofts=[];});
 }
 
 function placeVillaGLB(x, z, ry, plotKey) {
@@ -540,6 +463,28 @@ function placeLoftGLB(x, z, ry) {
   container.rotation.y = ry;
   container.add(loftGLBTemplate.clone(true));
   scene.add(container);
+}
+
+function loadClubhouseGLB(){
+  // Scale: 60.975x -> 110m wide, 29.6m tall, 50m deep. Y=13.38m
+  loadOneGLB("assets/clubhouse-mesh.glb", 60.975, 13.38, tmpl => {
+    clubGLBTemplate = tmpl;
+    // Place clubhouse at x=0, z=+108
+    const g=new THREE.Group(); g.position.set(0,0,108); g.rotation.y=Math.PI;
+    g.add(tmpl.clone(true)); scene.add(g);
+    console.log("Clubhouse GLB loaded");
+  });
+}
+
+function loadStablesGLB(){
+  // Scale: 18.846x -> 36m wide, 4.9m tall. Y=2.50m
+  loadOneGLB("assets/stables-mesh.glb", 18.846, 2.50, tmpl => {
+    stablesGLBTemplate = tmpl;
+    // Place stables compound at SW: x=-380, z=+185
+    const g=new THREE.Group(); g.position.set(-380,0,185);
+    g.add(tmpl.clone(true)); scene.add(g);
+    console.log("Stables GLB loaded");
+  });
 }
 
 //        VILLA RING (all using GLB mesh, standalone plots, Audit 3.1-3.6)                               
@@ -743,21 +688,8 @@ function createFlatBlock(x,z){ // fallback if GLB fails
 }
 
 //        STABLES (Audit 9.1, 9.2)                                                                                                                                                    
-function addStables(){
-  // Courtyard floor (Audit 9.2)
-  // Stables: SW corner, south of training field, at x=-395, z=+160-210
-  s(plane(90,70,MATS.cobble(),[-380,.02,185]));
-  [[-395,175],[-395,195],[-362,175],[-362,195]].forEach(([x,z])=>{
-    const g=new THREE.Group(); g.position.set(x,0,z);
-    const brickM=PBR.brick(); brickM.color.set(0xC4A882);
-    g.add(box(34,4.2,12,brickM,[0,2.1,0]));
-    const rL=box(36,.45,16,MATS.stableRoof(),[0,4.6,0]); rL.rotation.z=.17; g.add(rL);
-    const rR=box(36,.45,16,MATS.stableRoof(),[0,4.6,0]); rR.rotation.z=-.17; g.add(rR);
-    g.add(box(36,.28,.28,MATS.stableRoof(),[0,5.9,0]));
-    for(let px=-14;px<=14;px+=7) g.add(cyl(.16,.16,4.4,8,MAT_DARK_METAL(),[px,2.2,-6.2]));
-    scene.add(g);
-  });
-}
+// Stables: rendered by stables-mesh.glb (loadStablesGLB)
+function addStables(){ /* replaced by GLB */ }
 
 //        PADDOCK (Audit 8.1, 8.2)                                                                                                                                                    
 function addPaddock(){
