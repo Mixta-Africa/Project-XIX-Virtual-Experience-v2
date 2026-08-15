@@ -551,11 +551,7 @@ function addVillaRing(){
     const z=-96+i*PLOT;
     placeVillaWithLandscape(-162,z,Math.PI/2);
   }
-  // WEST OUTER column x=-192, staggered by PLOT/2 (7 units)
-  for(let i=0;i<7;i++){
-    const z=-82+i*PLOT;
-    placeVillaWithLandscape(-192,z,Math.PI/2);
-  }
+  // WEST outer column replaced by loft terraces (handled in addWestCompound)
   // EAST INNER column x=+162 (8 units, facing west toward field)
   for(let i=0;i<8;i++){
     const z=-96+i*PLOT;
@@ -701,38 +697,37 @@ function addWestCompound(){
   const gm=MAT_GRASS_FIELD(); const dm=MATS.safetyBrown();
   const PLOT=28;
 
-  // WEST SIDE ORDER (field outward, east to west):
-  // 1. Villas at x=-162 inner, x=-192 outer (done in addVillaRing)
-  // 2. Loft terraces at x=-218, N-S column facing east toward field
-  // 3. Block of flats at x=-275 (two GLB blocks)
-  // 4. Training field at x=-347
+  // CORRECT WEST ORDER (field outward, east to west):
+  // 1. ONE villa column at x=-162 (done in addVillaRing     outer removed)
+  // 2. LOFT TERRACES at x=-192 (N-S, 7 units, face east toward field)
+  // 3. BLOCK OF FLATS at x=-248 (two GLB blocks, E-W oriented)
+  // 4. TRAINING FIELD at x=-347 (N-S, 100x200m)
+  // Stables: SW corner x=-395, z=+160 (south of training, NOT on top of it)
 
-  // LOFT TERRACES west column (x=-218, N-S, face east)
+  // LOFT TERRACES west column (x=-192, same x as old outer villas)
   for(let i=0;i<7;i++){
     const z=-82+i*PLOT;
-    placeLoftGLB(-218, z, Math.PI/2);
+    placeLoftGLB(-192, z, Math.PI/2);  // face east toward polo field
   }
 
-  // BLOCKS OF FLATS west compound
-  placeAptGLB(-275, -14, Math.PI/2);
-  placeAptGLB(-275, 112, Math.PI/2);
+  // BLOCK OF FLATS (x=-248, two blocks)
+  placeAptGLB(-248, -14, Math.PI/2);
+  placeAptGLB(-248, 112, Math.PI/2);
 
-  // TRAINING FIELD (west, N-S oriented, x=-347)
+  // TRAINING FIELD (x=-347, N-S oriented)
   s(plane(120,220,dm,[-347,.06,42]));
   s(plane(100,200,gm,[-347,.10,42]));
-
-  // Yard markings
   const lm=new THREE.MeshStandardMaterial({color:0xf5f0d5,roughness:.4});
   for(const mz of[-66,42,149]) s(box(100,.05,.4,lm,[-347,.15,mz],0,false));
   const pm2=MATS.railWhite();
   for(const gz of[-66,149]) for(const pz of[0,-7.3,7.3])
     s(cyl(.12,.12,3,8,pm2,[-347,1.5,gz+pz]));
 
-  // West internal roads between zones
+  // West internal roads
   const am=MATS.roadAsph();
-  s(plane(8,220,am,[-205,.12,20]));  // between inner villa (-192) and loft (-218)
-  s(plane(8,220,am,[-247,.12,20]));  // between loft (-218) and flats (-275)
-  s(plane(8,220,am,[-311,.12,20]));  // between flats (-275) and training (-347)
+  s(plane(8,220,am,[-170,.12,20]));  // between villa (-162) and loft (-192)
+  s(plane(8,220,am,[-220,.12,20]));  // between loft (-192) and flats (-248)
+  s(plane(8,280,am,[-297,.12,20]));  // between flats (-248) and training (-347)
 }
 
 // East compound removed - east side uses standard villa inner+outer columns
@@ -750,9 +745,9 @@ function createFlatBlock(x,z){ // fallback if GLB fails
 //        STABLES (Audit 9.1, 9.2)                                                                                                                                                    
 function addStables(){
   // Courtyard floor (Audit 9.2)
-  s(plane(90,70,MATS.cobble(),[-358,.02,90]));
-  // 4 stable blocks with pitched roof and brick material (Audit 9.1)
-  [[-375,80],[-375,100],[-342,80],[-342,100]].forEach(([x,z])=>{
+  // Stables: SW corner, south of training field, at x=-395, z=+160-210
+  s(plane(90,70,MATS.cobble(),[-380,.02,185]));
+  [[-395,175],[-395,195],[-362,175],[-362,195]].forEach(([x,z])=>{
     const g=new THREE.Group(); g.position.set(x,0,z);
     const brickM=PBR.brick(); brickM.color.set(0xC4A882);
     g.add(box(34,4.2,12,brickM,[0,2.1,0]));
