@@ -175,6 +175,24 @@ export function openProductPanel(productKey) {
   panel.querySelector(".pp-tagline").textContent = product.tagline;
   panel.querySelector(".pp-desc").textContent    = product.description;
 
+  // Add "Experience from Inside" button if building has interior walkthrough
+  const interiorMap = {villas:"villa", lofts:"loft", flats:"apartment"};
+  const intType = interiorMap[productKey];
+  const existingIntBtn = panel.querySelector(".pp-interior-btn");
+  if (existingIntBtn) existingIntBtn.remove();
+  if (intType) {
+    const intBtn = document.createElement("button");
+    intBtn.className = "pp-interior-btn";
+    intBtn.innerHTML = "&#127968; Experience from Inside";
+    intBtn.onclick = () => {
+      closeProductPanel();
+      if (window.openInteriorView) window.openInteriorView(intType, null);
+    };
+    // Insert before the specs section
+    const specsEl = panel.querySelector(".pp-specs-section");
+    if (specsEl) panel.querySelector(".pp-body .pp-details").insertBefore(intBtn, specsEl);
+  }
+
   // Populate specs grid
   const grid = panel.querySelector(".pp-specs");
   grid.innerHTML = product.specs.map(s =>
