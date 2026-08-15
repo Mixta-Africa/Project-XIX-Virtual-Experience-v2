@@ -455,10 +455,10 @@ function loadVillaGLB(){
           // make the building look like the architect render.
         }
       });
-      villaGLBScene = wrapper; // store the wrapper as template
+      villaGLBScene = wrapper;
       pendingVillas.forEach(({x,z,ry,plotKey})=>placeVillaGLB(x,z,ry,plotKey));
       pendingVillas=[];
-      console.log("Villa GLB loaded OK -", acc.count, "vertices");
+      console.log("Villa GLB: loaded", pendingVillas.length, "placed");
     },
     xhr=>{ if(xhr.total) console.log("Villa GLB:", Math.round(xhr.loaded/xhr.total*100)+"%"); },
     err=>{ 
@@ -490,20 +490,33 @@ function loadApartmentGLB(){
 
 function placeVillaGLB(x,z,ry,plotKey){
   if(!villaGLBScene){ pendingVillas.push({x,z,ry,plotKey}); return; }
-  const clone=villaGLBScene.clone(true);
+  // Use SkeletonUtils-style deep clone to preserve transforms
+  const clone = cloneGLB(villaGLBScene);
   clone.position.set(x,0,z);
-  clone.rotation.y=ry;
+  clone.rotation.y=ry||0;
   clone.userData.isVillaGLB=true;
-  clone.userData.baseRotY=ry;
+  clone.userData.baseRotY=ry||0;
   clone.userData.plotKey=plotKey;
   scene.add(clone);
-  // Add plot selection overlay (Audit - reservation system)
-  if(plotKey) addPlotOverlay(x,z,ry,plotKey,clone);
+  if(plotKey) addPlotOverlay(x,z,ry||0,plotKey,clone);
+}
+
+function cloneGLB(source) {
+  // Proper deep clone that preserves all transforms and materials
+  const root = new THREE.Group();
+  source.children.forEach(child => {
+    const c2 = child.clone(true);
+    // Force matrix update so position/scale are applied
+    c2.updateMatrix();
+    c2.updateMatrixWorld(true);
+    root.add(c2);
+  });
+  return root;
 }
 
 function placeAptGLB(x,z,ry=0){
   if(!aptGLBScene){ pendingApts.push({x,z,ry}); return; }
-  const clone=aptGLBScene.clone(true);
+  const clone=cloneGLB(aptGLBScene);
   clone.position.set(x,0,z);
   clone.rotation.y=ry;
   scene.add(clone);
@@ -589,7 +602,7 @@ function loadLoftGLB(){
 function placeLoftGLB(x,z,ry){
   ry = ry || 0;
   if(!loftGLBScene){ pendingLofts.push({x,z,ry}); return; }
-  const clone=loftGLBScene.clone(true);
+  const clone=cloneGLB(loftGLBScene);
   clone.position.set(x,0,z);
   clone.rotation.y=ry;
   scene.add(clone);
