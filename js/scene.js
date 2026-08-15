@@ -18,6 +18,7 @@
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
 import { RGBELoader } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/RGBELoader.js";
 import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/GLTFLoader.js";
+import { PBR, createWaterMat, addGrassField, tickGrass, tickWater } from "./graphics.js";
 import {
   MAT_GRASS_FIELD, MAT_DIRT, MAT_ASPHALT,
   MAT_BRICK, MAT_CONCRETE, MAT_TIMBER, MAT_STONE, MAT_TILE_ROOF,
@@ -189,6 +190,7 @@ const MATS = {
 function buildEnvironment(){
   addGround();
   addPoloField();
+  addGrassRing();   // per-blade grass cards around field
   addSafetyZone();
   addYardMarkings();
   addRoads();
@@ -209,9 +211,9 @@ function buildEnvironment(){
 //        GROUND (6 distinct materials - Audit 1.1)                                                                                                    
 function addGround(){
   // Base laterite (only shows where nothing else is placed)
-  s(plane(900,700,MATS.safetyBrown(),[0,0,30]));
-  // Estate grass (wide green lawn buffer around the polo ring)
-  s(plane(500,400,MATS.grassGreen(),[0,.01,0]));
+  // PBR ground surfaces
+  s(plane(900,700,PBR.dirt(),[0,0,30]));
+  s(plane(500,400,PBR.grass(),[0,.01,0]));
   // Clubhouse forecourt paving
   s(plane(180,80,MATS.concrete(),[0,.02,170]));
   // Stables courtyard
@@ -240,7 +242,7 @@ function addPoloField(){
 
 //        SAFETY ZONE (saddle brown - Audit 2.3)                                                                                                             
 function addSafetyZone(){
-  const dm=MATS.safetyBrown();
+  const dm=PBR.dirt(); dm.color.set(0x8B4513); // saddle brown override on dirt PBR
   s(plane(298,25,dm,[0,.11,-85.5]));   // North
   s(plane(298,25,dm,[0,.11, 85.5]));   // South
   s(plane(11,146,dm,[-142.5,.11,0]));  // West
@@ -267,7 +269,7 @@ function addYardMarkings(){
 
 //        ROADS (full network - Audit 1.2, 1.3, 1.4)                                                                                                 
 function addRoads(){
-  const am=MATS.roadAsph();
+  const am=PBR.asphalt();
   const lm=new THREE.MeshStandardMaterial({color:0xf0ecd0,roughness:.5});
   const Y=.13;
 
@@ -316,7 +318,7 @@ function addRoads(){
 
 //        LAKE (north, between safety zone and tier1 villas)                                                                         
 function addLake(){
-  const wm=MAT_WATER();
+  const wm=createWaterMat();
   // Crescent shape: offset east (lake centre x=-10 per measurements)
   const lb=new THREE.Mesh(new THREE.BoxGeometry(195,.35,22),wm);
   lb.position.set(30,.16,-115); lb.receiveShadow=true; scene.add(lb); waterMeshes.push(lb);
@@ -332,7 +334,7 @@ function addLake(){
 }
 
 function addEastLake(){
-  const wm=MAT_WATER();
+  const wm=createWaterMat();
   const el=new THREE.Mesh(new THREE.BoxGeometry(10,.25,38),wm);
   el.position.set(220,.12,-48); scene.add(el); waterMeshes.push(el);
 }
@@ -670,7 +672,8 @@ function addStables(){
   // 4 stable blocks with pitched roof and brick material (Audit 9.1)
   [[-375,80],[-375,100],[-342,80],[-342,100]].forEach(([x,z])=>{
     const g=new THREE.Group(); g.position.set(x,0,z);
-    g.add(box(34,4.2,12,MATS.stableBrick(),[0,2.1,0]));
+    const brickM=PBR.brick(); brickM.color.set(0xC4A882);
+    g.add(box(34,4.2,12,brickM,[0,2.1,0]));
     const rL=box(36,.45,16,MATS.stableRoof(),[0,4.6,0]); rL.rotation.z=.17; g.add(rL);
     const rR=box(36,.45,16,MATS.stableRoof(),[0,4.6,0]); rR.rotation.z=-.17; g.add(rR);
     g.add(box(36,.28,.28,MATS.stableRoof(),[0,5.9,0]));
@@ -788,12 +791,8 @@ function addLandscaping(){
 
 //        TICK                                                                                                                                                                                                                
 export function tickScene(elapsed,camera){
-  waterMeshes.forEach(m=>{
-    if(m.material&&m.material.normalMap){
-      m.material.normalMap.offset.x=elapsed*.018;
-      m.material.normalMap.offset.y=elapsed*.012;
-    }
-  });
+  tickWater(waterMeshes, elapsed);
+  tickGrass(camera);
   palmBillboards.forEach(s=>{
     s.rotation.y=Math.atan2(camera.position.x-s.position.x,camera.position.z-s.position.z);
   });
