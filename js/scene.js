@@ -815,7 +815,47 @@ function addLandscaping(){
   [[-400,78],[-400,100],[-340,78],[-340,100]].forEach(([x,z])=>addPalmSprite(x,.1,z,1.1));
 }
 
-//        TICK                                                                                                                                                                                                                
+// PLOT RESERVATION SYSTEM
+function addPlotOverlay(x, z, ry, plotKey, villaClone){
+  const mat = new THREE.MeshStandardMaterial({color:0x00ff88,transparent:true,opacity:.35});
+  const overlay = new THREE.Mesh(new THREE.PlaneGeometry(20,18), mat);
+  overlay.rotation.x = -Math.PI/2;
+  overlay.rotation.y = ry;
+  overlay.position.set(x, .25, z);
+  overlay.userData.plotKey       = plotKey;
+  overlay.userData.isPlotOverlay = true;
+  overlay.userData.villaClone    = villaClone;
+  scene.add(overlay);
+  plotRegistry.set(plotKey, { status:"available", overlay, villaClone, x, z, ry });
+}
+
+export function reservePlot(plotKey){
+  const plot = plotRegistry.get(plotKey);
+  if (!plot || plot.status === "reserved") return false;
+  plot.status = "reserved";
+  if (plot.villaClone) plot.villaClone.traverse(child => {
+    if (child.isMesh && child.material){
+      child.material = child.material.clone();
+      child.material.color.set(0x888888);
+      child.material.opacity = .7;
+      child.material.transparent = true;
+    }
+  });
+  if (plot.overlay){
+    plot.overlay.material = new THREE.MeshStandardMaterial({color:0xff4444,transparent:true,opacity:.5});
+  }
+  plotRegistry.set(plotKey, plot);
+  return true;
+}
+
+export function getPlotAtRay(raycaster){
+  const overlays = [];
+  scene.traverse(o => { if (o.userData.isPlotOverlay) overlays.push(o); });
+  const hits = raycaster.intersectObjects(overlays, false);
+  return hits.length > 0 ? hits[0].object.userData.plotKey : null;
+}
+
+//        TICK
 export function tickScene(elapsed,camera){
   tickWater(waterMeshes, elapsed);
   tickGrass(camera);
