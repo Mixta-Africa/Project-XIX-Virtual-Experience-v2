@@ -433,179 +433,98 @@ function addUmbrella(parent,pos){
   parent.add(g);
 }
 
-//        VILLA GLB SYSTEM                                                                                                                                                                               
+// GLB LOADING SYSTEM
+// Pattern: load once, store template, clone per placement
+let villaGLBTemplate = null;
+let aptGLBTemplate   = null;
+let loftGLBTemplate  = null;
+
 function loadVillaGLB(){
-  new GLTFLoader().load("assets/villa-mesh.glb",
-    gltf=>{
-      // CRITICAL: Wrap in a Group so clone() picks up scale+position correctly
-      // Setting scale/pos on gltf.scene directly is lost on clone(true)
-      const wrapper = new THREE.Group();
-      wrapper.add(gltf.scene);
-      // Apply scale and ground-sit offset to the WRAPPER, not the scene root
-      gltf.scene.scale.setScalar(VILLA_SCALE);
-      gltf.scene.position.y = VILLA_Y;
-      gltf.scene.traverse(child=>{
-        if(child.isMesh){
-          child.castShadow    = true;
-          child.receiveShadow = true;
-          child.userData.fromGLB = true;
-          // DO NOT touch material properties - GLB materials are already
-          // perfectly calibrated. Changing envMapIntensity, roughness etc
-          // destroys the warm windows, stone texture, wood louvres that
-          // make the building look like the architect render.
-        }
-      });
-      villaGLBScene = wrapper;
-      pendingVillas.forEach(({x,z,ry,plotKey})=>placeVillaGLB(x,z,ry,plotKey));
-      pendingVillas=[];
-      console.log("Villa GLB: loaded", pendingVillas.length, "placed");
-    },
-    xhr=>{ if(xhr.total) console.log("Villa GLB:", Math.round(xhr.loaded/xhr.total*100)+"%"); },
-    err=>{ 
-      console.error("Villa GLB failed:", err);
-      pendingVillas.forEach(({x,z,ry})=>{ const v=createVillaFallback(); v.position.set(x,0,z); v.rotation.y=ry; scene.add(v); });
-      pendingVillas=[];
-    }
-  );
+  new GLTFLoader().load("assets/villa-mesh.glb", (gltf) => {
+    gltf.scene.scale.setScalar(VILLA_SCALE);
+    gltf.scene.position.y = VILLA_Y;
+    gltf.scene.traverse(child => {
+      if (child.isMesh) { child.castShadow = true; child.receiveShadow = true; }
+    });
+    villaGLBTemplate = gltf.scene;
+    villaGLBScene    = gltf.scene;
+    console.log("Villa GLB loaded");
+    pendingVillas.forEach(p => placeVillaGLB(p.x, p.z, p.ry, p.plotKey));
+    pendingVillas = [];
+  }, undefined, err => {
+    console.error("Villa GLB failed:", err);
+    pendingVillas = [];
+  });
 }
 
 function loadApartmentGLB(){
-  new GLTFLoader().load("assets/apartment-mesh.glb",
-    gltf=>{
-      const wrapper = new THREE.Group();
-      wrapper.add(gltf.scene);
-      gltf.scene.scale.setScalar(APT_SCALE);
-      gltf.scene.position.y=APT_Y;
-      gltf.scene.traverse(child=>{
-        if(child.isMesh){ child.castShadow=true; child.receiveShadow=true; child.userData.fromGLB=true; }
-      });
-      aptGLBScene=wrapper;
-      pendingApts.forEach(({x,z,ry})=>placeAptGLB(x,z,ry));
-      pendingApts=[];
-    },
-    null,
-    ()=>{ pendingApts.forEach(({x,z})=>{ scene.add(createFlatBlock(x,z)); }); pendingApts=[]; }
-  );
-}
-
-function placeVillaGLB(x,z,ry,plotKey){
-  if(!villaGLBScene){ pendingVillas.push({x,z,ry,plotKey}); return; }
-  // Use SkeletonUtils-style deep clone to preserve transforms
-  const clone = cloneGLB(villaGLBScene);
-  clone.position.set(x,0,z);
-  clone.rotation.y=ry||0;
-  clone.userData.isVillaGLB=true;
-  clone.userData.baseRotY=ry||0;
-  clone.userData.plotKey=plotKey;
-  scene.add(clone);
-  if(plotKey) addPlotOverlay(x,z,ry||0,plotKey,clone);
-}
-
-function cloneGLB(source) {
-  // Proper deep clone that preserves all transforms and materials
-  const root = new THREE.Group();
-  source.children.forEach(child => {
-    const c2 = child.clone(true);
-    // Force matrix update so position/scale are applied
-    c2.updateMatrix();
-    c2.updateMatrixWorld(true);
-    root.add(c2);
-  });
-  return root;
-}
-
-function placeAptGLB(x,z,ry=0){
-  if(!aptGLBScene){ pendingApts.push({x,z,ry}); return; }
-  const clone=cloneGLB(aptGLBScene);
-  clone.position.set(x,0,z);
-  clone.rotation.y=ry;
-  scene.add(clone);
-}
-
-//        PLOT RESERVATION SYSTEM                                                                                                                                                          
-function addPlotOverlay(x,z,ry,plotKey,villaClone){
-  // Selection plane hovering slightly above ground at plot position
-  const mat=MATS.plotAvail();
-  const overlay=new THREE.Mesh(new THREE.PlaneGeometry(20,18),mat);
-  overlay.rotation.x=-Math.PI/2;
-  overlay.rotation.y=ry;
-  overlay.position.set(x,.25,z);
-  overlay.userData.plotKey=plotKey;
-  overlay.userData.isPlotOverlay=true;
-  overlay.userData.villaClone=villaClone;
-  scene.add(overlay);
-  plotRegistry.set(plotKey,{
-    status:"available",
-    overlay, villaClone,
-    x,z,ry,
+  new GLTFLoader().load("assets/apartment-mesh.glb", (gltf) => {
+    gltf.scene.scale.setScalar(APT_SCALE);
+    gltf.scene.position.y = APT_Y;
+    gltf.scene.traverse(child => {
+      if (child.isMesh) { child.castShadow = true; child.receiveShadow = true; }
+    });
+    aptGLBTemplate = gltf.scene;
+    aptGLBScene    = gltf.scene;
+    console.log("Apartment GLB loaded");
+    pendingApts.forEach(p => placeAptGLB(p.x, p.z, p.ry));
+    pendingApts = [];
+  }, undefined, err => {
+    console.error("Apt GLB failed:", err);
+    pendingApts = [];
   });
 }
 
-export function reservePlot(plotKey){
-  const plot=plotRegistry.get(plotKey);
-  if(!plot||plot.status==="reserved") return false;
-  plot.status="reserved";
-  // Grey out villa mesh
-  plot.villaClone && plot.villaClone.traverse(c=>{
-    if(c.isMesh&&c.material){
-      c.material=c.material.clone();
-      c.material.color.set(0x888888);
-      c.material.opacity=.7; c.material.transparent=true;
-    }
-  });
-  // Turn overlay red
-  if(plot.overlay){
-    plot.overlay.material=MATS.plotReserved();
-    plot.overlay.material.transparent=true;
-    plot.overlay.material.opacity=.5;
-  }
-  plotRegistry.set(plotKey,plot);
-  return true;
-}
-
-export function getPlotAtRay(raycaster){
-  const overlays=[];
-  scene.traverse(o=>{ if(o.userData.isPlotOverlay) overlays.push(o); });
-  const hits=raycaster.intersectObjects(overlays,false);
-  return hits.length>0 ? hits[0].object.userData.plotKey : null;
-}
-
-
-//        LOFT TERRACE GLB                                                                                                                                                                            
 function loadLoftGLB(){
-  new GLTFLoader().load("assets/loft-mesh.glb",
-    gltf=>{
-      const wrapper=new THREE.Group();
-      wrapper.add(gltf.scene);
-      gltf.scene.scale.setScalar(LOFT_SCALE);
-      gltf.scene.position.y=LOFT_Y;
-      gltf.scene.traverse(child=>{
-        if(child.isMesh){
-          child.castShadow=true; child.receiveShadow=true;
-          if(child.material){ child.material.envMapIntensity=0.3; child.material.needsUpdate=true; }
-        }
-      });
-      loftGLBScene=wrapper;
-      pendingLofts.forEach(({x,z,ry})=>placeLoftGLB(x,z,ry));
-      pendingLofts=[];
-      console.log("Loft GLB loaded OK");
-    },
-    null,
-    err=>{
-      console.error("Loft GLB failed:",err);
-      pendingLofts.forEach(({x,z,ry})=>{ scene.add(createLoftBlock(x,z,ry)); });
-      pendingLofts=[];
-    }
-  );
+  new GLTFLoader().load("assets/loft-mesh.glb", (gltf) => {
+    gltf.scene.scale.setScalar(LOFT_SCALE);
+    gltf.scene.position.y = LOFT_Y;
+    gltf.scene.traverse(child => {
+      if (child.isMesh) { child.castShadow = true; child.receiveShadow = true; }
+    });
+    loftGLBTemplate = gltf.scene;
+    loftGLBScene    = gltf.scene;
+    console.log("Loft GLB loaded");
+    pendingLofts.forEach(p => placeLoftGLB(p.x, p.z, p.ry));
+    pendingLofts = [];
+  }, undefined, err => {
+    console.error("Loft GLB failed:", err);
+    pendingLofts = [];
+  });
 }
 
-function placeLoftGLB(x,z,ry){
+function placeVillaGLB(x, z, ry, plotKey) {
   ry = ry || 0;
-  if(!loftGLBScene){ pendingLofts.push({x,z,ry}); return; }
-  const clone=cloneGLB(loftGLBScene);
-  clone.position.set(x,0,z);
-  clone.rotation.y=ry;
-  scene.add(clone);
+  if (!villaGLBTemplate) { pendingVillas.push({x, z, ry, plotKey}); return; }
+  const container = new THREE.Group();
+  container.position.set(x, 0, z);
+  container.rotation.y = ry;
+  container.userData.isVillaGLB = true;
+  container.userData.baseRotY   = ry;
+  container.userData.plotKey    = plotKey;
+  container.add(villaGLBTemplate.clone(true));
+  scene.add(container);
+  if (plotKey) addPlotOverlay(x, z, ry, plotKey, container);
+}
+
+function placeAptGLB(x, z, ry) {
+  ry = ry || 0;
+  if (!aptGLBTemplate) { pendingApts.push({x, z, ry}); return; }
+  const container = new THREE.Group();
+  container.position.set(x, 0, z);
+  container.rotation.y = ry;
+  container.add(aptGLBTemplate.clone(true));
+  scene.add(container);
+}
+
+function placeLoftGLB(x, z, ry) {
+  ry = ry || 0;
+  if (!loftGLBTemplate) { pendingLofts.push({x, z, ry}); return; }
+  const container = new THREE.Group();
+  container.position.set(x, 0, z);
+  container.rotation.y = ry;
+  container.add(loftGLBTemplate.clone(true));
+  scene.add(container);
 }
 
 //        VILLA RING (all using GLB mesh, standalone plots, Audit 3.1-3.6)                               
