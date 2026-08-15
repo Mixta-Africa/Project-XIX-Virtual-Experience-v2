@@ -345,7 +345,8 @@ function addRoads(){
 
   // WEST COMPOUND roads (Audit 1.3)
   s(plane(8,280,am,[-270,Y,20]));   // main N-S spine
-  s(plane(8,200,am,[-230,Y,10]));   // secondary E road beside lofts
+  s(plane(8,280,am,[-310,Y,20]));   // road between training field and flats
+  s(plane(8,200,am,[-230,Y,10]));   // secondary E road beside lofts+villas
   s(plane(150,8,am,[-310,Y,145]));  // E-W to stables
   s(plane(8,100,am,[-170,Y,10]));   // east side of training field
 
@@ -634,6 +635,17 @@ function createVillaFallback(){
 //        LOFT TERRACES                                                                                                                                                                                        
 // Single row north crescent (NW arm + NE arm). West compound between villas and flats.
 function addLoftTerraces(){
+  // NORTH WEST COMPOUND ROW (above training field, z~-169)
+  // Two distinct E-W groups above the west compound
+  // Left group: above training field (x=-414 to -291)
+  for (let x = -400; x <= -295; x += 36) {
+    placeLoftGLB(x, -169, 0);   // face south
+  }
+  // Right group: above flats+loft zone (x=-248 to -163)
+  for (let x = -245; x <= -163; x += 36) {
+    placeLoftGLB(x, -169, 0);   // face south
+  }
+
   // NORTH CRESCENT - SINGLE ROW, NW ARM
   // Parabolic curve: z = -162 - abs(x)*0.05
   // Stops at x=-110 (lake west edge ~x=-110)
@@ -648,9 +660,10 @@ function addLoftTerraces(){
     placeLoftGLB(x,cz,Math.PI);
   }
   // WEST COMPOUND LOFTS
-  // Sit between outer villa column (x=-192) and flats (x=-248), centred at x=-220
-  placeLoftGLB(-220,-40,-Math.PI/2);
-  placeLoftGLB(-220, 40,-Math.PI/2);
+  // Pixel-measured: x=-218, z matches flat blocks (-14 and +112)
+  // Face east toward polo field
+  placeLoftGLB(-218, -14, -Math.PI/2);
+  placeLoftGLB(-218, 112, -Math.PI/2);
 }
 
 function createLoftBlock(x,z,ry){
@@ -682,14 +695,15 @@ function createLoftBlock(x,z,ry){
 //        WEST COMPOUND (Audit 6.1, 6.2, 7.1, 7.2)                                                                                                    
 function addWestCompound(){
   const gm=MAT_GRASS_FIELD(); const dm=MATS.safetyBrown();
-  // Training field: N-S oriented, x=-390, z=0
-  s(plane(120,185,dm,[-390,.06,0]));
-  s(plane(100,160,gm,[-390,.10,0]));
+  // Training field: pixel-measured centre x=-347, z=+42 (N edge z=-66, S edge z=+149)
+  s(plane(120,220,dm,[-347,.06,42]));
+  s(plane(100,200,gm,[-347,.10,42]));
 
-  // Blocks of flats via GLB (E-W oriented, Audit 6.2)
-  // North block: x=-248, z=-25. South block: x=-248, z=+55
-  placeAptGLB(-248,-25,Math.PI/2);   // E-W oriented (ry=0)
-  placeAptGLB(-248, 55,Math.PI/2);
+  // Blocks of flats via GLB
+  // Pixel-measured: centre x=-275, N block z=-14, S block z=+112
+  // Road at x=-270 separates them from training field at x=-347
+  placeAptGLB(-275, -14, Math.PI/2);
+  placeAptGLB(-275, 112, Math.PI/2);
 }
 
 function createFlatBlock(x,z){ // fallback if GLB fails
@@ -752,10 +766,61 @@ function addCommercialBlock(){
 }
 
 function addServiceCompound(){
-  s(box(16,5.0,13,new THREE.MeshStandardMaterial({color:0xcc2200,roughness:.7}),[-270,2.5,95]));
-  s(box(17,.5,14,new THREE.MeshStandardMaterial({color:0xaa1800,roughness:.7}),[-270,5.1,95],0,false));
-  s(box(30,6,17,MATS.flatGrey(),[-240,3,100]));
-  s(box(12,4,10,MATS.concrete(),[-220,2,88]));
+  // Pixel-measured positions from layout
+  // Service centre (RED) at world (-261, +245)
+  const redMat = new THREE.MeshStandardMaterial({color:0xcc2200,roughness:.7});
+  const greyM  = MATS.flatGrey();
+  const brickM = new THREE.MeshStandardMaterial({color:0xc8a870,roughness:.85});
+  const concM  = MATS.concrete();
+
+  // Red service building
+  s(box(18, 5.2, 14, redMat, [-261, 2.6, 195]));
+  s(box(19, .5,  15, new THREE.MeshStandardMaterial({color:0xaa1800,roughness:.7}), [-261, 5.3, 195], 0, false));
+
+  // Mechanical/electrical block at (-218, 245)
+  s(box(28, 6.5, 18, greyM,  [-218, 3.25, 195]));
+  // FM building
+  s(box(14, 4.2, 12, concM,  [-290, 2.1,  195]));
+  // Trucks parking
+  s(plane(30, 18, MATS.roadAsph(), [-320, .12, 195]));
+
+  // STABLES compound at (-383, 245) -- rows of stable blocks
+  s(plane(65, 45, MATS.cobble(), [-383, .02, 225]));  // courtyard
+  // Stable rows (4 blocks E-W)
+  for (let sx = -405; sx <= -355; sx += 18) {
+    const sg = new THREE.Group(); sg.position.set(sx, 0, 218);
+    sg.add(box(16, 4.0, 10, brickM, [0, 2.0, 0]));
+    const rL = box(17, .4, 13, MATS.stableRoof(), [0, 4.2, 0]);
+    rL.rotation.z = .18; sg.add(rL);
+    const rR = box(17, .4, 13, MATS.stableRoof(), [0, 4.2, 0]);
+    rR.rotation.z = -.18; sg.add(rR);
+    for (let dp = -6; dp <= 6; dp += 3)
+      sg.add(cyl(.12,.12,3.8,6,MAT_DARK_METAL(),[dp,2.0,-5.2]));
+    scene.add(sg);
+  }
+  // Vet clinic
+  s(box(12, 3.8, 10, concM,  [-350, 1.9, 218]));
+  // Storage building
+  s(box(14, 4.5, 10, greyM,  [-338, 2.25, 232]));
+
+  // MINI PADDOCKS x2 (pixel-measured: x=-389,-359, z=+186)
+  const fenceM = new THREE.MeshStandardMaterial({color:0xfcfaf5,roughness:.6});
+  for (const [px, pz] of [[-389, 170], [-359, 170]]) {
+    s(plane(22, 18, MAT_GRASS_FIELD(), [px, .06, pz]));
+    // Post and rail fence
+    for (let fz = pz-9; fz <= pz+9; fz += 4) {
+      s(cyl(.08,.08,1.5,6,fenceM,[px-11,.75,fz]));
+      s(cyl(.08,.08,1.5,6,fenceM,[px+11,.75,fz]));
+    }
+    for (let fx = px-11; fx <= px+11; fx += 4) {
+      s(cyl(.08,.08,1.5,6,fenceM,[fx,.75,pz-9]));
+      s(cyl(.08,.08,1.5,6,fenceM,[fx,.75,pz+9]));
+    }
+    s(box(.06,.06,18,fenceM,[px-11,1.1,pz],0,false));
+    s(box(.06,.06,18,fenceM,[px+11,1.1,pz],0,false));
+    s(box(22,.06,.06,fenceM,[px,1.1,pz-9],0,false));
+    s(box(22,.06,.06,fenceM,[px,1.1,pz+9],0,false));
+  }
 }
 
 //        SYSTEMATIC LANDSCAPING (Audit 10.1, 10.2, 10.3)                                                                            
