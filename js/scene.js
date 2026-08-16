@@ -132,7 +132,15 @@ export function tickHorseAnim(delta, isMoving) {
 }
 export function setHorsePosition(x, y, z, yaw) {
   if (!horseGroup) return;
-  horseGroup.position.set(x, y, z);
+  // Offset the horse so the camera is in the saddle, not inside its neck
+  // Push horse forward (Z) and down (Y) relative to the camera's yaw
+  const forwardOffset = 1.2;
+  const downOffset = -1.8;
+  horseGroup.position.set(
+    x + Math.sin(yaw) * forwardOffset, 
+    y + downOffset, 
+    z + Math.cos(yaw) * forwardOffset
+  );
   horseGroup.rotation.y = yaw;
 }
 
