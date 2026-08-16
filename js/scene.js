@@ -79,13 +79,17 @@ export function loadHorseGLB() {
     scene.add(horseGroup);
     
     horseMixer = new THREE.AnimationMixer(model);
-    const clip = gltf.animations.find(a => a.name === 'Take 001') || gltf.animations[0];
-    if (clip) {
-      const action = horseMixer.clipAction(clip);
-      action.setLoop(THREE.LoopRepeat, Infinity);
-      action.timeScale = 1.4; 
-      action.play();
-    }
+let clip = gltf.animations.find(a => {
+const n = a.name.toLowerCase();
+return n.includes('trot') || n.includes('walk') || n.includes('run');
+}) || gltf.animations[0];
+if (clip) {
+const action = horseMixer.clipAction(clip);
+action.setLoop(THREE.LoopRepeat, Infinity);
+action.timeScale = 1.2;
+action.play();
+}
+
   }, undefined, err => {
     console.error("Failed to load horse.glb:", err);
   });
