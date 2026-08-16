@@ -83,174 +83,53 @@ export let onPlotSelected = null;
 export const RIDER_EYE_HEIGHT = 3.1;   // metres above ground
 export const FOOT_EYE_HEIGHT  = 1.75;  // standard walk eye height
 
-let horseGroup = null;      // the root THREE.Group for horse + rider
-let horseAnim  = {          // trot animation state
-  phase: 0,                 // 0–2π, loops
-  speed: 3.2,               // radians/sec (trot cadence)
-  active: false,
-};
+let horseGroup = null;
+let horseMixer = null;
 
-function buildHorseRider() {
-  const g = new THREE.Group();
-  g.name = 'horseRider';
-
-  // ── HORSE BODY ──
-  const bodyM  = new THREE.MeshStandardMaterial({ color: 0x6B3A2A, roughness: 0.85, metalness: 0.05 });
-  const darkM  = new THREE.MeshStandardMaterial({ color: 0x3D1F10, roughness: 0.9  });
-  const whiteM = new THREE.MeshStandardMaterial({ color: 0xF5F0E8, roughness: 0.7  });
-  const saddleM= new THREE.MeshStandardMaterial({ color: 0x2C1810, roughness: 0.75 });
-
-  // Torso
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.8, 1.8), bodyM);
-  torso.position.set(0, 1.4, 0);
-  torso.castShadow = true;
-  g.add(torso);
-
-  // Neck + head
-  const neck = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.7, 0.28), bodyM);
-  neck.position.set(0, 1.95, -0.65);
-  neck.rotation.x = -0.3;
-  neck.castShadow = true;
-  g.add(neck);
-
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.32, 0.55), bodyM);
-  head.position.set(0, 2.35, -1.0);
-  head.castShadow = true;
-  g.add(head);
-
-  // Nose
-  const nose = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.18, 0.2), darkM);
-  nose.position.set(0, 2.24, -1.25);
-  g.add(nose);
-
-  // Mane (dark strip)
-  const mane = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.35, 0.9), darkM);
-  mane.position.set(0, 2.22, -0.7);
-  g.add(mane);
-
-  // Tail
-  const tail = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.6, 0.12), darkM);
-  tail.position.set(0, 1.45, 0.97);
-  tail.rotation.x = 0.5;
-  tail.castShadow = false;
-  g.add(tail);
-
-  // Saddle
-  const saddle = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.12, 0.55), saddleM);
-  saddle.position.set(0, 1.87, 0.05);
-  g.add(saddle);
-
-  // Legs — four, stored for animation
-  const legPositions = [
-    { x:-0.24, z:-0.55 }, // front-left
-    { x: 0.24, z:-0.55 }, // front-right
-    { x:-0.24, z: 0.55 }, // rear-left
-    { x: 0.24, z: 0.55 }, // rear-right
-  ];
-  const legs = [];
-  const hoofM = new THREE.MeshStandardMaterial({ color: 0x1A1008, roughness: 0.9 });
-  legPositions.forEach(({x, z}) => {
-    const upper = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.55, 0.16), bodyM);
-    upper.position.set(x, 0.9, z);
-    upper.castShadow = true;
-    g.add(upper);
-
-    const lower = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.55, 0.12), darkM);
-    lower.position.set(x, 0.35, z);
-    lower.castShadow = true;
-    g.add(lower);
-
-    const hoof = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.12, 0.18), hoofM);
-    hoof.position.set(x, 0.06, z);
-    g.add(hoof);
-
-    legs.push({ upper, lower, hoof, baseX: x, baseZ: z });
+export function loadHorseGLB() {
+  const loader = makeDracoLoader();
+  loader.load("assets/horse.glb", gltf => {
+    const model = gltf.scene;
+    
+    // Scale down from original massive size to ~1.8m shoulder height
+    model.scale.setScalar(0.022);
+    
+    model.traverse(c => {
+      if (c.isMesh) {
+        c.castShadow = true;
+        c.receiveShadow = true;
+      }
+    });
+    
+    // Auto-lift to ground
+    const bbox = new THREE.Box3().setFromObject(model);
+    if (bbox.min.y < 0) model.position.y = -bbox.min.y;
+    
+    horseGroup = new THREE.Group();
+    horseGroup.name = 'horseRider';
+    horseGroup.add(model);
+    scene.add(horseGroup);
+    
+    // Setup Animation Mixer (Targeting 'Take 001' per Claude's log)
+    horseMixer = new THREE.AnimationMixer(model);
+    const clip = gltf.animations.find(a => a.name === 'Take 001') || gltf.animations[0];
+    if (clip) {
+      const action = horseMixer.clipAction(clip);
+      action.setLoop(THREE.LoopRepeat, Infinity);
+      action.timeScale = 1.4; // Trot speed
+      action.play();
+    }
+  }, undefined, err => {
+    console.error("Failed to load horse.glb:", err);
   });
-  g.userData.legs = legs;
-
-  // ── RIDER ──
-  const skinM   = new THREE.MeshStandardMaterial({ color: 0xC48B5A, roughness: 0.8 });
-  const shirtM  = new THREE.MeshStandardMaterial({ color: 0xF0EAD6, roughness: 0.85 });
-  const pantM   = new THREE.MeshStandardMaterial({ color: 0xDEB887, roughness: 0.8 });
-  const helmetM = new THREE.MeshStandardMaterial({ color: 0x1C1C1C, roughness: 0.6, metalness: 0.2 });
-  const bootM   = new THREE.MeshStandardMaterial({ color: 0x1A120A, roughness: 0.75 });
-
-  // Rider torso
-  const rTorso = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.48, 0.26), shirtM);
-  rTorso.position.set(0, 2.52, 0.02);
-  rTorso.castShadow = true;
-  g.add(rTorso);
-
-  // Rider head
-  const rHead = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.26, 0.24), skinM);
-  rHead.position.set(0, 2.88, 0.02);
-  g.add(rHead);
-
-  // Helmet
-  const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 6), helmetM);
-  helmet.scale.y = 0.8;
-  helmet.position.set(0, 3.03, 0.0);
-  g.add(helmet);
-
-  // Rider legs
-  const rLeg = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.44, 0.14), pantM);
-  const rLegL = rLeg.clone(); rLegL.position.set(-0.18, 2.22, 0.02); g.add(rLegL);
-  const rLegR = rLeg.clone(); rLegR.position.set( 0.18, 2.22, 0.02); g.add(rLegR);
-
-  // Boots
-  const boot = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.3, 0.15), bootM);
-  const bootL = boot.clone(); bootL.position.set(-0.22, 1.88, 0.02); g.add(bootL);
-  const bootR = boot.clone(); bootR.position.set( 0.22, 1.88, 0.02); g.add(bootR);
-
-  // Rider arms
-  const armM = new THREE.MeshStandardMaterial({ color: 0xF0EAD6, roughness: 0.85 });
-  const arm = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.38, 0.11), armM);
-  const armL = arm.clone(); armL.position.set(-0.25, 2.44, 0.0); armL.rotation.z = 0.3; g.add(armL);
-  const armR = arm.clone(); armR.position.set( 0.25, 2.44, 0.0); armR.rotation.z = -0.3; g.add(armR);
-
-  // Riding crop (mallet stick)
-  const cropM = new THREE.MeshStandardMaterial({ color: 0x3A2010, roughness: 0.9 });
-  const crop = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.7, 0.025), cropM);
-  crop.position.set(0.38, 2.35, -0.2);
-  crop.rotation.z = -0.4;
-  g.add(crop);
-
-  g.userData.horseAnimPhase = 0;
-  horseGroup = g;
-  scene.add(g);
-  return g;
 }
 
 export function tickHorseAnim(delta, isMoving) {
-  if (!horseGroup) return;
-  const legs = horseGroup.userData.legs;
-  if (!legs) return;
-
-  if (isMoving) {
-    horseAnim.phase += delta * horseAnim.speed;
+  // Only animate the horse when the player is actively moving
+  if (horseMixer && isMoving) {
+    horseMixer.update(delta);
   }
-  const p = horseAnim.phase;
-
-  // Diagonal trot pairs: FL+RR together, FR+RL together (offset by π)
-  // Each leg: upper rotates ±20°, lower follows with phase offset
-  const phases = [p, p + Math.PI, p + Math.PI, p]; // FL, FR, RL, RR
-  legs.forEach((leg, i) => {
-    const swing = Math.sin(phases[i]) * 0.32;
-    leg.upper.rotation.x = swing;
-    leg.lower.rotation.x = Math.max(0, -swing) * 0.7;
-    // Hoof lifts slightly at peak
-    leg.hoof.position.y = 0.06 + Math.max(0, Math.sin(phases[i])) * 0.18;
-  });
-
-  // Body bob: slight up-down on each trot beat
-  horseGroup.position.y = Math.abs(Math.sin(p * 2)) * 0.06;
-
-  // Head nod
-  const headMesh = horseGroup.children.find(c => c.geometry && 
-    c.geometry.parameters && c.geometry.parameters.depth === 0.55);
-  if (headMesh) headMesh.rotation.x = Math.sin(p) * 0.06 - 0.05;
 }
-
 export function setHorsePosition(x, y, z, yaw) {
   if (!horseGroup) return;
   horseGroup.position.set(x, y, z);
@@ -291,8 +170,8 @@ export function initScene(canvas) {
   loadClubhouseGLB();
   loadStablesGLB();
 
-  // Build the horse + rider avatar
-  buildHorseRider();
+  // Load the animated horse GLB
+  loadHorseGLB();
 
   return { scene, renderer, camera, clock };
 }
