@@ -2,6 +2,11 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
 import { GLTFLoader }  from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/GLTFLoader.js";
 import { DRACOLoader } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/DRACOLoader.js";
 import { PBR, createWaterMat, addGrassField, tickGrass, tickWater } from "./graphics.js";
+import {
+  MAT_GRASS_FIELD, MAT_DIRT, MAT_ASPHALT,
+  MAT_BRICK, MAT_CONCRETE, MAT_TIMBER, MAT_STONE, MAT_TILE_ROOF,
+  MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL, MAT_WATER,
+} from "./materials.js";
 
 // ─── PERFORMANCE MODE ────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
