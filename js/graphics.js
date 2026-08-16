@@ -11,14 +11,15 @@ import { UnrealBloomPass } from "https://cdn.jsdelivr.net/npm/three@0.165.0/exam
 import { OutputPass }      from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/postprocessing/OutputPass.js";
 import { SMAAPass }        from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/postprocessing/SMAAPass.js";
 import { SAOPass }         from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/postprocessing/SAOPass.js";
-import { BokehPass }       from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/postprocessing/BokehPass.js";
-import { LUTPass }         from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/postprocessing/LUTPass.js";
-import { LUTCubeLoader }   from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/LUTCubeLoader.js";
+import { GTAOPass } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/postprocessing/GTAOPass.js";
+import { BokehPass } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/postprocessing/BokehPass.js";
+import { LUTPass } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/postprocessing/LUTPass.js";
+import { LUTCubeLoader } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/LUTCubeLoader.js";
 import { Sky }             from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/objects/Sky.js";
 import { RoomEnvironment } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/environments/RoomEnvironment.js";
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
-let composer, bloomPass, smaaPass, saoPass, bokehPass, lutPass;
+let composer, bloomPass, smaaPass, gtaoPass, bokehPass, lutPass;
 let _renderer, _scene, _camera;
 let _perfMode = 'fast';
 let _envMap   = null;
@@ -36,16 +37,19 @@ export function initPostProcessing(renderer, scene, camera) {
   composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
 
-  // 1. Stable Ambient Occlusion (SAOPass for r165)
+  // 1. Ground Truth Ambient Occlusion (GTAOPass)
   try {
-    saoPass = new SAOPass(scene, camera, false, true, new THREE.Vector2(w, h));
-    saoPass.params.saoBias = 0.5;
-    saoPass.params.saoIntensity = 0.0018; 
-    saoPass.params.saoScale = 180;
-    saoPass.params.saoKernelRadius = 80;
-    saoPass.enabled = (_perfMode !== 'fast');
-    composer.addPass(saoPass);
-  } catch(e) { console.warn('[XIX] SAO init:', e.message); }
+    gtaoPass = new GTAOPass(scene, camera, w, h);
+    gtaoPass.output = GTAOPass.OUTPUT.Denoise;
+    gtaoPass.updateGtaoMaterial({
+      radius: 0.8,            // 80cm occlusion radius for villa walls/hedges
+      distanceExponent: 1.2,
+      thickness: 1.0,
+      scale: 1.0,
+    });
+    gtaoPass.enabled = (_perfMode !== 'fast');
+    composer.addPass(gtaoPass);
+  } catch(e) { console.warn('[XIX] GTAO init:', e.message); }
 
   // 2. Cinematic Unreal Bloom
   try {
@@ -54,7 +58,7 @@ export function initPostProcessing(renderer, scene, camera) {
     composer.addPass(bloomPass);
   } catch(e) { console.warn('[XIX] Bloom init:', e.message); }
 
-  // 3. Interior Depth of Field (BokehPass - dynamic)
+  // 3. Interior Depth of Field (BokehPass)
   try {
     bokehPass = new BokehPass(scene, camera, {
       focus: 3.5,
@@ -92,10 +96,15 @@ export function initPostProcessing(renderer, scene, camera) {
   return composer;
 }
 
+/**
+ * Dynamically toggles Depth of Field for interior property inspection.
+ * @param {boolean} active - Enable/disable the BokehPass
+ * @param {number} [focusDistance=3.5] - Distance in world units to keep in focus
+ */
 export function setInteriorDOF(active, focusDistance = 3.5) {
   if (!bokehPass) return;
   bokehPass.enabled = active;
-  if (active && bokehPass.uniforms["focus"]) {
+  if (active && bokehPass.uniforms && bokehPass.uniforms["focus"]) {
     bokehPass.uniforms["focus"].value = focusDistance;
   }
 }
@@ -126,12 +135,14 @@ export function setPerfModeGraphics(mode) {
     }
   }
 
-  if (saoPass) saoPass.enabled = (mode !== 'fast');
-  
+  // Pass 1 upgrade check: Use Ground-Truth AO if instantiated, fallback gracefully to SAO
+  const aoPass = gtaoPass || saoPass;
+  if (aoPass) aoPass.enabled = (mode !== 'fast');
+
   if (bloomPass) {
     bloomPass.enabled = true;
     if (smaaPass) smaaPass.enabled = (mode !== 'fast');
-    // Ensure quality toggles respect the current time of day bloom modifiers
+    // Re-evaluates current time bloom so sunset god-rays survive quality switches
     setBloomForTime(_currentTimePreset);
   }
 }
@@ -154,22 +165,26 @@ export function renderFrame() {
 export function setBloomForTime(name) {
   _currentTimePreset = name;
   if (!bloomPass) return;
-  
-  let p;
+
+  let params;
+
   if (_perfMode === 'fast') {
-    // Mobile Fast Profile (tight bloom)
-    p = { s: 0.22, t: 0.75, r: 0.55 };
+    // Mobile Fast Profile: lightweight bloom parameters
+    params = { strength: 0.22, threshold: 0.75, radius: 0.55 };
   } else {
-    // Balanced/Rich Profile (cinematic bloom)
-    p = {
-      morning:   { s: 0.30, t: 0.78, r: 0.50 },
-      afternoon: { s: 0.28, t: 0.72, r: 0.58 },
-      sunset:    { s: 0.72, t: 0.62, r: 0.85 }, // God-ray halo simulation via boosted bloom
-      night:     { s: 0.90, t: 0.52, r: 0.80 }
-    }[name] || { s: 0.28, t: 0.72, r: 0.58 };
+    // Balanced / Rich Profile: time-of-day specific atmospheric tuning
+    const timePresets = {
+      morning:   { strength: 0.30, threshold: 0.78, radius: 0.50 },
+      afternoon: { strength: 0.28, threshold: 0.72, radius: 0.58 },
+      sunset:    { strength: 0.72, threshold: 0.62, radius: 0.85 }, // Boosted halo effect for god-ray simulation
+      night:     { strength: 0.90, threshold: 0.52, radius: 0.80 },
+    };
+    params = timePresets[name] || { strength: 0.28, threshold: 0.72, radius: 0.58 };
   }
 
-  bloomPass.strength = p.s; bloomPass.threshold = p.t; bloomPass.radius = p.r;
+  bloomPass.strength = params.strength;
+  bloomPass.threshold = params.threshold;
+  bloomPass.radius = params.radius;
   bloomPass.enabled = true;
 }
 
