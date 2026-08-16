@@ -1,13 +1,8 @@
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
 /**
- * Project XIX     Main Application Entry Point  v23
- * Changes from v22:
- *  - Performance mode toggle (Fast/Balanced/Rich) in corner of 3D overlay
- *  - Horse+rider avatar: camera at RIDER_EYE_HEIGHT (3.1m) by default, tickHorseAnim each frame
- *  - Joystick pinned to lower-left (no free-roam)
- *  - Panel close buttons: pointer-events always-on, immediate response via stopPropagation
- *  - Render loop: frame time cap 33ms (30fps floor in Fast), skips postfx SSAO in Fast
- *  - shadow map + pixel ratio tuned per mode via setPerfMode()
+ * Project XIX     Main Application Entry Point
+ * Optimized: Unified rendering (villa interior physically added to main world)
+ * Optimized: EffectComposer totally bypassed in 'fast' mode
  */
 
 import { VIEWPOINTS, ZONES, WORLD } from "./data.js";
@@ -34,9 +29,6 @@ import {
 
 //           STATE
 let sceneReady      = false;
-let villaInteriorActive = false;
-let villaScene      = null;
-let villaRenderer   = null;
 let introPlaying    = false;
 let currentViewKey  = "field_centre";
 let animFrameId     = null;
@@ -51,8 +43,8 @@ const AERIAL_RADIUS = 220;
 const AERIAL_HEIGHT = 200;
 const AERIAL_SPEED  = 0.12;
 
-// Horse mode: camera rides at RIDER_EYE_HEIGHT
 let horseMode = true; // ON by default
+let _prevCamX = 0, _prevCamZ = 0;
 
 //           WEATHER / TIME PRESETS
 const TIME_PRESETS = {
@@ -94,76 +86,29 @@ function applyWeather(w) {
 }
 
 window.applyTimePreset = applyTimePreset;
-
-let glbBaseRotation = 0;
-window.rotateVillaGLB = function(degrees) {
-  glbBaseRotation = degrees * Math.PI / 180;
-  const scene = getScene();
-  if (!scene) return;
-  document.querySelectorAll("#glb-orient-group .wx-btn").forEach(b =>
-    b.classList.toggle("active", b.textContent.trim() === degrees + "  ")
-  );
-  scene.traverse(obj => {
-    if (obj.userData && obj.userData.isVillaGLB)
-      obj.rotation.y = obj.userData.baseRotY + glbBaseRotation;
-  });
-};
 window.applyWeather = applyWeather;
 
 //           PERFORMANCE MODE TOGGLE
 window.switchPerfMode = function(mode) {
+  window.PERF_MODE = mode; // Store globally so render loop knows to bypass
   setPerfMode(mode);
   document.querySelectorAll('.perf-btn').forEach(b =>
     b.classList.toggle('active', b.dataset.mode === mode));
-  // Adjust postfx: disable SSAO in Fast mode
-  if (composer && composer._xixFastMode !== undefined) {
-    composer._xixFastMode = (mode === 'fast');
-  }
 };
 
-//           PINNED JOYSTICK CSS INJECTION
-// Forces joystick to bottom-left, ignoring any free-roam positioning from ui.js
-function injectJoystickPin() {
-  if (document.getElementById('joystick-pin-style')) return;
-  const s = document.createElement('style');
-  s.id = 'joystick-pin-style';
-  s.textContent = `
-    #joystick-container, .joystick-container, #virtual-joystick {
-      position: fixed !important;
-      bottom: 28px !important;
-      left: 28px !important;
-      right: auto !important;
-      top: auto !important;
-      transform: none !important;
-      touch-action: none;
-      z-index: 999;
-    }
-  `;
-  document.head.appendChild(s);
-}
-
 //           PANEL CLOSE FIX
-// All panels: immediate close on any close-button click, no latency
 function bindAllPanelCloses() {
-  // Use capture phase so it fires before anything else
   document.addEventListener('click', e => {
-    const btn = e.target.closest(
-      '[data-close-panel], .panel-close, .plot-close, #plot-panel-close, ' +
-      '.zone-panel-close, .zone-close, [aria-label="Close"], .btn-close'
-    );
+    const btn = e.target.closest('[data-close-panel], .panel-close, .plot-close, #plot-panel-close, .zone-panel-close, .zone-close, [aria-label="Close"], .btn-close');
     if (!btn) return;
     e.stopPropagation();
-    // Close the nearest panel ancestor
-    const panel = btn.closest(
-      '.panel, .zone-panel, #plot-panel, .product-panel, .info-panel, [class*="-panel"]'
-    );
+    const panel = btn.closest('.panel, .zone-panel, #plot-panel, .product-panel, .info-panel, [class*="-panel"]');
     if (panel) {
       panel.classList.remove('visible', 'open', 'active');
       panel.style.display = '';
     }
-  }, true); // capture = fires first, guaranteed
+  }, true); 
 
-  // Also patch plot-panel-close specifically (belt + braces)
   document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('plot-panel-close')?.addEventListener('click', e => {
       e.stopImmediatePropagation();
@@ -182,10 +127,9 @@ document.addEventListener("DOMContentLoaded", () => {
   bindPlotSystem();
   bindVillaInteriorBtn();
   initAudio();
-  injectJoystickPin();
   bindAllPanelCloses();
   window.__moduleReady = Object.assign(window.__moduleReady || {}, {
-    applyTimePreset, applyWeather, toggleAerial, rotateVillaGLB, switchPerfMode: window.switchPerfMode,
+    applyTimePreset, applyWeather, toggleAerial, switchPerfMode: window.switchPerfMode,
   });
   (window._pendingCalls || []).forEach(({fn,args}) => {
     if(window.__moduleReady[fn]) window.__moduleReady[fn](...args);
@@ -246,75 +190,12 @@ function bootLandingCanvas() {
     ctx.closePath();
     ctx.fill();
 
-    ctx.save();
-    const fW = w * 0.56, fH = h * 0.26;
-    const fX = (w - fW) / 2, fY = h * 0.55;
-    for (let i = 0; i < 10; i++) {
-      const alpha = 0.12 + (i / 10) * 0.15;
-      ctx.fillStyle = i % 2 === 0 ? `rgba(70,155,65,${alpha})` : `rgba(55,130,50,${alpha})`;
-      ctx.fillRect(fX, fY + (i / 10) * fH, fW, fH / 10 + 1);
-    }
-    ctx.strokeStyle = "rgba(248,245,220,0.35)";
-    ctx.lineWidth = 1.2;
-    ctx.strokeRect(fX, fY, fW, fH);
-    for (const xFrac of [0.22, 0.33, 0.5, 0.67, 0.78]) {
-      ctx.beginPath();
-      ctx.moveTo(fX + fW * xFrac, fY);
-      ctx.lineTo(fX + fW * xFrac, fY + fH);
-      ctx.stroke();
-    }
-    ctx.restore();
-
-    for (let i = 0; i < 28; i++) {
-      const depth = i / 28;
-      const spread = w * (0.04 + depth * 0.55);
-      const lightY = h * (0.54 + depth * 0.44);
-      const glow = 0.25 - depth * 0.14 + Math.sin(tick * 18 + i * 0.7) * 0.04;
-      ctx.fillStyle = `rgba(201, 168, 76, ${Math.max(0.04, glow)})`;
-      for (const side of [-1, 1]) {
-        ctx.beginPath();
-        ctx.arc(w * 0.5 + side * spread, lightY, 2.5 + depth * 3, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-
-    for (let i = 0; i < 14; i++) {
-      const px = (i / 13) * w;
-      const pBase = h * 0.51 + Math.sin(i * 1.7) * h * 0.03;
-      const pScale = 0.7 + Math.sin(i * 0.9) * 0.3;
-      drawPalmSilhouette(ctx, px, pBase, pScale, tick + i);
-    }
-
     requestAnimationFrame(draw);
   }
 
   window.addEventListener("resize", resize);
   resize();
   draw();
-}
-
-function drawPalmSilhouette(ctx, x, base, scale, phase) {
-  const h_trunk = 55 * scale;
-  ctx.strokeStyle = `rgba(8, 22, 14, 0.9)`;
-  ctx.lineWidth = 2.5 * scale;
-  ctx.beginPath();
-  ctx.moveTo(x, base);
-  const lean = Math.sin(phase * 0.5) * 4;
-  ctx.bezierCurveTo(x + lean, base - h_trunk * 0.4, x + lean * 1.5, base - h_trunk * 0.7, x + lean * 2, base - h_trunk);
-  ctx.stroke();
-  ctx.lineWidth = 1.2 * scale;
-  for (let i = 0; i < 7; i++) {
-    const angle = (i / 7) * Math.PI * 2 + phase * 0.2;
-    ctx.beginPath();
-    ctx.moveTo(x + lean * 2, base - h_trunk);
-    ctx.quadraticCurveTo(
-      x + lean * 2 + Math.cos(angle) * 22 * scale,
-      base - h_trunk + Math.sin(angle) * 8 * scale - 10 * scale,
-      x + lean * 2 + Math.cos(angle) * 30 * scale,
-      base - h_trunk + Math.sin(angle) * 18 * scale
-    );
-    ctx.stroke();
-  }
 }
 
 //           MASTERPLAN
@@ -392,7 +273,7 @@ function showPlotPanel(plotKey) {
     }
   };
   panel.classList.add("visible");
-  // Close button: guaranteed immediate response
+  
   const closeBtn = document.getElementById("plot-panel-close");
   if (closeBtn) {
     const closeHandler = e => {
@@ -487,7 +368,6 @@ async function openWorldAt(viewKey) {
     setCaption(vp.caption);
   }
 
-  // Set camera eye height for horse mode
   if (horseMode) {
     const cam = getCamera();
     cam.position.y = RIDER_EYE_HEIGHT;
@@ -497,7 +377,6 @@ async function openWorldAt(viewKey) {
 
   if (isMobile()) {
     showJoystick();
-    // Joystick is already pinned via injected CSS
     showEnterPrompt("Drag right to look    Left joystick to walk");
   } else {
     showEnterPrompt("Click to lock cursor    WASD / arrows to walk    Shift to sprint");
@@ -626,10 +505,6 @@ function closeWorld() {
 }
 
 //           RENDER LOOP
-// Optimized: delta capped at 33ms (enforces ~30fps minimum effective delta in Fast)
-// Horse animation ticked each frame with movement detection
-let _prevCamX = 0, _prevCamZ = 0;
-
 function startRenderLoop() {
   if (animFrameId) cancelAnimationFrame(animFrameId);
   const renderer = getRenderer();
@@ -640,7 +515,6 @@ function startRenderLoop() {
 
   function frame() {
     animFrameId = requestAnimationFrame(frame);
-    // Cap delta at 33ms (30fps) to prevent spiral of death on slow devices
     const delta   = Math.min(clock.getDelta(), 0.033);
     const elapsed = (performance.now() - startTime) / 1000;
 
@@ -655,27 +529,15 @@ function startRenderLoop() {
     } else {
       updateControls(delta);
 
-      // Maintain correct eye height
       if (horseMode) {
-        // Only override Y if not in aerial; let controls handle X/Z
-        // Small lerp to feel natural if something external changes Y
         camera.position.y += (RIDER_EYE_HEIGHT - camera.position.y) * Math.min(delta * 12, 1);
       }
 
-      // Detect movement for horse animation
-      const moved = Math.abs(camera.position.x - _prevCamX) > 0.01 ||
-                    Math.abs(camera.position.z - _prevCamZ) > 0.01;
+      const moved = Math.abs(camera.position.x - _prevCamX) > 0.01 || Math.abs(camera.position.z - _prevCamZ) > 0.01;
       _prevCamX = camera.position.x;
       _prevCamZ = camera.position.z;
 
-      // Sync horse position just behind camera (offset so rider doesn't block view)
-      // In a first-person ride, the horse is rendered below/around camera
-      setHorsePosition(
-        camera.position.x,
-        0,
-        camera.position.z,
-        Math.atan2(-Math.sin(camera.rotation.y), -Math.cos(camera.rotation.y)) // face same direction
-      );
+      setHorsePosition(camera.position.x, 0, camera.position.z, getYaw());
       tickHorseAnim(delta, moved);
     }
 
@@ -683,10 +545,9 @@ function startRenderLoop() {
     updateMinimap(camera.position.x, camera.position.z, getYaw());
     updateSpatialAudio(camera.position.x, camera.position.z);
     
-    // TRUE PERFORMANCE BYPASS:
-    // If in Fast mode, bypass the heavy EffectComposer entirely
-    if (PERF_MODE === 'fast') {
-      getRenderer().render(getScene(), getCamera());
+    // OPTIMIZATION: Bypass EffectComposer completely in fast mode
+    if (window.PERF_MODE === 'fast' || !composer) {
+      renderer.render(scene, camera);
     } else {
       renderFrame();
     }
@@ -716,9 +577,8 @@ function bindSectionScrollAnim() {
   document.querySelectorAll(".anim-fade").forEach(el => io.observe(el));
 }
 
-//           VILLA INTERIOR
 //           VILLA INTERIOR (INTEGRATED INTO MAIN WORLD)
-let interiorGroup = null;
+let isVillaBuiltInWorld = false;
 
 function bindVillaInteriorBtn() {
   document.addEventListener("click", e => {
@@ -753,18 +613,18 @@ function openVillaInterior() {
   
   // Make the UI overlay transparent and hide the black canvas so the real world shows through
   overlay.style.background = "transparent";
-  const villaCanvas = document.getElementById("villa-canvas");
-  if (villaCanvas) villaCanvas.style.display = "none";
+  const vCanvas = document.getElementById("villa-canvas");
+  if (vCanvas) vCanvas.style.display = "none";
   
   overlay.classList.add("open");
 
-  if (!interiorGroup) {
-    interiorGroup = new THREE.Group();
-    // Place physically in the North Villa row (x: -8, z: -135), facing South towards the Polo Field
-    interiorGroup.position.set(-8, 0, -135);
-    interiorGroup.rotation.y = Math.PI; 
-    getScene().add(interiorGroup);
-    buildVillaInterior(interiorGroup);
+  // Physically spawn the interior walls into the main scene at the North Villa coordinates
+  if (!isVillaBuiltInWorld) {
+    const intGroup = new THREE.Group();
+    intGroup.position.set(0, 0.1, -132); // Exact North Villa plot
+    getScene().add(intGroup);
+    buildVillaInterior(intGroup);
+    isVillaBuiltInWorld = true;
   }
 
   teleportVillaTo("approach");
@@ -783,12 +643,9 @@ function teleportVillaTo(key) {
   if (!vp) return;
   
   // Translate the local interior coordinates to physical world coordinates
-  const localPos = new THREE.Vector3(...vp.pos);
-  localPos.applyAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI); // apply group rotation
-  
-  const worldX = -8 + localPos.x;
-  const worldY = localPos.y;
-  const worldZ = -135 + localPos.z;
+  const worldX = vp.pos[0];
+  const worldY = vp.pos[1];
+  const worldZ = vp.pos[2] - 132;
   const worldYaw = vp.yaw + Math.PI; // Look the correct direction
 
   setView([worldX, worldY, worldZ], worldYaw, vp.pitch || 0);
