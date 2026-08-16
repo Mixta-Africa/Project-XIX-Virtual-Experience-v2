@@ -47,15 +47,19 @@ let aerialPitch    = -0.685;
 let aerialDragging = false, aerialLastX = 0, aerialLastY = 0;
 const AERIAL_RADIUS = 340, AERIAL_HEIGHT = 280, AERIAL_SPEED = 0.12;
 
-// Movement mode: 'ride' = mounted horse (default), 'walk' = free roam on foot
-let moveMode = 'ride'; // 'ride' | 'walk'
+// Movement mode: 'walk' = free roam on foot (default), 'ride' = mounted horse
+let moveMode = 'walk'; // 'walk' | 'ride'
 let _prevCamX = 0, _prevCamZ = 0;
-let _targetEyeY = RIDER_EYE_HEIGHT; // smoothly interpolated
-let _currentEyeY = RIDER_EYE_HEIGHT;
+let _targetEyeY = FOOT_EYE_HEIGHT;  // walk is default
+let _currentEyeY = FOOT_EYE_HEIGHT;
 
 // Expose toggle for the mode button
 window.setMoveMode = function(mode) {
-  if (mode === 'aerial') { toggleAerial(document.getElementById('btn-aerial')); return; }
+  if (mode === 'aerial') {
+    // Aerial is a toggle — if already aerial, deactivate it; otherwise activate
+    toggleAerial(null);
+    return;
+  }
   moveMode = mode;
   // Tell controls.js who owns camera.position.y to prevent the Y-fight.
   // ride: app.js owns Y (sets _currentEyeY = RIDER_EYE_HEIGHT each frame)
@@ -154,62 +158,107 @@ function injectPerfToggle() {
   document.getElementById('world-overlay')?.appendChild(bar);
 }
 
-// ── MODE TOGGLE: Walk / Ride ───────────────────────────────────────────────
+// ── MODE TOGGLE: Walk / Ride / Aerial ─────────────────────────────────────────
 function injectModeToggle() {
   if (document.getElementById('mode-toggle-bar')) return;
   const style = document.createElement('style');
   style.textContent = `
+    /* ── Mode toggle: bottom-right, clear of joystick (bottom-left) ── */
     #mode-toggle-bar {
-      position:absolute; bottom:28px; right:16px; left:auto; transform:none;
-      z-index:200; display:flex; align-items:center; gap:0;
-      background:rgba(10,20,12,0.82); backdrop-filter:blur(8px);
-      border:1px solid rgba(201,168,76,0.3); border-radius:8px;
-      overflow:hidden; pointer-events:all; font-family:Inter,sans-serif;
+      position: absolute;
+      bottom: 90px;        /* above viewpoint strip */
+      right: 12px;
+      left: auto;
+      transform: none;
+      z-index: 210;
+      display: flex;
+      flex-direction: column; /* stack vertically on mobile so it's narrow */
+      align-items: stretch;
+      gap: 2px;
+      background: rgba(10,20,12,0.88);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border: 1px solid rgba(201,168,76,0.35);
+      border-radius: 10px;
+      overflow: hidden;
+      pointer-events: all;
+      font-family: Inter, sans-serif;
+      min-width: 88px;
     }
     .move-mode-btn {
-      background:none; color:rgba(255,255,255,0.6); border:none;
-      padding:8px 18px; cursor:pointer; font-size:12px; font-weight:500;
-      display:flex; align-items:center; gap:6px; min-height:40px;
-      transition:background .15s, color .15s; white-space:nowrap;
-      -webkit-tap-highlight-color:transparent;
+      background: none;
+      color: rgba(255,255,255,0.65);
+      border: none;
+      padding: 10px 16px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 7px;
+      min-height: 40px;
+      transition: background .15s, color .15s;
+      white-space: nowrap;
+      -webkit-tap-highlight-color: transparent;
+      width: 100%;
     }
     .move-mode-btn.active {
-      background:rgba(201,168,76,0.85); color:#0a1008;
+      background: rgba(201,168,76,0.9);
+      color: #0a1008;
     }
-    .move-mode-btn:hover:not(.active) { background:rgba(255,255,255,0.1); }
-    .mode-divider { width:1px; background:rgba(201,168,76,0.2); align-self:stretch; }
+    .move-mode-btn:hover:not(.active) { background: rgba(255,255,255,0.08); }
+    .mode-divider { height: 1px; background: rgba(201,168,76,0.18); width: 100%; }
+
+    /* Desktop: horizontal row */
+    @media (min-width: 641px) {
+      #mode-toggle-bar {
+        flex-direction: row;
+        bottom: 28px;
+        right: 16px;
+        min-width: unset;
+      }
+      .mode-divider { height: auto; width: 1px; align-self: stretch; }
+      .move-mode-btn { padding: 8px 16px; min-height: 38px; width: auto; }
+    }
+
     /* V key hint — desktop only */
     #view-hint {
-      position:absolute; bottom:84px; right:16px; z-index:200;
-      font-size:10px; color:rgba(255,255,255,0.35); letter-spacing:.06em;
-      pointer-events:none; font-family:Inter,sans-serif;
+      position: absolute;
+      bottom: 76px;
+      right: 16px;
+      z-index: 200;
+      font-size: 10px;
+      color: rgba(255,255,255,0.32);
+      letter-spacing: .06em;
+      pointer-events: none;
+      font-family: Inter, sans-serif;
+      transition: opacity 1s;
     }
-    /* Billboard: scale up toggle */
-    .device-billboard #mode-toggle-bar { bottom:110px; right:16px; }
-    .device-billboard .move-mode-btn { padding:14px 26px; font-size:0.9rem; min-height:56px; }
-    /* Mobile: keep right-anchored, tighten padding */
-    @media(max-width:640px) {
-      #mode-toggle-bar { bottom:28px; right:12px; }
-      .move-mode-btn { padding:8px 12px; font-size:11px; }
+
+    /* Quality toggle — hide on mobile to reduce clutter */
+    @media (max-width: 640px) {
+      #perf-toggle-bar { display: none; }
     }
   `;
   document.head.appendChild(style);
 
   const bar = document.createElement('div');
   bar.id = 'mode-toggle-bar';
+  // Walk is default active
   bar.innerHTML = `
-    <button class="move-mode-btn active" data-mode="ride"
-      onclick="window.setMoveMode('ride')" aria-label="Ride mode — mounted on horse">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+    <button class="move-mode-btn" data-mode="ride"
+      onclick="window.setMoveMode('ride')" aria-label="Ride mode">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
         <path d="M4 17c1-2 3-3 5-3s3 1 4 2 3 2 5 1"/>
         <circle cx="7" cy="11" r="2"/><path d="M9 11c1-3 4-5 7-4l2 1 1 3-2 1"/>
       </svg>
       Ride
     </button>
     <div class="mode-divider"></div>
-    <button class="move-mode-btn" data-mode="walk"
-      onclick="window.setMoveMode('walk')" aria-label="Walk mode — explore on foot">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+    <button class="move-mode-btn active" data-mode="walk"
+      onclick="window.setMoveMode('walk')" aria-label="Walk mode">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
         <circle cx="12" cy="5" r="1.5"/>
         <path d="M9 19l1-5 2 3 2-3 1 5M8 12l1-3 3 2 3-2 1 3"/>
       </svg>
@@ -217,23 +266,22 @@ function injectModeToggle() {
     </button>
     <div class="mode-divider"></div>
     <button class="move-mode-btn" data-mode="aerial"
-      onclick="toggleAerial(document.getElementById('btn-aerial'))" aria-label="Aerial view">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-        <circle cx="12" cy="12" r="9"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/>
+      onclick="window.setMoveMode('aerial')" aria-label="Aerial view">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+        <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/>
       </svg>
       Aerial
     </button>
   `;
   document.getElementById('world-overlay')?.appendChild(bar);
 
-  // V key hint for desktop
-  if (!('ontouchstart' in window)) {
+  // V key hint — desktop only, fades after 8s
+  if (!('ontouchstart' in window) && navigator.maxTouchPoints === 0) {
     const hint = document.createElement('div');
     hint.id = 'view-hint';
-    hint.textContent = 'V key — toggle 1st / 3rd person';
+    hint.textContent = 'V — 1st / 3rd person';
     document.getElementById('world-overlay')?.appendChild(hint);
-    // Hide after 8 seconds
-    setTimeout(() => hint.style.opacity = '0', 8000);
+    setTimeout(() => { hint.style.opacity = '0'; }, 8000);
   }
 }
 
@@ -469,22 +517,66 @@ async function openWorldAt(viewKey) {
   resizeWorld();
   window.addEventListener("resize",resizeWorld);
 
-  // Go directly to target viewpoint — no intro animation.
-  // The world should feel instantly ready, not forced through a sequence.
+  // Set viewpoint AFTER overlay is open so camera aspect is correct
   setView(vp.pos, vp.yaw, vp.pitch || 0);
   setCaption(vp.caption);
-  // Seed eye height correctly for current move mode
+  // Seed eye height correctly for current move mode (walk default)
   const cam = getCamera();
-  cam.position.y = (moveMode === 'ride') ? RIDER_EYE_HEIGHT : FOOT_EYE_HEIGHT;
-  _currentEyeY = cam.position.y;
-  _targetEyeY  = cam.position.y;
+  const startY = (moveMode === 'ride') ? RIDER_EYE_HEIGHT : FOOT_EYE_HEIGHT;
+  cam.position.y = startY;
+  _currentEyeY = startY;
+  _targetEyeY  = startY;
 
-  // Sync Y ownership with initial move mode (ride by default — app.js owns Y)
+  // Sync Y ownership with current move mode (walk = controls.js owns Y)
   setYOwner(moveMode === 'ride' ? 'app' : 'controls');
   activate();
   if(isMobile()){
-    showJoystick(); // pinned bottom-left by ui.js
-    showEnterPrompt("Drag right to look  •  Joystick to move");
+    showJoystick();
+    // Inject sprint button above the joystick — clean position, not floating
+    if (!document.getElementById('sprint-btn-mobile')) {
+      const spStyle = document.createElement('style');
+      spStyle.textContent = `
+        #sprint-btn-mobile {
+          position: absolute;
+          bottom: 155px;
+          left: 28px;
+          z-index: 210;
+          background: rgba(10,20,12,0.82);
+          border: 1px solid rgba(201,168,76,0.4);
+          color: rgba(201,168,76,0.9);
+          border-radius: 8px;
+          padding: 8px 18px;
+          font-family: Inter, sans-serif;
+          font-size: 11px;
+          font-weight: 600;
+          letter-spacing: .08em;
+          pointer-events: all;
+          -webkit-tap-highlight-color: transparent;
+          user-select: none;
+          touch-action: none;
+        }
+        #sprint-btn-mobile.active {
+          background: rgba(201,168,76,0.9);
+          color: #0a1008;
+        }
+      `;
+      document.head.appendChild(spStyle);
+      const spBtn = document.createElement('button');
+      spBtn.id = 'sprint-btn-mobile';
+      spBtn.textContent = 'SPRINT';
+      spBtn.addEventListener('touchstart', e => {
+        e.preventDefault();
+        window.__touchSprint = true;
+        spBtn.classList.add('active');
+      }, { passive: false });
+      spBtn.addEventListener('touchend', e => {
+        e.preventDefault();
+        window.__touchSprint = false;
+        spBtn.classList.remove('active');
+      }, { passive: false });
+      document.getElementById('world-overlay')?.appendChild(spBtn);
+    }
+    // Don't show enter prompt on mobile — joystick is self-evident
   } else {
     showEnterPrompt("Click to lock cursor  •  WASD to walk  •  Shift to sprint");
   }
@@ -524,20 +616,23 @@ function toggleAerial(btn){
   if(aerialOrbit){
     btn&&btn.classList.add("active");
     deactivate();
-    aerialAngle=0; aerialYawOffset=0; aerialPitch=-0.685; // atan(AERIAL_HEIGHT/AERIAL_RADIUS)
-    setCaption("Aerial view — orbits automatically — drag to steer");
+    aerialAngle=0; aerialYawOffset=0; aerialPitch=-0.685;
+    setCaption("Aerial view — drag to steer");
     bindAerialPointer();
+    // Mark aerial button active in mode toggle
+    document.querySelectorAll('.move-mode-btn').forEach(b =>
+      b.classList.toggle('active', b.dataset.mode === 'aerial')
+    );
   } else {
     btn&&btn.classList.remove("active");
     unbindAerialPointer();
     activate();
-    // Return to ground at current XZ position, don't teleport to field_centre
     const cam = getCamera();
     const targetY = (moveMode === 'ride') ? RIDER_EYE_HEIGHT : FOOT_EYE_HEIGHT;
     cam.position.y = targetY;
     _currentEyeY = targetY;
     _targetEyeY  = targetY;
-    // Update mode toggle to reflect restored mode
+    // Restore mode toggle to current ground mode
     document.querySelectorAll('.move-mode-btn').forEach(b =>
       b.classList.toggle('active', b.dataset.mode === moveMode)
     );
