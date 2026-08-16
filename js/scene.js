@@ -34,9 +34,9 @@ import {
 export let PERF_MODE = 'fast';
 
 const PERF_SETTINGS = {
-  fast:     { shadowMapSize: 1024, pixelRatio: 1.5, fogDensity: 0.0010, palmTickDiv: 6 },
-  balanced: { shadowMapSize: 2048, pixelRatio: 1.75,fogDensity: 0.0008, palmTickDiv: 3 },
-  rich:     { shadowMapSize: 4096, pixelRatio: 2.0, fogDensity: 0.0006, palmTickDiv: 1 },
+  fast:     { shadowMapSize: 1024, pixelRatio: 1.5, fogDensity: 0.00042, palmTickDiv: 6 },
+  balanced: { shadowMapSize: 2048, pixelRatio: 1.75,fogDensity: 0.00032, palmTickDiv: 3 },
+  rich:     { shadowMapSize: 4096, pixelRatio: 2.0, fogDensity: 0.00022, palmTickDiv: 1 },
 };
 
 export function setPerfMode(mode) {
@@ -913,7 +913,7 @@ export function initScene(canvas) {
   renderer.shadowMap.enabled   = true;
   renderer.shadowMap.type      = THREE.PCFSoftShadowMap;
   renderer.toneMapping         = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.50; // sky handles exposure now
+  renderer.toneMappingExposure = 0.85; // sky handles exposure now
   renderer.outputColorSpace    = THREE.SRGBColorSpace;
 
   scene  = new THREE.Scene();
