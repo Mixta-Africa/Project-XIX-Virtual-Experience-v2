@@ -14,8 +14,15 @@
   <title>Project XIX | Mixta Africa — High Fidelity</title>
   <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
   <link rel="stylesheet" href="css/styles.css" />
+  
+  <!-- Mobile Debugger & Topbar Dropdown Styles -->
+  <script>
+    window.onerror = function(msg, url, lineNo) {
+      alert("CRASH REPORT:\n\n" + msg + "\n\nFile: " + (url ? url.split('/').pop() : 'Unknown') + "\nLine: " + lineNo);
+      return false;
+    };
+  </script>
   <style>
-    /* Embedded Topbar Dropdown CSS to ensure it renders over everything */
     .topbar-dropdown { position: relative; display: inline-block; }
     .topbar-dropdown-menu {
       display: none; position: absolute; top: calc(100% + 8px); right: 0;
@@ -351,7 +358,6 @@
       <div id="scene-caption" class="world-caption">Project XIX — Virtual Estate</div>
     </div>
     <div class="world-controls">
-      
       <!-- Time Dropdown -->
       <div class="topbar-dropdown" tabindex="0">
         <button class="world-btn" aria-label="Time of day">
@@ -392,8 +398,18 @@
         </div>
       </div>
       
-      <button class="world-btn world-btn-aerial" onclick="toggleAerial(this)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg> Aerial</button>
-      <button class="world-btn world-btn-close" id="btn-close-world"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Exit</button>
+      <button class="world-btn world-btn-aerial" id="btn-aerial" aria-label="Toggle aerial orbit view" onclick="toggleAerial(this)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>
+        Aerial
+      </button>
+      <button class="world-btn world-btn-vr" id="vr-btn" aria-label="Enter VR mode">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 8s3-2 10-2 10 2 10 2v6s-3 2-10 2-10-2-10-2V8z"/><circle cx="8" cy="11" r="2"/><circle cx="16" cy="11" r="2"/></svg>
+        VR
+      </button>
+      <button class="world-btn world-btn-close" id="btn-close-world" aria-label="Return to website">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        Exit
+      </button>
     </div>
   </div>
 
@@ -670,20 +686,26 @@ window._pendingCalls = [];
   };
 });
 </script>
-<script type="module" src="js/app.js"></script>
+<!-- CACHE BUSTER ADDED TO APP.JS -->
+<script type="module" src="js/app.js?v=999"></script>
+
 <script type="module">
 import { initInterior, openInterior, closeInterior, resizeInterior, getInteriorRooms, INTERIORS } from "./js/interior.js";
 
+// Init interior renderer on the canvas
 const intCanvas = document.getElementById("interior-canvas");
 initInterior(intCanvas);
 
+// Expose to window
 window.openInteriorView = function(buildingType, roomKey) {
   const overlay = document.getElementById("interior-overlay");
   const bld = INTERIORS[buildingType];
   if (!bld) return;
 
+  // Set header
   overlay.querySelector(".int-building-name").textContent = bld.name;
 
+  // Build room strip
   const strip = document.getElementById("int-room-strip");
   strip.innerHTML = "";
   bld.rooms.forEach(room => {
@@ -701,15 +723,18 @@ window.openInteriorView = function(buildingType, roomKey) {
     strip.appendChild(btn);
   });
 
+  // Activate first room
   strip.querySelector(".int-room-btn")?.classList.add("active");
   const firstRoom = bld.rooms[0];
   overlay.querySelector(".int-room-label").textContent = firstRoom.label;
   overlay.querySelector(".int-room-hint").textContent  = firstRoom.hint || firstRoom.sublabel;
 
+  // Size canvas
   const W = window.innerWidth, H = window.innerHeight;
   intCanvas.width  = W; intCanvas.height = H;
   resizeInterior(W, H);
 
+  // Open
   openInterior(buildingType, firstRoom.key);
   overlay.classList.add("open");
   document.body.classList.add("interior-open");
@@ -730,10 +755,12 @@ window.addEventListener("resize", () => {
 </script>
 <script type="module">
   import { openProductPanel, closeProductPanel, resizePanelViewer } from "./js/product-panel.js";
+  // Register immediately AND set up a persistent getter so app.js overwrite cannot break it
   window.__moduleReady = window.__moduleReady || {};
   window.__moduleReady.showProductPanel = openProductPanel;
   window.__moduleReady.closeProductPanel = closeProductPanel;
   window.closeProductPanel = closeProductPanel;
+  // Re-register after a tick in case app.js DOMContentLoaded fires later and overwrites
   setTimeout(() => {
     window.__moduleReady = window.__moduleReady || {};
     window.__moduleReady.showProductPanel = openProductPanel;
@@ -742,6 +769,7 @@ window.addEventListener("resize", () => {
   window.addEventListener("resize", resizePanelViewer, { passive: true });
 </script>
 
+<!-- Pointer lock body class for crosshair -->
 <script>
   document.addEventListener("pointerlockchange", () => {
     document.body.classList.toggle("pointer-locked", !!document.pointerLockElement);
