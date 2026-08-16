@@ -163,9 +163,22 @@ const grassCardMat = new THREE.MeshStandardMaterial({
   })(),
 });
 
-const grassCards = [];
+const instancedGrassSystems = [];
 
 export function addGrassField(centerX, centerZ, radiusX, radiusZ, density = 400) {
+  // Base geometry for a single card, origin at bottom center
+  const geometry = new THREE.PlaneGeometry(1, 1);
+  geometry.translate(0, 0.5, 0); 
+  
+  // Create ONE InstancedMesh instead of hundreds of individual meshes
+  const instancedMesh = new THREE.InstancedMesh(geometry, grassCardMat, density);
+  instancedMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  instancedMesh.receiveShadow = true;
+  instancedMesh.castShadow = false;
+
+  const dummy = new THREE.Object3D();
+  const positions = [];
+
   for (let i = 0; i < density; i++) {
     const angle  = Math.random() * Math.PI * 2;
     const rx     = (Math.random() * 0.5 + 0.5) * radiusX;
@@ -175,35 +188,43 @@ export function addGrassField(centerX, centerZ, radiusX, radiusZ, density = 400)
     const h      = 0.35 + Math.random() * 0.45;
     const w      = 0.18 + Math.random() * 0.18;
 
-    const card = new THREE.Mesh(new THREE.PlaneGeometry(w, h), grassCardMat);
-    card.position.set(x, h / 2, z);
-    card.rotation.y = Math.random() * Math.PI;
-    card.castShadow  = false;
-    card.receiveShadow = true;
-    grassCards.push(card);
+    dummy.position.set(x, 0, z);
+    dummy.scale.set(w, h, 1);
+    dummy.rotation.y = Math.random() * Math.PI;
+    dummy.updateMatrix();
+    instancedMesh.setMatrixAt(i, dummy.matrix);
+    
+    // Store original coordinates so we can billboard them later
+    positions.push({ x, z, scaleX: w, scaleY: h });
   }
-  return grassCards.slice(-density); // return just added cards
+
+  instancedMesh.instanceMatrix.needsUpdate = true;
+  instancedGrassSystems.push({ mesh: instancedMesh, positions });
+  
+  return [instancedMesh]; // Return array to match scene.js expectations
 }
 
-// Billboard grass cards toward camera each frame
+// Dummy object to calculate math without creating memory garbage
+const dummyGrass = new THREE.Object3D();
+
 export function tickGrass(camera) {
   const cx = camera.position.x, cz = camera.position.z;
-  const FADE_START = 120, FADE_END = 200;
-  grassCards.forEach(card => {
-    const dx = cx - card.position.x, dz = cz - card.position.z;
-    const dist = Math.sqrt(dx*dx + dz*dz);
-    // Billboard on Y axis
-    card.rotation.y = Math.atan2(dx, dz);
-    // Fade out at distance (performance + natural look)
-    const opacity = 1 - Math.max(0, Math.min(1, (dist - FADE_START) / (FADE_END - FADE_START)));
-    if (card.material.opacity !== opacity) {
-      card.material.transparent = opacity < 1;
-      card.material.opacity     = opacity;
+  
+  instancedGrassSystems.forEach(system => {
+    const { mesh, positions } = system;
+    
+    for (let i = 0; i < positions.length; i++) {
+      const pos = positions[i];
+      dummyGrass.position.set(pos.x, 0, pos.z);
+      dummyGrass.scale.set(pos.scaleX, pos.scaleY, 1);
+      // Billboard to face camera
+      dummyGrass.rotation.y = Math.atan2(cx - pos.x, cz - pos.z);
+      dummyGrass.updateMatrix();
+      mesh.setMatrixAt(i, dummyGrass.matrix);
     }
-    card.visible = dist < FADE_END;
+    mesh.instanceMatrix.needsUpdate = true;
   });
 }
-
 //        ANIMATED WATER TICK                                                                                                                                                                      
 export function tickWater(waterMeshes, elapsed) {
   waterMeshes.forEach(m => {
