@@ -181,7 +181,7 @@ export function createAtmosphericSky(scene, renderer) {
   const sky=new Sky(); sky.scale.setScalar(10000); scene.add(sky);
   const sun=new THREE.Vector3();
   const u=sky.material.uniforms;
-  u['turbidity'].value=3.5; u['rayleigh'].value=2.0;
+  u['turbidity'].value=2.5; u['rayleigh'].value=0.9;
   u['mieCoefficient'].value=0.006; u['mieDirectionalG'].value=0.85;
   const phi=THREE.MathUtils.degToRad(68), theta=THREE.MathUtils.degToRad(195);
   sun.setFromSphericalCoords(1,phi,theta); u['sunPosition'].value.copy(sun);
@@ -191,9 +191,9 @@ export function createAtmosphericSky(scene, renderer) {
 
 export function setSkyForTime(skyUniforms,sun,sunLight,time) {
   const presets={
-    morning:  {phi:18,theta:95, turb:4.5,ray:2.5,exp:0.72,sunCol:0xffd080,sunInt:1.8},
-    afternoon:{phi:68,theta:195,turb:3.5,ray:2.0,exp:0.85,sunCol:0xfff4e0,sunInt:2.6},
-    sunset:   {phi:5, theta:268,turb:7.0,ray:3.5,exp:0.95,sunCol:0xff6820,sunInt:1.6},
+    morning:  {phi:18,theta:95, turb:3.5,ray:1.2,exp:0.72,sunCol:0xffd080,sunInt:1.8},
+    afternoon:{phi:68,theta:195,turb:2.5,ray:0.9,exp:0.88,sunCol:0xfff4e0,sunInt:2.6},
+    sunset:   {phi:5, theta:268,turb:5.5,ray:2.0,exp:0.95,sunCol:0xff6820,sunInt:1.6},
     night:    {phi:-12,theta:180,turb:1.0,ray:0.4,exp:0.18,sunCol:0x304870,sunInt:0.08},
   };
   const p=presets[time]||presets.afternoon;
