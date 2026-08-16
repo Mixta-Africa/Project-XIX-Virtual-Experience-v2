@@ -18,7 +18,8 @@ import {
   highlightPlot, setPerfMode, PERF_MODE,
   RIDER_EYE_HEIGHT, FOOT_EYE_HEIGHT, tickHorse, tickHorseAnim,
   setHorsePosition, getThirdPersonCameraOffset, setAerialMode,
-} from "./scene.js?v=35";
+  getSunLight, getHorseGroup,
+} from "./scene.js?v=36";
 import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics } from "./graphics.js";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
@@ -137,12 +138,9 @@ function applyTimePreset(name) {
   try { setBloomForTime(name); } catch(e){}
   const sc = getScene();
   if (sc && sc.fog) { sc.fog.color.set(p.fog); sc.fog.density = p.fogD; }
-  if (sc) sc.traverse(o => {
-    if (o.isDirectionalLight && o.castShadow) {
-      o.color.setHex(p.sunCol); o.intensity = p.sunInt; o.position.set(...p.sunPos);
-    }
-    if (o.isHemisphereLight) o.intensity = p.hemiInt || 1.2;
-  });
+  // Update lights directly via cached refs — no scene.traverse
+  const _sun = typeof getSunLight === 'function' ? getSunLight() : null;
+  if (_sun) { _sun.color.setHex(p.sunCol); _sun.intensity = p.sunInt; _sun.position.set(...p.sunPos); }
   const r = getRenderer();
   if (r) r.toneMappingExposure = p.exp;
 }
@@ -1029,8 +1027,8 @@ function startRenderLoop(){
       _prevCamX = camera.position.x;
       _prevCamZ = camera.position.z;
 
-      // Horse: use getObjectByName (O(1)) not traverse (O(n))
-      const _horseRoot = getScene()?.getObjectByName('horseRider');
+      // Horse: direct reference via exported getter — O(1), no scene walk
+      const _horseRoot = getHorseGroup();
 
       if (moveMode === 'ride') {
         if (_horseRoot) _horseRoot.visible = true;
