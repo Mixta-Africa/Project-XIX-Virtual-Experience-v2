@@ -821,6 +821,73 @@ export function getHotspotAtRay(raycaster) {
   return hits[0].object.userData.productKey;
 }
 
+// ─── VILLA HEDGES ────────────────────────────────────────────────────────────
+// Instanced box-hedges around each villa plot perimeter.
+// Uses a single InstancedMesh per villa ring side for performance.
+// Each villa gets 4 hedge segments: front, back, left, right — gaps at driveway entrance.
+const _hedgeInstData = []; // collected during addVillaRing, built once after
+
+function collectVillaHedge(x, z, ry) {
+  _hedgeInstData.push({ x, z, ry });
+}
+
+function buildAllVillaHedges() {
+  if (_hedgeInstData.length === 0) return;
+  const count = _hedgeInstData.length;
+  // Hedge segment geometry: 1m wide, 1.4m tall, variable length set via scale
+  const geo = new THREE.BoxGeometry(1, 1.4, 1);
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0x2d5a1e, roughness: 0.95, metalness: 0, envMapIntensity: 0.2
+  });
+
+  // Each villa gets 6 hedge segments: 2 long sides + 2 short ends (with driveway gap)
+  const SEGS_PER_VILLA = 6;
+  const total = count * SEGS_PER_VILLA;
+  const mesh = new THREE.InstancedMesh(geo, mat, total);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  mesh.frustumCulled = false;
+
+  const dummy = new THREE.Object3D();
+  let idx = 0;
+
+  _hedgeInstData.forEach(({ x, z, ry }) => {
+    // Villa footprint: ~20m wide (x-local) × 16m deep (z-local)
+    const W = 10.5, D = 8.5, H = 0.7, T = 0.55;
+    // Hedge sits just outside the villa footprint edge
+    const segments = [
+      // Back hedge (full width — no gap needed at back)
+      { lx: 0,     lz: -(D+T),  sx: W*2, sz: T },
+      // Front hedge left of driveway gap (2m gap centred)
+      { lx: -(W*0.5+1), lz: D+T, sx: W-2, sz: T },
+      // Front hedge right of driveway gap
+      { lx:  (W*0.5+1), lz: D+T, sx: W-2, sz: T },
+      // Left side hedge
+      { lx: -(W+T),  lz: 0,   sx: T, sz: D*2 },
+      // Right side (back half — leave open near driveway for visibility)
+      { lx:  (W+T),  lz: -D*0.3, sx: T, sz: D*1.4 },
+      // Right side (front segment)
+      { lx:  (W+T),  lz:  D*0.7, sx: T, sz: D*0.6 },
+    ];
+
+    const cosR = Math.cos(ry), sinR = Math.sin(ry);
+    segments.forEach(seg => {
+      // Rotate local offsets by villa rotation
+      const wx = x + seg.lx * cosR - seg.lz * sinR;
+      const wz = z + seg.lx * sinR + seg.lz * cosR;
+      dummy.position.set(wx, H, wz);
+      dummy.rotation.set(0, ry, 0);
+      dummy.scale.set(seg.sx, 1, seg.sz);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(idx++, dummy.matrix);
+    });
+  });
+
+  mesh.count = idx; // trim to actual used count
+  mesh.instanceMatrix.needsUpdate = true;
+  scene.add(mesh);
+}
+
 // ─── FIX 08: AO CONTACT SHADOWS ──────────────────────────────────────────────
 function addVillaContactShadow(x, z) {
   const aoMat = new THREE.MeshBasicMaterial({
@@ -925,6 +992,9 @@ export function updateSkyForTime(timeName) {
     scene.fog.color.set(fogColors[timeName] || 0x8ab8cc);
   }
   setBloomForTime(timeName);
+  // Night / sunset: activate security lamp lights and building window glow
+  updateNightLights(timeName);
+  updateBuildingNightGlow(timeName);
 }
 
 // Keep updateSky for backwards compat with app.js time presets
@@ -956,6 +1026,95 @@ function buildLighting() {
   // Ambient bounce — warm low sky light
   const ambient = new THREE.DirectionalLight(0xb8d0ff, 0.28);
   ambient.position.set(-80, 20, 80); scene.add(ambient);
+}
+
+// ─── NIGHT SECURITY LIGHTS ────────────────────────────────────────────────────
+// Warm amber point lights placed along roads and near buildings for night ambiance.
+// Added lazily after scene loads; toggled via updateNightLights().
+const _nightLights = [];
+let   _nightLightsActive = false;
+
+function buildNightLights() {
+  if (_nightLights.length > 0) return; // already built
+  // Road lamp posts along main perimeter roads
+  const lampPositions = [
+    // West road lamps
+    [-155,0,-80],[-155,0,-40],[-155,0,0],[-155,0,40],[-155,0,80],
+    // East road lamps
+    [155,0,-80],[155,0,-40],[155,0,0],[155,0,40],[155,0,80],
+    // South entrance boulevard
+    [-120,0,215],[-60,0,215],[0,0,215],[60,0,215],[120,0,215],
+    // North crossroad
+    [-80,0,-105],[-20,0,-105],[40,0,-105],[100,0,-105],
+    // Clubhouse surrounds
+    [-40,0,108],[0,0,108],[40,0,108],
+    // Stables area
+    [-360,0,80],[-375,0,60],[-390,0,40],
+  ];
+
+  const postMat = new THREE.MeshStandardMaterial({ color:0x2a3020, roughness:.7 });
+  const globeMat = new THREE.MeshStandardMaterial({
+    color:0xffcc66, emissive:0xffaa33, emissiveIntensity:2.0,
+    roughness:.3, transparent:true, opacity:.9
+  });
+
+  lampPositions.forEach(([x, , z]) => {
+    // Lamp post
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08,0.10,5,6), postMat);
+    post.position.set(x, 2.5, z);
+    post.castShadow = false;
+    scene.add(post);
+
+    // Lamp globe (emissive sphere)
+    const globe = new THREE.Mesh(new THREE.SphereGeometry(0.22,8,6), globeMat);
+    globe.position.set(x, 5.25, z);
+    scene.add(globe);
+    _nightLights.push({ post, globe });
+
+    // Warm point light — low range to keep GPU load manageable
+    const pt = new THREE.PointLight(0xffaa44, 0, 22, 1.8); // intensity 0 by default
+    pt.position.set(x, 5.0, z);
+    scene.add(pt);
+    _nightLights.push({ pt });
+  });
+}
+
+export function updateNightLights(timeName) {
+  const isNight = (timeName === 'night');
+  const isSunset = (timeName === 'sunset');
+
+  // Build lamp geometry once on first night trigger
+  if (isNight || isSunset) buildNightLights();
+
+  _nightLights.forEach(item => {
+    if (item.pt) {
+      // Night: full brightness; sunset: half; day: off
+      item.pt.intensity = isNight ? 2.8 : isSunset ? 1.2 : 0;
+    }
+    if (item.globe) {
+      item.globe.material.emissiveIntensity = isNight ? 2.5 : isSunset ? 1.2 : 0;
+      item.globe.material.opacity = (isNight || isSunset) ? 0.95 : 0.0;
+    }
+  });
+  _nightLightsActive = isNight;
+}
+
+// Window glow for villas at night — set emissiveIntensity on glass materials
+export function updateBuildingNightGlow(timeName) {
+  if (!scene) return;
+  const isNight = timeName === 'night';
+  const isSunset = timeName === 'sunset';
+  const emissiveInt = isNight ? 0.8 : isSunset ? 0.3 : 0.0;
+  const emissiveCol = isNight ? new THREE.Color(0xffe8b0) : new THREE.Color(0xffcc88);
+  scene.traverse(obj => {
+    if (!obj.isMesh || !obj.material) return;
+    const name = (obj.material.name || '').toLowerCase();
+    if (name.includes('glass') || name.includes('window') || name.includes('glaz')) {
+      obj.material.emissive = emissiveCol;
+      obj.material.emissiveIntensity = emissiveInt;
+      obj.material.needsUpdate = true;
+    }
+  });
 }
 
 // ─── GEOMETRY HELPERS ─────────────────────────────────────────────────────────
@@ -1100,11 +1259,13 @@ function addRoads(){
 
 function addLake(){
   const wm=createWaterMat();
+  // Main lake body
   const lb=new THREE.Mesh(new THREE.BoxGeometry(195,.35,22),wm);
   lb.position.set(30,.16,-115); lb.receiveShadow=true; scene.add(lb); waterMeshes.push(lb);
-  for(const [ex,sc2] of [[-60,.9],[120,1.0]]){
-    const ep=new THREE.Mesh(new THREE.SphereGeometry(13,12,4),wm);
-    ep.position.set(ex,.05,-115); ep.scale.set(1,.2,sc2); scene.add(ep); waterMeshes.push(ep);
+  // End-caps: flat CylinderGeometry discs — no dome bulge above waterline
+  for(const ex of [-68, 128]){
+    const ep=new THREE.Mesh(new THREE.CylinderGeometry(11,11,.35,32),wm);
+    ep.position.set(ex,.16,-115); scene.add(ep); waterMeshes.push(ep);
   }
   const sg=MATS.grassGreen();
   s(plane(220,6,sg,[30,.12,-104])); s(plane(220,6,sg,[30,.12,-126]));
@@ -1256,6 +1417,7 @@ function addVillaRing(){
     registerVillaFootprint(x,z);
     placeVillaGLBWithLOD(x,z,ry,plotKey);
     addVillaContactShadow(x,z); // IMPROVEMENT 8
+    collectVillaHedge(x,z,ry); // hedge ring around this villa
     const fx=Math.sin(ry)*(-9),fz=Math.cos(ry)*(-9),rx=Math.cos(ry)*8,rz=-Math.sin(ry)*8;
     if(!isInNoBuildZone(x+rx+fx,z+rz+fz)) cypressPositions.push([x+rx+fx,z+rz+fz]);
     if(!isInNoBuildZone(x-rx+fx,z-rz+fz)) cypressPositions.push([x-rx+fx,z-rz+fz]);
@@ -1270,6 +1432,8 @@ function addVillaRing(){
   for(const side of[-1,1]) [65,93,121].forEach(xa=>{placeV(side*xa,105+xa*.04,0);});
   // IMPROVEMENT 1: instanced cypress instead of individual meshes
   buildInstancedCypress(cypressPositions);
+  // Build all villa hedges as single InstancedMesh
+  buildAllVillaHedges();
 }
 
 function addLoftTerraces(){
@@ -1371,9 +1535,10 @@ export function tickScene(elapsed, camera){
 }
 let _prevElapsed = 0;
 
-export function getRenderer() { return renderer; }
-export function getScene()    { return scene;    }
-export function getCamera()   { return camera;   }
-export function getClock()    { return clock;    }
+export function getRenderer()   { return renderer;   }
+export function getScene()      { return scene;      }
+export function getCamera()     { return camera;     }
+export function getClock()      { return clock;      }
+export function getHorseGroup() { return horseGroup; }
 
 // Export audio init so app.js can call it on first user gesture
