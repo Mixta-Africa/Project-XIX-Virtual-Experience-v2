@@ -219,16 +219,30 @@ export function buildViewpointStrip(container, onSelect) {
         menu.appendChild(sbtn);
       });
 
-      btn.addEventListener("click", () => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
         const isOpen = menu.style.display !== "none";
+        
         document.querySelectorAll(".vp-dropdown").forEach(d=>d.style.display="none");
         document.querySelectorAll(".vp-chevron").forEach(ch=>ch.innerHTML="&#9652;");
-        menu.style.display = isOpen ? "none" : "flex";
-        btn.querySelector(".vp-chevron").innerHTML = isOpen ? "&#9652;" : "&#9662;";
+        
+        if (!isOpen) {
+          menu.style.display = "flex";
+          // Break out of the overflow container
+          menu.style.position = "fixed";
+          const rect = btn.getBoundingClientRect();
+          menu.style.left = rect.left + "px";
+          menu.style.bottom = (window.innerHeight - rect.top + 5) + "px";
+          menu.style.zIndex = "9999";
+          btn.querySelector(".vp-chevron").innerHTML = "&#9662;";
+        } else {
+          btn.querySelector(".vp-chevron").innerHTML = "&#9652;";
+        }
       });
 
       wrapper.appendChild(btn);
-      wrapper.appendChild(menu);
+      // Append to body so it doesn't get clipped by the scrolling strip
+      document.body.appendChild(menu);
 
     } else {
       // Simple button: teleport + open product panel
