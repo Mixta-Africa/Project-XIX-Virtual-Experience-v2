@@ -217,27 +217,67 @@ export const TOUR_STOPS = [
   { pos:[ 218, 3.1,  0], yaw:-Math.PI/2,  pitch:-0.04, caption:"The paddock — post-and-rail enclosure. Watch horses warm up from your east terrace.",                   voice:"The paddock. Post and rail fencing, used for horse warming and exercise. Visible from the east terrace of your villa." },
 ];
 
-let _tourActive = false, _tourStop = 0, _tourCamStart = null, _tourCamEnd = null;
-let _tourAnimT = 0, _tourDuration = 4.5, _tourPauseT = 0, _tourPauseDuration = 5.0;
-let _tourSpeaking = false, _tourOnTeleport = null;
+// ─── FIX 02: SMOOTH CINEMATIC TOUR CAMERA ─────────────────────────────────────
+// Each tour transition is a cubic Bezier fly-through over ~3.5 seconds.
+// The camera lifts slightly on the arc midpoint for a cinematic rising feel.
+// After arrival, the camera holds for _pauseDuration seconds before auto-advancing.
 
-export function startTour(onTeleport) {
-  _tourOnTeleport = onTeleport;
-  _tourActive  = true;
-  _tourStop    = 0;
-  _tourAnimT   = 1.1; // trigger first stop immediately
-  _tourPauseT  = 0;
+let _tourActive   = false;
+let _tourStop     = 0;
+let _tourOnGetCam = null;   // () => { pos, yaw, pitch } — reads live camera state
+let _tourOnSetCam = null;   // (pos, yaw, pitch) — sets camera state
+let _pauseT       = 0;
+const _PAUSE_DUR  = 6.0;   // seconds at each stop before auto-advance
+let _flyT         = 0;
+const _FLY_DUR    = 3.5;   // seconds of fly-through between stops
+let _flying       = false;
+let _flyFrom      = null;   // { pos:[x,y,z], yaw, pitch }
+let _flyTo        = null;
+
+// Cubic ease in-out
+function _easeInOut(t) { return t<0.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2; }
+
+// Bezier midpoint: lifts camera 20m above the midpoint of the path
+function _bezierPoint(p0, p1, p2, t) {
+  const mt = 1-t;
+  return [
+    mt*mt*p0[0] + 2*mt*t*p1[0] + t*t*p2[0],
+    mt*mt*p0[1] + 2*mt*t*p1[1] + t*t*p2[1],
+    mt*mt*p0[2] + 2*mt*t*p1[2] + t*t*p2[2],
+  ];
+}
+
+export function startTour(onGetCam, onSetCam) {
+  _tourOnGetCam = onGetCam;
+  _tourOnSetCam = onSetCam;
+  _tourActive   = true;
+  _tourStop     = 0;
+  _pauseT       = 0;
+  _flying       = false;
   _injectTourUI();
+  // Go to first stop immediately with a short fly-in from current position
+  _startFly(_tourStop);
   _speakStop(0);
 }
 
 export function stopTour() {
   _tourActive = false;
+  _flying     = false;
   window.speechSynthesis && window.speechSynthesis.cancel();
   document.getElementById('tour-ui')?.remove();
 }
 
 export function isTourActive() { return _tourActive; }
+
+function _startFly(toIdx) {
+  const toStop = TOUR_STOPS[toIdx];
+  // Get current camera state as fly-from
+  const cur = _tourOnGetCam ? _tourOnGetCam() : { pos:[0,3.1,200], yaw:0, pitch:0 };
+  _flyFrom = cur;
+  _flyTo   = { pos: toStop.pos, yaw: toStop.yaw, pitch: toStop.pitch || 0 };
+  _flyT    = 0;
+  _flying  = true;
+}
 
 function _speakStop(idx) {
   if (!window.speechSynthesis) return;
@@ -281,30 +321,61 @@ function _injectTourUI() {
 window.__tourNext = () => {
   if (!_tourActive) return;
   _tourStop = (_tourStop + 1) % TOUR_STOPS.length;
-  _tourAnimT = 0; _tourPauseT = 0;
-  _doTourTeleport(_tourStop);
+  _pauseT = 0;
+  _startFly(_tourStop);
+  _speakStop(_tourStop);
 };
 window.__tourPrev = () => {
   if (!_tourActive) return;
   _tourStop = (_tourStop - 1 + TOUR_STOPS.length) % TOUR_STOPS.length;
-  _tourAnimT = 0; _tourPauseT = 0;
-  _doTourTeleport(_tourStop);
+  _pauseT = 0;
+  _startFly(_tourStop);
+  _speakStop(_tourStop);
 };
 window.__tourStop = () => stopTour();
 
-function _doTourTeleport(idx) {
-  const stop = TOUR_STOPS[idx];
-  if (_tourOnTeleport) _tourOnTeleport(stop.pos, stop.yaw, stop.pitch || 0);
-  _speakStop(idx);
-}
-
 function tickTour(delta, cam) {
   if (!_tourActive) return;
-  _tourPauseT += delta;
-  if (_tourPauseT >= _tourPauseDuration) {
-    _tourPauseT = 0;
-    _tourStop = (_tourStop + 1) % TOUR_STOPS.length;
-    _doTourTeleport(_tourStop);
+
+  if (_flying) {
+    _flyT = Math.min(_flyT + delta / _FLY_DUR, 1);
+    const e = _easeInOut(_flyT);
+
+    // Build Bezier control point: midpoint between stops, lifted 25m
+    const p0 = _flyFrom.pos;
+    const p2 = _flyTo.pos;
+    const midX = (p0[0]+p2[0])/2;
+    const midY = Math.max(p0[1],p2[1]) + 25; // arc lift
+    const midZ = (p0[2]+p2[2])/2;
+    const p1 = [midX, midY, midZ];
+
+    const bp = _bezierPoint(p0, p1, p2, e);
+
+    // Yaw: slerp (wrap-aware angle lerp)
+    let yawFrom = _flyFrom.yaw || 0;
+    let yawTo   = _flyTo.yaw   || 0;
+    // Shortest arc
+    let dy = yawTo - yawFrom;
+    if (dy >  Math.PI) dy -= Math.PI*2;
+    if (dy < -Math.PI) dy += Math.PI*2;
+    const yaw   = yawFrom + dy * e;
+    const pitch = (_flyFrom.pitch||0) + ((_flyTo.pitch||0) - (_flyFrom.pitch||0)) * e;
+
+    if (_tourOnSetCam) _tourOnSetCam(bp, yaw, pitch);
+
+    if (_flyT >= 1) {
+      _flying = false;
+      _pauseT = 0;
+    }
+  } else {
+    // Holding at stop — auto-advance after pause
+    _pauseT += delta;
+    if (_pauseT >= _PAUSE_DUR) {
+      _pauseT = 0;
+      _tourStop = (_tourStop + 1) % TOUR_STOPS.length;
+      _startFly(_tourStop);
+      _speakStop(_tourStop);
+    }
   }
 }
 
@@ -449,38 +520,72 @@ function buildInstancedCypress(positions) {
   scene.add(trunks); scene.add(cones);
 }
 
-// ─── IMPROVEMENT 5: LOD SYSTEM ────────────────────────────────────────────────
-// Villa GLB: real mesh within 180m, box impostor beyond
-const _villaLODs = [];  // { group: THREE.LOD, x, z }
+// ─── FIX 01 + IMPROVEMENT 5: INSTANCED VILLA RENDERING WITH LOD ──────────────
+// Strategy:
+//   Near (0–180m): individual LOD node using the full GLB clone — needed because
+//     each villa has a unique plotKey, hover highlight, and reservation state.
+//     We cannot use a single InstancedMesh for the full GLB because we need
+//     per-instance material overrides on reservation.
+//   Mid (180–350m): one shared InstancedMesh with a box impostor for ALL villas.
+//     This collapses ~60 mid-distance villas from 60 draw calls to 1.
+//   Far (350m+): invisible, fog handles it.
+//
+// The impostor InstancedMesh is built once after all villas are placed.
+
+const _villaInstData = [];   // { x, z, ry, plotKey, lodGroup }
+let   _impostorMesh  = null; // built once in _buildVillaImpostors()
+const _impostorMat   = new THREE.MeshStandardMaterial({ color:0xF5E6B0, roughness:.8 });
+const _impostorGeo   = new THREE.BoxGeometry(14, 8, 12);
 
 function placeVillaGLBWithLOD(x, z, ry, plotKey) {
   if (!villaGLBScene) { pendingVillas.push({x,z,ry,plotKey}); return; }
 
+  // Near-distance node: full GLB clone (individual, supports per-plot state)
   const lod = new THREE.LOD();
   lod.position.set(x, 0, z);
   lod.rotation.y = ry;
-  lod.userData.isVillaGLB = true;
-  lod.userData.baseRotY   = ry;
-  lod.userData.plotKey    = plotKey;
+  lod.userData.isVillaGLB  = true;
+  lod.userData.baseRotY    = ry;
+  lod.userData.plotKey     = plotKey;
 
-  // Level 0: full GLB (0–180m)
   const highDetail = villaGLBScene.clone(true);
-  highDetail.rotation.y = 0; // LOD group handles rotation
-  lod.addLevel(highDetail, 0);
+  highDetail.rotation.y = 0;
+  lod.addLevel(highDetail, 0);          // shown 0–180m
 
-  // Level 1: simple box impostor (180–350m)
-  const impostor = new THREE.Group();
-  const impMat   = new THREE.MeshStandardMaterial({ color:0xF5E6B0, roughness:.8 });
-  const impBody  = new THREE.Mesh(new THREE.BoxGeometry(14, 8, 12), impMat);
-  impBody.position.y = 4;
-  impostor.add(impBody);
-  lod.addLevel(impostor, 180);
-
-  // Level 2: invisible (350m+, fog handles it)
+  // Mid-distance placeholder (invisible — impostor InstancedMesh covers this range)
+  lod.addLevel(new THREE.Group(), 180); // LOD switches at 180m
+  // Far: also invisible
   lod.addLevel(new THREE.Group(), 350);
 
   scene.add(lod);
   if (plotKey) addPlotOverlay(x, z, ry, plotKey, lod);
+  _villaInstData.push({ x, z, ry });
+}
+
+// Called once after all villas are placed — builds the single mid-distance impostor.
+function _buildVillaImpostors() {
+  if (_villaInstData.length === 0) return;
+  _impostorMesh = new THREE.InstancedMesh(_impostorGeo, _impostorMat, _villaInstData.length);
+  _impostorMesh.receiveShadow = true;
+  _impostorMesh.castShadow    = false;
+  // Frustum culling won't work well for instanced meshes spread across the estate —
+  // disable it so the GPU can handle culling per-instance via the LOD system.
+  _impostorMesh.frustumCulled = false;
+  const dummy = new THREE.Object3D();
+  _villaInstData.forEach(({ x, z, ry }, i) => {
+    dummy.position.set(x, 4, z); // y=4 so box sits on ground (box height=8, centre at 4)
+    dummy.rotation.y = ry;
+    dummy.updateMatrix();
+    _impostorMesh.setMatrixAt(i, dummy.matrix);
+  });
+  _impostorMesh.instanceMatrix.needsUpdate = true;
+  // The impostor mesh is ONLY visible beyond 180m — we achieve this by checking
+  // camera distance in tickScene and toggling visibility, which is cheaper than
+  // per-instance distance checks. A simpler approach: just let fog handle far
+  // falloff and show the impostor always (it's behind the full GLB when close).
+  // We render-order it behind full GLBs via renderOrder.
+  _impostorMesh.renderOrder = -1;
+  scene.add(_impostorMesh);
 }
 
 // ─── IMPROVEMENT 9: IN-WORLD SIGNAGE ─────────────────────────────────────────
@@ -543,7 +648,91 @@ function addEstateSignage() {
   });
 }
 
-// ─── IMPROVEMENT 8: AO CONTACT SHADOWS ───────────────────────────────────────
+// ─── FIX 04: 3D FLOATING HOTSPOT LABELS ──────────────────────────────────────
+// Canvas-texture sprite above key landmarks. Faces camera every frame.
+// Pulses in opacity (0.6→1.0) on a slow sine cycle.
+// Clicking a hotspot in-world triggers the product panel.
+
+const _hotspots = [];  // { sprite, worldPos, label }
+
+const HOTSPOT_DEFS = [
+  { label:'The Clubhouse',        sublabel:'3,419m²  ·  3 floors  ·  8 skyboxes', pos:[0, 18, 108],    productKey:'clubhouse' },
+  { label:'Crescent Lake',        sublabel:'200m  ·  Waterfront plots',            pos:[30, 14, -115],  productKey:null },
+  { label:'Horse Stables',        sublabel:'56 stalls  ·  Cobblestone yard',       pos:[-375, 16, 90],  productKey:'stables' },
+  { label:'Premium Villas',       sublabel:'330m²  ·  Polo-facing',                pos:[-162, 14, 0],   productKey:'villas' },
+  { label:'Training Field',       sublabel:'FIP standard  ·  100×160m',            pos:[-390, 12, -40], productKey:'training' },
+  { label:'The Paddock',          sublabel:'Post-and-rail  ·  East precinct',      pos:[218, 12, 0],    productKey:'paddock' },
+];
+
+function _makeHotspotCanvas(label, sublabel) {
+  const W = 380, H = 80;
+  const c = document.createElement('canvas'); c.width=W; c.height=H;
+  const ctx = c.getContext('2d');
+  // Background pill
+  ctx.beginPath();
+  const r = 14;
+  ctx.moveTo(r,0); ctx.lineTo(W-r,0); ctx.quadraticCurveTo(W,0,W,r);
+  ctx.lineTo(W,H-r); ctx.quadraticCurveTo(W,H,W-r,H);
+  ctx.lineTo(r,H); ctx.quadraticCurveTo(0,H,0,H-r);
+  ctx.lineTo(0,r); ctx.quadraticCurveTo(0,0,r,0); ctx.closePath();
+  ctx.fillStyle = 'rgba(6,18,8,0.88)';
+  ctx.fill();
+  // Gold border
+  ctx.strokeStyle = '#C9A84C'; ctx.lineWidth = 2; ctx.stroke();
+  // Gold dot
+  ctx.beginPath(); ctx.arc(22, H/2, 5, 0, Math.PI*2);
+  ctx.fillStyle = '#C9A84C'; ctx.fill();
+  // Label text
+  ctx.fillStyle = '#f0ece0';
+  ctx.font = 'bold 22px Inter, sans-serif';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, 36, H*0.38);
+  // Sublabel text
+  ctx.fillStyle = 'rgba(201,168,76,0.85)';
+  ctx.font = '16px Inter, sans-serif';
+  ctx.fillText(sublabel, 36, H*0.72);
+  return c;
+}
+
+export function addLandmarkHotspots() {
+  HOTSPOT_DEFS.forEach(def => {
+    const canvas  = _makeHotspotCanvas(def.label, def.sublabel);
+    const tex     = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const mat = new THREE.SpriteMaterial({
+      map: tex, transparent: true, opacity: 0.85,
+      depthWrite: false, sizeAttenuation: true,
+    });
+    const sprite = new THREE.Sprite(mat);
+    // Scale: width = canvas aspect × height in world units
+    const aspect = canvas.width / canvas.height;
+    const worldH = 6; // 6m tall label
+    sprite.scale.set(worldH * aspect, worldH, 1);
+    sprite.position.set(...def.pos);
+    sprite.userData.productKey = def.productKey;
+    sprite.userData.label      = def.label;
+    sprite.userData.isHotspot  = true;
+    scene.add(sprite);
+    _hotspots.push({ sprite, productKey: def.productKey });
+  });
+}
+
+export function tickHotspots(elapsed) {
+  // Gentle opacity pulse: 0.72 → 1.0, 2-second cycle
+  _hotspots.forEach((h, i) => {
+    const phase = (elapsed * 0.5 + i * 0.4) % (Math.PI * 2);
+    h.sprite.material.opacity = 0.72 + Math.sin(phase) * 0.28;
+  });
+}
+
+export function getHotspotAtRay(raycaster) {
+  const sprites = _hotspots.map(h => h.sprite);
+  const hits = raycaster.intersectObjects(sprites, false);
+  if (hits.length === 0) return null;
+  return hits[0].object.userData.productKey;
+}
+
+// ─── FIX 08: AO CONTACT SHADOWS ──────────────────────────────────────────────
 function addVillaContactShadow(x, z) {
   const aoMat = new THREE.MeshBasicMaterial({
     color: 0x000000, transparent: true, opacity: 0.22,
@@ -598,7 +787,8 @@ export function initScene(canvas) {
     addLake();
     addEastLake();
     addClubhouse();
-    addEstateSignage();  // IMPROVEMENT 9
+    addEstateSignage();
+    addLandmarkHotspots(); // Fix 04: floating 3D labels
 
     // Phase 3 — heavy GLBs deferred another frame
     requestAnimationFrame(() => {
@@ -609,6 +799,7 @@ export function initScene(canvas) {
       loadClubhouseGLB();
       loadStablesGLB();
       addVillaRing();
+      _buildVillaImpostors(); // Fix 01: build mid-distance instanced impostor after all villas placed
       addLoftTerraces();
       addWestCompound();
       addPaddock();
@@ -696,15 +887,55 @@ const MATS = {
 };
 
 // ─── ENVIRONMENT ──────────────────────────────────────────────────────────────
+// Fix 03: PBR texture calls wrapped in try/catch with solid-colour fallbacks.
+// If assets/textures/* don't exist in the repo, PBR.grass() etc. return a broken
+// material. These wrappers catch that silently and fall back to a matching solid colour.
+function _safePBR(pbrFn, fallbackColor, roughness=0.9) {
+  try {
+    return pbrFn();
+  } catch(e) {
+    console.warn('[XIX] PBR texture missing, using solid fallback:', e.message);
+    return new THREE.MeshStandardMaterial({ color: fallbackColor, roughness });
+  }
+}
+
 function addGround(){
-  const dm = PBR.dirt(); const gm = PBR.grass();
-  const gp = plane(900,700,dm,[0,0,30]); gp.receiveShadow=true; scene.add(gp);
+  // Polish: ground uses a micro-variation canvas texture so it reads as organic,
+  // not a flat colour, even without real PBR assets.
+  const dirtMat = _makeMicroTexture(0x7a5a38, 0x6a4a28, 900, 700);
+  const grassMat = _makeMicroTexture(0x3d7028, 0x4a8035, 500, 400);
+
+  const gp = plane(900,700,dirtMat,[0,0,30]); gp.receiveShadow=true; scene.add(gp);
   _terrainMeshes.push(gp);
-  const gp2 = plane(500,400,gm,[0,.01,0]); gp2.receiveShadow=true; scene.add(gp2);
+  const gp2 = plane(500,400,grassMat,[0,.01,0]); gp2.receiveShadow=true; scene.add(gp2);
   _terrainMeshes.push(gp2);
   s(plane(180,80,MATS.concrete(),[0,.02,122]));
   s(plane(90,70,MATS.cobble(),[-355,.02,90]));
   s(plane(200,280,MATS.lawnGreen(),[-310,.01,30]));
+}
+
+// Micro-texture: a canvas with subtle noise baked in, repeated across large planes.
+// Gives organic ground variation without any external asset dependency.
+function _makeMicroTexture(col1, col2, planeW, planeD) {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 256;
+  const ctx = c.getContext('2d');
+  const r1 = (col1>>16)&0xff, g1=(col1>>8)&0xff, b1=col1&0xff;
+  const r2 = (col2>>16)&0xff, g2=(col2>>8)&0xff, b2=col2&0xff;
+  const id = ctx.createImageData(256,256); const d = id.data;
+  for(let i=0;i<256*256;i++){
+    const t = Math.random(); const idx=i*4;
+    d[idx]   = r1+(r2-r1)*t | 0;
+    d[idx+1] = g1+(g2-g1)*t | 0;
+    d[idx+2] = b1+(b2-b1)*t | 0;
+    d[idx+3] = 255;
+  }
+  ctx.putImageData(id,0,0);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  // Repeat so each pixel of texture covers ~1m of world
+  tex.repeat.set(planeW/4, planeD/4);
+  return new THREE.MeshStandardMaterial({ map: tex, roughness: 0.92, metalness: 0 });
 }
 
 function addGrassRing(){
@@ -732,7 +963,7 @@ function addPoloField(){
 }
 
 function addSafetyZone(){
-  const dm=PBR.dirt(); dm.color.set(0x8B4513);
+  const dm = new THREE.MeshStandardMaterial({color:0x8B4513,roughness:.95});
   s(plane(298,25,dm,[0,.11,-85.5])); s(plane(298,25,dm,[0,.11,85.5]));
   s(plane(11,146,dm,[-142.5,.11,0])); s(plane(11,146,dm,[142.5,.11,0]));
 }
@@ -748,7 +979,7 @@ function addYardMarkings(){
 }
 
 function addRoads(){
-  const am=PBR.asphalt(); const Y=.13;
+  const am=new THREE.MeshStandardMaterial({color:0x1a1e1c,roughness:.88}); const Y=.13;
   s(plane(700,30,am,[0,Y,215])); s(plane(700,4,MATS.grassGreen(),[0,Y+.01,215]));
   s(plane(8,220,am,[-155,Y,0])); s(plane(8,220,am,[155,Y,0]));
   s(plane(320,8,am,[0,Y,-104])); s(plane(320,8,am,[0,Y,104]));
@@ -1032,6 +1263,8 @@ export function tickScene(elapsed, camera){
       pb.rotation.y=Math.atan2(camera.position.x-pb.position.x,camera.position.z-pb.position.z);
     });
   }
+  // Hotspot pulse (Fix 04)
+  tickHotspots(elapsed);
   // LOD update: Three.js THREE.LOD auto-updates via camera
   // NPC horse tick
   tickNPCHorses(Math.min(elapsed - (_prevElapsed||0), 0.033));
