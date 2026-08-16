@@ -39,9 +39,11 @@ let minimapReady = false;
 // Bounds calibrated to corrected scene.js geometry:
 // North (lake side) = z=-260, South (Lagos Road) = z=+225
 // West (stables) = x=-270, East (commercial) = x=+225
+// Minimap world bounds — must match scene geometry in scene.js
+// Stables at x=-375, commercial at x=+270, north perimeter at z=-210, Lagos Road at z=+225
 const MAP = {
-  xMin: -270, xMax: 225,
-  zMin: -260, zMax: 225,
+  xMin: -420, xMax: 300,
+  zMin: -230, zMax: 240,
 };
 
 export function initMinimap(planImageSrc) {
@@ -229,13 +231,16 @@ export function buildViewpointStrip(container, onSelect) {
         
         if (!isOpen) {
           menu.style.display = "flex";
-          // Break out of the overflow container
+          // Position above viewpoint strip
           const rect = btn.getBoundingClientRect();
           menu.style.position = "fixed";
-          menu.style.left = rect.left + "px";
-          menu.style.bottom = "95px"; // Safely above the toolbar
+          menu.style.left = Math.max(4, Math.min(rect.left, window.innerWidth - 170)) + "px";
+          menu.style.bottom = (window.innerHeight - rect.top + 8) + "px";
           menu.style.zIndex = "9999";
           btn.querySelector(".vp-chevron").innerHTML = "&#9662;";
+          // Close mode toggle to avoid overlap
+          document.getElementById('mode-toggle-bar')?.style.setProperty('pointer-events','none');
+          setTimeout(() => document.getElementById('mode-toggle-bar')?.style.removeProperty('pointer-events'), 1000);
         } else {
           btn.querySelector(".vp-chevron").innerHTML = "&#9652;";
         }
@@ -382,10 +387,16 @@ export function showJoystick() {
   const el = document.getElementById("joystick-overlay");
   if (!el) return;
   el.style.cssText = JOYSTICK_PINNED;
+  // Also inject a permanent CSS rule so no stylesheet can override it
+  if (!document.getElementById('joy-pin-rule')) {
+    const s = document.createElement('style');
+    s.id = 'joy-pin-rule';
+    s.textContent = '#joystick-overlay { ' + JOYSTICK_PINNED.replace(/;/g, ' !important;') + ' }';
+    document.head.appendChild(s);
+  }
   if (_joystickObs) { _joystickObs.disconnect(); _joystickObs = null; }
   _joystickObs = new MutationObserver(() => {
-    if (el.style.bottom !== '28px' || el.style.position !== 'fixed' || el.style.left !== '28px')
-      el.style.cssText = JOYSTICK_PINNED;
+    if (el.style.position !== 'fixed') el.style.cssText = JOYSTICK_PINNED;
   });
   _joystickObs.observe(el, { attributes: true, attributeFilter: ['style'] });
 }
