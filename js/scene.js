@@ -19,6 +19,7 @@
  *  10.  Progressive loading  — ground + sky first, buildings stream in after 1 frame
  */
 
+import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/objects/Water.js";
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
 import { GLTFLoader }  from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/GLTFLoader.js";
 import { DRACOLoader } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/DRACOLoader.js";
@@ -1259,25 +1260,33 @@ function addRoads(){
 function addLake(){
   const wm = createWaterMat();
   
-  // Phase 2: Real-time Planar Mirror Lake for the 200m Crescent Centerpiece
-  const lakeGeo = new THREE.PlaneGeometry(195, 22);
-  const lakeReflection = new Reflector(lakeGeo, {
-    clipBias: 0.003,
+  // Real-time Planar Mirror Lake for the 200m Crescent Centerpiece
+  const waterGeo = new THREE.PlaneGeometry(195, 22);
+  const lakeReflection = new Water(waterGeo, {
     textureWidth: window.innerWidth * Math.min(window.devicePixelRatio || 1, 2) * 0.5,
     textureHeight: window.innerHeight * Math.min(window.devicePixelRatio || 1, 2) * 0.5,
-    color: 0x7799a8,
+    waterNormals: new THREE.TextureLoader().load('assets/textures/stone-normal.png', (tex) => {
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(6, 6);
+    }),
+    sunDirection: new THREE.Vector3(-180, 180, 120).normalize(),
+    sunColor: 0xfff4e0,
+    waterColor: 0x1a6a98,
+    distortionScale: 2.5,
+    fog: scene.fog !== undefined
   });
   
-  // CORRECTED: Top surface height = 0.16 (center) + 0.175 (half height) = 0.335
+  // Height = 0.16 (center) + 0.175 (half height) = 0.335
   lakeReflection.position.set(30, 0.335, -115);
   lakeReflection.rotation.x = -Math.PI / 2;
+  lakeReflection.userData.isPlanarWater = true;
   scene.add(lakeReflection);
   waterMeshes.push(lakeReflection);
 
-  // End-caps: flat CylinderGeometry discs — no dome bulge above waterline
+  // End-caps: flat CylinderGeometry discs
   for(const ex of [-68, 128]){
     const ep=new THREE.Mesh(new THREE.CylinderGeometry(11,11,.35,32),wm);
-    ep.position.set(ex,.16,-115); // Center is 0.16, top is 0.335
+    ep.position.set(ex,.16,-115); 
     scene.add(ep); 
     waterMeshes.push(ep);
   }
@@ -1534,15 +1543,25 @@ let _tickFrame=0;
 export function tickScene(elapsed, camera){
   _tickFrame++;
   tickWater(waterMeshes, elapsed);
+  
+  // Update Planar Water Time Uniform
+  waterMeshes.forEach(m => {
+    if (m.userData.isPlanarWater && m.material.uniforms) {
+      m.material.uniforms['time'].value += 1.0 / 60.0;
+    }
+  });
+
   tickGrass(camera);
-  // Palm billboard update: rate-limited per perf mode
-  // Palm billboard facing — instanced, runs every palmDiv frames
   const palmDiv = PERF_SETTINGS[PERF_MODE].palmTickDiv;
   if (_tickFrame % palmDiv === 0) {
     tickPalms(camera);
   }
-  // Hotspot pulse
   tickHotspots(elapsed);
+  const _frameDelta = Math.min(elapsed - (_prevElapsed || 0), 0.033);
+  _prevElapsed = elapsed;
+  tickNPCHorses(_frameDelta);
+  if (_tourActive) tickTour(_frameDelta, camera);
+}
   // Delta since last tick — compute ONCE, use for both NPC and tour
   const _frameDelta = Math.min(elapsed - (_prevElapsed || 0), 0.033);
   _prevElapsed = elapsed;
