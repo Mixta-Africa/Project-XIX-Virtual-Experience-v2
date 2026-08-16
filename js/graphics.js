@@ -358,10 +358,10 @@ export function createWaterMat() {
 // ─── GRASS CARDS — MeshLambertMaterial is cheaper, looks correct for grass ───
 // Lambert: no specular calculation = ~30% cheaper than Standard for 400+ cards
 const grassCardMat = new THREE.MeshLambertMaterial({
-  color:     0x5a9448,
-  side:      THREE.DoubleSide,
-  alphaTest: 0.45,
-  transparent: false,
+  color:       0x5a9448,
+  side:        THREE.DoubleSide,
+  alphaTest:   0.35,
+  transparent: true,   // REQUIRED for alphaTest to work correctly in Three.js
   map: (() => {
     const gc = document.createElement("canvas"); gc.width=64; gc.height=128;
     const gx = gc.getContext("2d");
