@@ -112,11 +112,13 @@ window.applyWeather = applyWeather;
 
 //           PERFORMANCE MODE TOGGLE
 window.switchPerfMode = function(mode) {
-  window.PERF_MODE = mode;    // global state for the render loop
-  setPerfMode(mode);          // updates scene (shadow map, pixel ratio, fog)
-  setPerfModeGraphics(mode);  // updates graphics pipeline (bloom, SMAA, direct render)
+  setPerfMode(mode);
   document.querySelectorAll('.perf-btn').forEach(b =>
     b.classList.toggle('active', b.dataset.mode === mode));
+  // Adjust postfx: disable SSAO in Fast mode
+  if (composer && composer._xixFastMode !== undefined) {
+    composer._xixFastMode = (mode === 'fast');
+  }
 };
 
 //           PINNED JOYSTICK CSS INJECTION
@@ -473,9 +475,6 @@ async function openWorldAt(viewKey) {
   const overlay = document.getElementById("world-overlay");
   overlay.classList.add("open");
   document.body.style.overflow = "hidden";
-
-  // Inject perf toggle (after overlay is open)
-  injectPerfToggle();
 
   resizeWorld();
   window.addEventListener("resize", resizeWorld);
