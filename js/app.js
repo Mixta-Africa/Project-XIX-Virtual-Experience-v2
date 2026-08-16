@@ -14,11 +14,11 @@ import { VIEWPOINTS, ZONES, WORLD } from "./data.js";
 import { buildVillaInterior, VILLA_VIEWPOINTS } from "./villa-interior.js";
 import {
   initScene, getRenderer, getScene, getCamera, getClock,
-  tickScene, updateSky, plotRegistry, reservePlot, getPlotAtRay,
+  tickScene, updateSky, updateSkyForTime, plotRegistry, reservePlot, getPlotAtRay,
   highlightPlot, setPerfMode, PERF_MODE,
   RIDER_EYE_HEIGHT, FOOT_EYE_HEIGHT, tickHorse, tickHorseAnim,
   setHorsePosition, getThirdPersonCameraOffset, setAerialMode,
-} from "./scene.js?v=34";
+} from "./scene.js?v=35";
 import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics } from "./graphics.js";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
@@ -37,6 +37,48 @@ import {
 let sceneReady     = false;
 let villaScene     = null, villaRenderer = null;
 let introPlaying   = false;
+
+// ── AUTO DAY CYCLE ─────────────────────────────────────────────────────────────
+// 5-minute full day cycle (morning→afternoon→sunset→night→morning).
+// Pauses for 120s when user manually selects a time preset.
+const DAY_CYCLE_DURATION = 5 * 60; // 5 minutes per full cycle in seconds
+let   _dayAutoRun  = true;   // false when user manually picks a time
+let   _dayPauseEnd = 0;      // performance.now() timestamp when auto-run resumes
+let   _lastDayApplied = '';  // prevent calling applyTimePreset every frame
+
+const DAY_STOPS = [
+  { t: 0.00, name: 'morning'   },  // 0%  — 0:00
+  { t: 0.30, name: 'afternoon' },  // 30% — 1:30
+  { t: 0.65, name: 'sunset'    },  // 65% — 3:15
+  { t: 0.80, name: 'night'     },  // 80% — 4:00
+  { t: 1.00, name: 'morning'   },  // wraps back
+];
+
+function tickDayCycle(elapsed) {
+  if (!_dayAutoRun) return;
+  if (performance.now() < _dayPauseEnd) return;
+  // Determine current phase within 5-min cycle
+  const phase = (elapsed % DAY_CYCLE_DURATION) / DAY_CYCLE_DURATION; // 0.0-1.0
+  // Find which named stop we're in
+  let name = 'afternoon';
+  for (let i = 0; i < DAY_STOPS.length - 1; i++) {
+    if (phase >= DAY_STOPS[i].t && phase < DAY_STOPS[i+1].t) {
+      name = DAY_STOPS[i].name; break;
+    }
+  }
+  if (name !== _lastDayApplied) {
+    _lastDayApplied = name;
+    applyTimePreset(name);
+  }
+}
+
+// Patch applyTimePreset: when user clicks, pause auto-cycle for 2 minutes
+const _origApplyTimePreset = applyTimePreset;
+function applyTimePresetWithPause(name) {
+  _dayPauseEnd = performance.now() + 120_000; // pause 2 min
+  _origApplyTimePreset(name);
+}
+window.applyTimePreset = applyTimePresetWithPause;
 let currentViewKey = "field_centre";
 let animFrameId    = null;
 let composer       = null;
@@ -86,7 +128,12 @@ function applyTimePreset(name) {
   const p = TIME_PRESETS[name]; if (!p) return;
   document.querySelectorAll(".wx-time-btn").forEach(b =>
     b.classList.toggle("active", b.dataset.time === name));
-  try { updateSky(...p.sky); } catch(e){}
+  if (window._updateDayClock) window._updateDayClock(name);
+  try {
+    // updateSkyForTime uses the atmospheric sky (Preetham scattering)
+    if (typeof updateSkyForTime === 'function') updateSkyForTime(name);
+    else if (typeof updateSky === 'function') updateSky(...(p.sky||[]));
+  } catch(e){ console.warn('[XIX] sky update:', e.message); }
   try { setBloomForTime(name); } catch(e){}
   const sc = getScene();
   if (sc && sc.fog) { sc.fog.color.set(p.fog); sc.fog.density = p.fogD; }
@@ -125,6 +172,201 @@ window.rotateVillaGLB = function(degrees) {
   });
   console.log('[XIX] Villa GLB rotated', degrees, 'deg');
 };
+
+// ── DAY CLOCK: on-screen time display synced to cycle ─────────────────────────
+function injectDayClock() {
+  if (document.getElementById('day-clock')) return;
+  const s = document.createElement('style');
+  s.textContent = `
+    #day-clock {
+      position: absolute;
+      top: 54px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 200;
+      background: rgba(8,18,10,0.72);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid rgba(201,168,76,0.25);
+      border-radius: 20px;
+      padding: 5px 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-family: Inter, sans-serif;
+      font-size: 12px;
+      color: rgba(240,236,224,0.85);
+      pointer-events: none;
+      transition: opacity .4s;
+      white-space: nowrap;
+    }
+    #day-clock .clock-icon { font-size: 14px; }
+    #day-clock .clock-time { font-variant-numeric: tabular-nums; letter-spacing:.05em; }
+    #day-clock .clock-label { color: rgba(201,168,76,0.75); font-size:10px; letter-spacing:.1em; }
+    @media(max-width:640px){ #day-clock { top: 48px; font-size:10px; padding:4px 12px; } }
+  `;
+  document.head.appendChild(s);
+
+  const el = document.createElement('div');
+  el.id = 'day-clock';
+  el.innerHTML = '<span class="clock-icon">☀️</span><span class="clock-time">12:00</span><span class="clock-label">AFTERNOON</span>';
+  document.getElementById('world-overlay')?.appendChild(el);
+
+  // Update every second
+  const icons = { morning:'🌅', afternoon:'☀️', sunset:'🌇', night:'🌙' };
+  const labels = { morning:'MORNING', afternoon:'AFTERNOON', sunset:'SUNSET', night:'NIGHT' };
+  // Map cycle phase → simulated clock time
+  const clockTimes = { morning:'07:30', afternoon:'13:00', sunset:'18:45', night:'22:00' };
+
+  window._updateDayClock = function(phaseName) {
+    const ico = el.querySelector('.clock-icon');
+    const tim = el.querySelector('.clock-time');
+    const lbl = el.querySelector('.clock-label');
+    if(ico) ico.textContent = icons[phaseName] || '☀️';
+    if(tim) tim.textContent = clockTimes[phaseName] || '12:00';
+    if(lbl) lbl.textContent = labels[phaseName] || 'DAY';
+  };
+  window._updateDayClock('afternoon');
+}
+
+// ── FIX: Make topbar dropdowns work on touch (no hover on mobile) ─────────────
+function fixTopbarDropdowns() {
+  // Close all dropdowns
+  function closeAll() {
+    document.querySelectorAll('.topbar-dropdown-menu').forEach(m => {
+      m.style.display = 'none';
+    });
+    document.querySelectorAll('.world-btn[aria-haspopup]').forEach(b => {
+      b.setAttribute('aria-expanded','false');
+    });
+  }
+
+  // Wire each dropdown trigger
+  document.querySelectorAll('.topbar-dropdown').forEach(wrapper => {
+    const trigger = wrapper.querySelector('.world-btn[aria-haspopup]');
+    const menu    = wrapper.querySelector('.topbar-dropdown-menu');
+    if (!trigger || !menu) return;
+
+    // Override CSS hover with JS click
+    trigger.addEventListener('click', e => {
+      e.stopPropagation();
+      const isOpen = menu.style.display === 'flex';
+      closeAll();
+      if (!isOpen) {
+        menu.style.display = 'flex';
+        trigger.setAttribute('aria-expanded','true');
+      }
+    }, { capture: true });
+
+    // Each menu item: close menu after selection
+    menu.querySelectorAll('button, .wx-btn').forEach(item => {
+      item.addEventListener('click', e => {
+        e.stopPropagation();
+        // Run the onclick inline handler — it's already set in HTML
+        closeAll();
+      });
+    });
+  });
+
+  // Topbar action buttons (TOUR, AERIAL, EXIT) — already have onclick, ensure they work
+  // AERIAL: calls toggleAerial(this) — wire directly
+  const aerialBtn = document.querySelector('.world-btn-aerial') || 
+                    document.querySelector('[onclick*="toggleAerial"]');
+  if (aerialBtn && !aerialBtn.dataset.wired) {
+    aerialBtn.dataset.wired = '1';
+    aerialBtn.addEventListener('click', () => toggleAerial(aerialBtn));
+  }
+
+  // Close all dropdowns when clicking elsewhere in the world
+  document.getElementById('world-canvas')?.addEventListener('click', closeAll, { passive:true });
+  document.getElementById('world-overlay')?.addEventListener('click', e => {
+    if (!e.target.closest('.topbar-dropdown') && !e.target.closest('#perf-toggle-bar')) {
+      closeAll();
+    }
+  }, { passive:true });
+
+  // Style fix: ensure menus are hidden by default and positioned correctly
+  const styleId = 'topbar-dropdown-fix';
+  if (!document.getElementById(styleId)) {
+    const s = document.createElement('style');
+    s.id = styleId;
+    s.textContent = `
+      /* Override CSS hover — JS controls visibility instead */
+      .topbar-dropdown .topbar-dropdown-menu {
+        display: none !important;  /* hidden by default */
+        position: fixed !important;
+        z-index: 9998 !important;
+        min-width: 160px;
+        flex-direction: column;
+        background: rgba(8,18,10,0.97);
+        border: 1px solid rgba(201,168,76,0.35);
+        border-radius: 8px;
+        padding: 4px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.7);
+        overflow: hidden;
+      }
+      .topbar-dropdown .topbar-dropdown-menu.open {
+        display: flex !important;  /* JS adds/removes open class below */
+      }
+      .topbar-dropdown:hover .topbar-dropdown-menu {
+        display: none !important; /* disable CSS hover — JS only */
+      }
+      .wx-btn {
+        background: none;
+        color: rgba(240,236,224,0.82);
+        border: none;
+        padding: 11px 16px;
+        cursor: pointer;
+        font-size: 13px;
+        text-align: left;
+        white-space: nowrap;
+        border-radius: 5px;
+        transition: background .12s;
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .wx-btn:hover, .wx-btn.active {
+        background: rgba(201,168,76,0.15);
+        color: #c9a84c;
+      }
+      .wx-btn.active { font-weight: 600; }
+      /* World button base touch fix */
+      .world-btn {
+        -webkit-tap-highlight-color: transparent;
+        touch-action: manipulation;
+        min-height: 40px;
+        cursor: pointer;
+      }
+    `;
+    document.head.appendChild(s);
+  }
+
+  // Now rewire using class toggle instead of display (works with the !important above)
+  // Re-implement using .open class
+  document.querySelectorAll('.topbar-dropdown').forEach(wrapper => {
+    const trigger = wrapper.querySelector('.world-btn[aria-haspopup]');
+    const menu    = wrapper.querySelector('.topbar-dropdown-menu');
+    if (!trigger || !menu) return;
+    // Remove the previous listener (can't easily, so use a flag)
+    if (wrapper.dataset.dropdownFixed) return;
+    wrapper.dataset.dropdownFixed = '1';
+    trigger.addEventListener('click', e => {
+      e.stopPropagation();
+      const isOpen = menu.classList.contains('open');
+      // Close all
+      document.querySelectorAll('.topbar-dropdown-menu').forEach(m => m.classList.remove('open'));
+      if (!isOpen) menu.classList.add('open');
+    }, { capture: false });
+    menu.querySelectorAll('button, .wx-btn').forEach(item => {
+      item.addEventListener('click', () => {
+        setTimeout(() => menu.classList.remove('open'), 150);
+      });
+    });
+  });
+}
 
 //           PERFORMANCE MODE TOGGLE
 function injectPerfToggle() {
@@ -516,6 +758,8 @@ async function openWorldAt(viewKey) {
   document.body.style.overflow="hidden";
   injectPerfToggle();
   injectModeToggle();
+  fixTopbarDropdowns(); // Make TIME/WEATHER/QUALITY work on touch
+  injectDayClock();     // On-screen time-of-day clock
   resizeWorld();
   window.addEventListener("resize",resizeWorld);
 
@@ -772,11 +1016,10 @@ function startRenderLoop(){
     } else {
       updateControls(delta);
 
-      // Smooth eye height — interpolates to target without fighting controls.js.
-      // Key fix: we only SET Y here, never both read AND write in a lerp loop.
-      _currentEyeY += (_targetEyeY - _currentEyeY) * Math.min(delta * 6, 1);
-      // Only override Y when in ride mode (walk mode: let controls.js handle Y)
+      // Eye height: ONLY in ride mode. Walk mode: controls.js owns Y completely.
+      // This was the source of camera shake — two systems fighting Y every frame.
       if (moveMode === 'ride') {
+        _currentEyeY += (_targetEyeY - _currentEyeY) * Math.min(delta * 8, 1);
         camera.position.y = _currentEyeY;
       }
 
@@ -803,6 +1046,7 @@ function startRenderLoop(){
     }
 
     tickScene(elapsed,camera);
+    tickDayCycle(elapsed);  // Auto day/night cycle
     updateMinimap(camera.position.x,camera.position.z,getYaw());
     updateSpatialAudio(camera.position.x,camera.position.z);
     renderFrame();
