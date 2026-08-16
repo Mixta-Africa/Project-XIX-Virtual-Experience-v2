@@ -1,5 +1,5 @@
 /**
- * Project XIX — Scene v31
+ * Project XIX — Scene v33
  *
  * Fixes:
  *   - Removed import of setPerfModeGraphics from graphics.js (it's now called
@@ -613,6 +613,40 @@ function placeVillaGLBWithLOD(x, z, ry, plotKey) {
   scene.add(lod);
   if (plotKey) addPlotOverlay(x, z, ry, plotKey, lod);
   _villaInstData.push({ x, z, ry });
+}
+
+// ─── AERIAL MODE — LOD OVERRIDE ──────────────────────────────────────────────
+// In aerial: disable LOD auto-update and force level 0 (full GLB) visible on all villas.
+// This is O(n) ONCE on enter/exit — zero per-frame cost.
+// THREE.LOD.autoUpdate=false tells WebGLRenderer to skip lod.update() in its render loop.
+
+let _aerialModeActive = false;
+
+export function setAerialMode(on) {
+  _aerialModeActive = on;
+  if (!scene) return;
+
+  scene.traverse(obj => {
+    if (!(obj instanceof THREE.LOD)) return;
+    if (!obj.userData.isVillaGLB) return;
+
+    if (on) {
+      // ENTER aerial: freeze LOD, force full-detail level visible
+      obj.autoUpdate = false;
+      obj.levels.forEach((lv, i) => {
+        lv.object.visible = (i === 0); // only level 0 (full GLB) visible
+      });
+    } else {
+      // EXIT aerial: re-enable LOD auto-update
+      // WebGLRenderer will call lod.update(camera) on next render frame automatically
+      obj.autoUpdate = true;
+      // Force all levels visible first — renderer will correct on next frame
+      obj.levels.forEach(lv => { lv.object.visible = true; });
+    }
+  });
+
+  // Also hide/show the impostor InstancedMesh (it competes with full GLBs in aerial)
+  if (_impostorMesh) _impostorMesh.visible = !on;
 }
 
 // Called once after all villas are placed — builds the single mid-distance impostor.
