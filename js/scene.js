@@ -413,8 +413,8 @@ const MATS = {
   cobble:     ()=>new THREE.MeshStandardMaterial({color:0x9A7A5A,roughness:.9}),
   concrete:   ()=>new THREE.MeshStandardMaterial({color:0xc8c0b0,roughness:.8}),
   railWhite:  ()=>new THREE.MeshStandardMaterial({color:0xfcfaf8,roughness:.5}),
-  plotAvail:  ()=>new THREE.MeshStandardMaterial({color:0x00ff88,transparent:true,opacity:.35}),
-  plotReserved:()=>new THREE.MeshStandardMaterial({color:0xff4444,transparent:true,opacity:.5}),
+  plotAvail:    () => new THREE.MeshStandardMaterial({ color: 0x00ff88, transparent: true, opacity: 0.0, depthWrite: false }),
+  plotReserved: () => new THREE.MeshStandardMaterial({ color: 0xff4444, transparent: true, opacity: 0.0, depthWrite: false }),
 };
 
 //        ENVIRONMENT
