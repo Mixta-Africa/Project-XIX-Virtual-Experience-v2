@@ -1,8 +1,7 @@
 /**
- * Project XIX     Estate Data Layer
- * Single source of truth for all zone data, viewpoints, and building specs.
- * Orientation: Field runs EAST   WEST (long axis = X). North = -Z. South = +Z.
- * Origin = centre of polo field.
+ * Project XIX     Estate Data Layer  v2
+ * Change: WORLD bounds expanded to cover full scene geometry
+ * (stables at x=-375, commercial at x=+270, perimeter roads)
  */
 
 export const ESTATE = {
@@ -24,54 +23,42 @@ export const UNIT_SCHEDULE = [
 ];
 
 export const WORLD = {
-  // Bounds for camera clamping (metres)
-  xMin: -260, xMax: 260,
-  zMin: -200, zMax: 280,
-  // Minimap world extents (must match plan-2d.png image proportions)
-  mapXMin: -250, mapXMax: 250,
-  mapZMin: -190, mapZMax: 270,
+  // Camera clamping bounds — must cover full scene geometry
+  // Stables at x=-375, commercial at x=+280, polo perimeter ±155
+  xMin: -400, xMax: 310,
+  zMin: -230, zMax: 245,
+  // Minimap world extents
+  mapXMin: -400, mapXMax: 310,
+  mapZMin: -230, mapZMax: 245,
 };
 
-/**
- * Named viewpoints. pos = [x, y, z], yaw = radians (0 = face +Z south, Math.PI/2 = face +X east)
- */
 export const VIEWPOINTS = {
-  intro:        { label:"Arrival",          pos:[0,60,280],    yaw:Math.PI,     pitch:-0.45, caption:"Project XIX - Lakowe, Ibeju-Lekki" },
-  field_centre: { label:"Centre Field",     pos:[0,1.65,0],    yaw:0,           pitch:0,     caption:"Halfway line - facing north toward the lake",      icon:"pitch"    },
-  field_south:  { label:"South Goal",       pos:[0,1.65,100],  yaw:Math.PI,     pitch:0,     caption:"South goal line - Clubhouse behind you",            icon:"pitch"    },
-  clubhouse:    { label:"Clubhouse",        pos:[0,4,148],     yaw:Math.PI,     pitch:-0.05, caption:"Clubhouse terrace - looking north over the field",   icon:"clubhouse", zoneKey:"clubhouse" },
-  lake_north:   { label:"The Lake",         pos:[0,1.65,-108], yaw:0,           pitch:0,     caption:"Crescent lake - between safety zone and villas",     icon:"lake",    zoneKey:"lake"     },
-  villas:       { label:"Villas",           pos:[-92,4,0],     yaw:Math.PI/2,   pitch:0,     caption:"Premium Villas - click to explore all sides",         icon:"villa",   zoneKey:"villas",
+  // intro removed — causes gate fly-in we don't want
+  field_centre: { label:"Centre Field",     pos:[0,1.72,0],    yaw:0,           pitch:0,     caption:"Halfway line — facing north toward the lake",       icon:"pitch"    },
+  field_south:  { label:"South Goal",       pos:[0,1.72,100],  yaw:Math.PI,     pitch:0,     caption:"South goal line — Clubhouse behind you",            icon:"pitch"    },
+  clubhouse:    { label:"Clubhouse",        pos:[0,4,148],     yaw:Math.PI,     pitch:-0.05, caption:"Clubhouse terrace — looking north over the field",   icon:"clubhouse", zoneKey:"clubhouse" },
+  lake_north:   { label:"The Lake",         pos:[0,1.72,-108], yaw:0,           pitch:0,     caption:"Crescent lake — between safety zone and villas",     icon:"lake",    zoneKey:"lake"     },
+  villas:       { label:"Villas",           pos:[-92,4,0],     yaw:Math.PI/2,   pitch:0,     caption:"Premium Villas — walk the ring",                     icon:"villa",   zoneKey:"villas",
     subViews: [
-      { key:"villa_west",  label:"West Row",   pos:[-92,4,0],    yaw:Math.PI/2,  pitch:0, caption:"West villa row - facing the polo field" },
-      { key:"villa_east",  label:"East Row",   pos:[92,4,0],     yaw:-Math.PI/2, pitch:0, caption:"East villa row - facing the polo field" },
-      { key:"villa_north", label:"North Arc",  pos:[0,4,-132],   yaw:Math.PI,    pitch:0, caption:"North arc - lake behind, field ahead" },
-      { key:"villa_south", label:"South Arc",  pos:[80,4,105],   yaw:0,          pitch:0, caption:"South arc - clubhouse behind, field ahead" },
+      { key:"villa_west",  label:"West Row",   pos:[-92,1.72,0],    yaw:Math.PI/2,  pitch:0, caption:"West villa row — facing the polo field" },
+      { key:"villa_east",  label:"East Row",   pos:[92,1.72,0],     yaw:-Math.PI/2, pitch:0, caption:"East villa row — facing the polo field" },
+      { key:"villa_north", label:"North Arc",  pos:[0,1.72,-132],   yaw:Math.PI,    pitch:0, caption:"North arc — lake behind, field ahead" },
+      { key:"villa_south", label:"South Arc",  pos:[80,1.72,105],   yaw:0,          pitch:0, caption:"South arc — clubhouse behind, field ahead" },
     ]
   },
-  stables:      { label:"Stables",          pos:[-220,1.65,80],yaw:Math.PI/2,   pitch:0,     caption:"Horse stables - equestrian compound, southwest",     icon:"stables", zoneKey:"stables"  },
-  training:     { label:"Training Field",   pos:[-175,1.65,0], yaw:Math.PI/2,   pitch:0,     caption:"Training field - polo academy, perpendicular axis",   icon:"pitch",   zoneKey:"training" },
-  lofts:        { label:"Loft Terrace",     pos:[-218,1.65,-5], yaw:-Math.PI/2, pitch:0,     caption:"West compound loft terraces - beside training field", icon:"loft",    zoneKey:"lofts"    },
-  paddock:      { label:"Paddock",          pos:[155,1.65,-60],yaw:-Math.PI/2,  pitch:0,     caption:"Northeast paddock - post and rail enclosed",         icon:"pitch",   zoneKey:"paddock"  },
-
-  // aerial removed from bottom strip - controlled by topbar AERIAL button only
+  stables:      { label:"Stables",          pos:[-220,1.72,80],yaw:Math.PI/2,   pitch:0,     caption:"Horse stables — equestrian compound, southwest",     icon:"stables", zoneKey:"stables"  },
+  training:     { label:"Training Field",   pos:[-175,1.72,0], yaw:Math.PI/2,   pitch:0,     caption:"Training field — polo academy, perpendicular axis",   icon:"pitch",   zoneKey:"training" },
+  lofts:        { label:"Loft Terrace",     pos:[-218,1.72,-5],yaw:-Math.PI/2,  pitch:0,     caption:"West compound loft terraces — beside training field", icon:"loft",    zoneKey:"lofts"    },
+  paddock:      { label:"Paddock",          pos:[155,1.72,-60],yaw:-Math.PI/2,  pitch:0,     caption:"Northeast paddock — post and rail enclosed",          icon:"pitch",   zoneKey:"paddock"  },
 };
 
-/**
- * Zone definitions for masterplan hotspots.
- * Positions are % of the plan-2d.png image (left, top, width, height).
- * Read directly from visual inspection of plan-2d.png:
- *   Image is landscape ~1400  592px. North is top.
- *   Polo field occupies roughly x:32%   87%, y:20%   82%.
- */
 export const ZONES = {
   polo: {
     label: "Polo Field",
     type: "Signature Experience",
-    tagline: "FIP international standard. 274m    146m.",
-    description: "The central east   west polo field is the gravitational core of the estate. 30, 40, and 60-yard markings from both goal lines define international match standard. The Safety Zone surrounds all four sides.",
+    tagline: "FIP international standard. 274m × 146m.",
+    description: "The central east–west polo field is the gravitational core of the estate. 30, 40, and 60-yard markings from both goal lines define international match standard. The Safety Zone surrounds all four sides.",
     clientLens: "Prestige, spectacle, and a clear centre of value for every surrounding property.",
-    // Hotspot: % left, % top, % width, % height
     hot: { l: 32, t: 20, w: 55, h: 62 },
     viewpoint: "field_centre",
     color: "#3d7a45",
@@ -89,11 +76,11 @@ export const ZONES = {
   villas: {
     label: "Premium Villas",
     type: "Residential Offer",
-    tagline: "43 units    330 sqm. 3 bedrooms. Polo-facing.",
-    description: "Premium Villas wrap the polo field on all four sides     north arc, south strip, and both east and west columns     creating an oval colosseum of private residences. Each villa has a two-car undercroft, full-height glazing, and direct polo views.",
+    tagline: "43 units × 330 sqm. 3 bedrooms. Polo-facing.",
+    description: "Premium Villas wrap the polo field on all four sides — north arc, south strip, and both east and west columns — creating an oval colosseum of private residences. Each villa has a two-car undercroft, full-height glazing, and direct polo views.",
     clientLens: "Polo-front living, family retreat, status, long-term capital value.",
     hot: { l: 30, t: 18, w: 59, h: 66 },
-    viewpoint: "villa_west",
+    viewpoint: "villas",
     color: "#c9a84c",
   },
   clubhouse: {
@@ -109,28 +96,28 @@ export const ZONES = {
   lofts: {
     label: "Loft Apartments",
     type: "Residential Offer",
-    tagline: "96 units    125 sqm. 2 bedrooms. South precinct.",
-    description: "Two rows of 2-Bedroom Loft Terrace blocks occupy the south precinct west of the Clubhouse. Ground floors in natural gabion stone, upper floors in vertical timber slats and glazing     terrace architecture designed for tropical living.",
+    tagline: "96 units × 125 sqm. 2 bedrooms. South precinct.",
+    description: "Two rows of 2-Bedroom Loft Terrace blocks occupy the south precinct west of the Clubhouse. Ground floors in natural gabion stone, upper floors in vertical timber slats and glazing — terrace architecture designed for tropical living.",
     clientLens: "Yield potential, lock-up-and-leave convenience, polo estate address.",
-    hot: { l: 14, t: 3,  w: 72, h: 7  }, // north crescent road
+    hot: { l: 14, t: 3,  w: 72, h: 7  },
     viewpoint: "lofts",
     color: "#8c7a5e",
   },
   flats: {
     label: "Block of Flats",
     type: "Residential Offer",
-    tagline: "48 units    204 sqm. 2 bedrooms. South zone.",
+    tagline: "48 units × 204 sqm. 2 bedrooms. South zone.",
     description: "Two large apartment blocks south of the Loft Terrace precinct house the 2-Bedroom Flat typology. Seven-storey towers with the signature wave-shaped roofline canopy, dark louvre fins, and piloti ground floor parking.",
     clientLens: "Higher-density investment, estate address, community living.",
-    hot: { l: 8,  t: 28, w: 10, h: 42 }, // west compound
+    hot: { l: 8,  t: 28, w: 10, h: 42 },
     viewpoint: "lofts",
     color: "#6e8096",
   },
   training: {
     label: "Training Field",
     type: "Sporting Depth",
-    tagline: "5,000 sqm. North   south orientation. Polo academy.",
-    description: "The Training Field is a separate full-size practice field on the south-west of the estate, oriented north   south perpendicular to the main field. It has its own 30/40/60-yard markings for structured coaching and youth polo programmes.",
+    tagline: "5,000 sqm. North–south orientation. Polo academy.",
+    description: "The Training Field is a separate full-size practice field on the south-west of the estate, oriented north–south perpendicular to the main field. It has its own 30/40/60-yard markings for structured coaching and youth polo programmes.",
     clientLens: "Operational credibility, sporting culture, future polo academy value.",
     hot: { l: 8, t: 73, w: 18, h: 22 },
     viewpoint: "training",
@@ -150,10 +137,10 @@ export const ZONES = {
     label: "Paddock & Recreation",
     type: "Family Amenity",
     tagline: "Main paddock. Game park. Play ground.",
-    description: "The east precinct contains the main paddock (1,645 sqm), a landscaped green area, and a Game Park & Play Ground     creating a family and recreation edge distinct from the equestrian compound on the west.",
+    description: "The east precinct contains the main paddock (1,645 sqm), a landscaped green area, and a Game Park & Play Ground — creating a family and recreation edge distinct from the equestrian compound on the west.",
     clientLens: "Family dwell time, lifestyle appeal, community programming.",
     hot: { l: 88, t: 15, w: 10, h: 45 },
-    viewpoint: "lake_north",
+    viewpoint: "paddock",
     color: "#557a3d",
   },
   commercial: {
@@ -163,7 +150,7 @@ export const ZONES = {
     description: "Commercial Block 1 & 2 anchor the south-east corner near the east parking area and Proposed Lagos Road frontage. Retail, F&B, and service uses serving both residents and the broader Lakowe corridor.",
     clientLens: "Convenience, investor confidence, mixed-use return.",
     hot: { l: 89, t: 73, w: 9, h: 12 },
-    viewpoint: "aerial",
+    viewpoint: "paddock",
     color: "#7a6e5e",
   },
   lagosRoad: {
@@ -173,7 +160,7 @@ export const ZONES = {
     description: "Proposed Lagos Road spans the entire southern boundary, defining the primary arrival sequence for the Clubhouse, parking, and Commercial Block. This frontage will establish the estate's address on the main Ibeju-Lekki corridor.",
     clientLens: "Findability, frontage value, and future commercial visibility.",
     hot: { l: 10, t: 95, w: 80, h: 5 },
-    viewpoint: "aerial",
+    viewpoint: "field_centre",
     color: "#4a4a4a",
   },
 };
