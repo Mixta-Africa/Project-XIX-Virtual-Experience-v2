@@ -220,6 +220,7 @@ export function buildViewpointStrip(container, onSelect) {
       });
 
       btn.addEventListener("click", (e) => {
+        e.preventDefault();
         e.stopPropagation();
         const isOpen = menu.style.display !== "none";
         
@@ -229,10 +230,10 @@ export function buildViewpointStrip(container, onSelect) {
         if (!isOpen) {
           menu.style.display = "flex";
           // Break out of the overflow container
-          menu.style.position = "fixed";
           const rect = btn.getBoundingClientRect();
+          menu.style.position = "fixed";
           menu.style.left = rect.left + "px";
-          menu.style.bottom = (window.innerHeight - rect.top + 5) + "px";
+          menu.style.bottom = "95px"; // Safely above the toolbar
           menu.style.zIndex = "9999";
           btn.querySelector(".vp-chevron").innerHTML = "&#9662;";
         } else {
@@ -241,21 +242,8 @@ export function buildViewpointStrip(container, onSelect) {
       });
 
       wrapper.appendChild(btn);
-      // Append to the 3D overlay so it stays in the correct stacking context
-      document.getElementById("world-overlay").appendChild(menu); 
-    }
-
-    container.appendChild(wrapper);
-  });
-
-  // Close dropdowns on outside click - IGNORING clicks inside the dropdown itself
-  document.addEventListener("click", e => {
-    if (!e.target.closest(".vp-wrapper") && !e.target.closest(".vp-dropdown")) {
-      document.querySelectorAll(".vp-dropdown").forEach(d=>d.style.display="none");
-      document.querySelectorAll(".vp-chevron").forEach(ch=>ch.innerHTML="&#9652;");
-    }
-  }, { passive:true });
-}
+      // Append to body so it doesn't get clipped by the scrolling strip
+      document.body.appendChild(menu); 
 
     } else {
       // Simple button: teleport + open product panel
@@ -278,9 +266,9 @@ export function buildViewpointStrip(container, onSelect) {
     container.appendChild(wrapper);
   });
 
-  // Close dropdowns on outside click
+  // Close dropdowns on outside click - IGNORING clicks inside the dropdown itself
   document.addEventListener("click", e => {
-    if (!e.target.closest(".vp-wrapper")) {
+    if (!e.target.closest(".vp-wrapper") && !e.target.closest(".vp-dropdown")) {
       document.querySelectorAll(".vp-dropdown").forEach(d=>d.style.display="none");
       document.querySelectorAll(".vp-chevron").forEach(ch=>ch.innerHTML="&#9652;");
     }
