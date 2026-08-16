@@ -158,8 +158,8 @@ function onTouchStart(e) {
       joyDelta  = { x: 0, y: 0 };
       
       if (joystickEl) {
-        // Remove the inline style injections that move the base
-        joystickEl.style.opacity = '1'; 
+        // Just fade it in. CSS handles the fixed position now.
+        joystickEl.style.opacity = '1';
       }
     } else if (t.clientX >= halfW && !lookTouch) {
       // Right half - look
