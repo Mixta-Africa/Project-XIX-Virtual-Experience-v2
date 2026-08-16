@@ -1,140 +1,106 @@
 /**
- * Project XIX -- Controls v2
- * Full responsive + touch support:
- *   Desktop: WASD/arrows + pointer lock mouse look
- *   Mobile/tablet: virtual joystick (left thumb) + swipe look (right thumb)
- *   Gyroscope: auto-detected on mobile, optional permission request
- *   WebXR: immersive-vr session
- *   All inputs: instant stop on release (no drift)
+ * Project XIX -- Controls
+ * Optimized for Mobile/Tablet: Joystick locked to specific touch target.
+ * 100% of the remaining canvas acts as camera look.
  */
 
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
 import { WORLD } from "./data.js";
 
-//        CONSTANTS                                                                                                                                                                                                    
-const WALK    = 8;    // m/s walk
-const SPRINT  = 18;   // m/s sprint
-const EYE_H   = 1.72; // eye height metres
+const WALK    = 8;
+const SPRINT  = 18;
+const EYE_H   = 1.72;
 const P_MIN   = -0.7;
 const P_MAX   =  0.6;
 const M_SENS  = 0.0024;
 const T_SENS  = 0.0028;
 
-//        STATE                                                                                                                                                                                                                
 let camera, renderer;
 let yaw = Math.PI, pitch = 0;
 let active = false, locked = false;
 const keys = new Set();
 
 // Touch state
-let joyOrigin = null;  // { x, y, id }
+let joyOrigin = null;  
 let joyDelta  = { x: 0, y: 0 };
-let lookTouch = null;  // { id }
-let lookLast  = null;  // { x, y }
+let lookTouch = null;  
+let lookLast  = null;  
 
-// Virtual joystick DOM element
 let joystickEl = null, joystickDotEl = null;
+let touchSprint = false;
 
-//        INIT                                                                                                                                                                                                                
 export function initControls(cam, ren) {
   camera = cam; renderer = ren;
 
-  // Keyboard
   window.addEventListener('keydown', e => {
     keys.add(e.key.toLowerCase());
-    if (active && ['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase()))
-      e.preventDefault();
+    if (active && ['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase())) e.preventDefault();
     if (e.key === 'Escape' && locked) document.exitPointerLock();
   });
   window.addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
   window.addEventListener('blur', () => keys.clear());
   document.addEventListener('visibilitychange', () => { if (document.hidden) keys.clear(); });
 
-  // Pointer lock (desktop mouse look)
   renderer.domElement.addEventListener('click', (e) => {
-    // Only request pointer lock if click is directly on the canvas
-    // (not on overlapping UI elements like viewpoint buttons)
     if (!active || locked || isMobile()) return;
-    // Check if the actual target is a button or interactive element
     const tag = e.target.tagName.toLowerCase();
     if (['button','a','input','select','textarea'].includes(tag)) return;
-    // Check if click is within the viewpoint strip area (bottom 100px)
     const rect = renderer.domElement.getBoundingClientRect();
-    const fromBottom = rect.bottom - e.clientY;
-    if (fromBottom < 100) return; // bottom nav zone - don't steal
-    // Check if click is within the topbar area (top 60px)  
-    const fromTop = e.clientY - rect.top;
-    if (fromTop < 60) return; // topbar zone - don't steal
+    if (rect.bottom - e.clientY < 100) return; 
+    if (e.clientY - rect.top < 60) return; 
     renderer.domElement.requestPointerLock();
   });
+
   document.addEventListener('pointerlockchange', () => {
     locked = document.pointerLockElement === renderer.domElement;
     document.body.classList.toggle('pointer-locked', locked);
   });
+
   document.addEventListener('mousemove', e => {
     if (!active || !locked) return;
     yaw   -= e.movementX * M_SENS;
     pitch  = clamp(pitch - e.movementY * M_SENS, P_MIN, P_MAX);
   });
 
-  // Touch (passive:false to allow preventDefault)
-  const canvas = renderer.domElement;
-  canvas.addEventListener('touchstart',  onTouchStart,  { passive: false });
-  canvas.addEventListener('touchmove',   onTouchMove,   { passive: false });
-  canvas.addEventListener('touchend',    onTouchEnd,    { passive: false });
-  canvas.addEventListener('touchcancel', onTouchEnd,    { passive: false });
+  // Attach touch listeners to the document so they don't miss quick swipes
+  document.addEventListener('touchstart',  onTouchStart,  { passive: false });
+  document.addEventListener('touchmove',   onTouchMove,   { passive: false });
+  document.addEventListener('touchend',    onTouchEnd,    { passive: false });
+  document.addEventListener('touchcancel', onTouchEnd,    { passive: false });
 
-  // Create virtual joystick visuals
   buildJoystickUI();
 
-  // Gyroscope (Android auto, iOS requires permission)
-  if (window.DeviceOrientationEvent) {
-    if (typeof DeviceOrientationEvent.requestPermission !== 'function') {
-      window.addEventListener('deviceorientation', onGyro, { passive: true });
-    }
+  if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission !== 'function') {
+    window.addEventListener('deviceorientation', onGyro, { passive: true });
   }
 
   return { activate, deactivate, setView, update: updateControls };
 }
 
-//        JOYSTICK UI                                                                                                                                                                                              
-// Touch sprint state
-let touchSprint = false;
-
 function buildJoystickUI() {
-  // Show on ANY touch-capable device (not just phones)
   const hasTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
   if (!hasTouch) return;
 
   const overlay = document.getElementById('joystick-overlay');
   if (!overlay) return;
 
-  // Base ring (spawns at touch point)
   joystickEl = document.createElement('div');
   joystickEl.className = 'vj-base';
+  joystickEl.style.pointerEvents = 'auto'; // CRITICAL: Makes the joystick a physical touch target
   overlay.appendChild(joystickEl);
 
-  // Dot (thumb position indicator)
   joystickDotEl = document.createElement('div');
   joystickDotEl.className = 'vj-dot';
+  joystickDotEl.style.pointerEvents = 'none';
   joystickEl.appendChild(joystickDotEl);
 
-  // Sprint toggle button (bottom-left, above joystick area)
   const sprintBtn = document.createElement('button');
-  sprintBtn.id        = 'touch-sprint-btn';
+  sprintBtn.id = 'touch-sprint-btn';
   sprintBtn.className = 'touch-sprint-btn';
   sprintBtn.textContent = 'SPRINT';
-  sprintBtn.setAttribute('aria-label', 'Sprint toggle');
-  sprintBtn.addEventListener('touchstart', e => {
-    e.preventDefault();
-    touchSprint = true;
-    sprintBtn.classList.add('active');
-  }, { passive: false });
-  sprintBtn.addEventListener('touchend', e => {
-    e.preventDefault();
-    touchSprint = false;
-    sprintBtn.classList.remove('active');
-  }, { passive: false });
+  sprintBtn.style.pointerEvents = 'auto';
+  sprintBtn.addEventListener('touchstart', e => { e.preventDefault(); touchSprint = true; sprintBtn.classList.add('active'); }, { passive: false });
+  sprintBtn.addEventListener('touchend', e => { e.preventDefault(); touchSprint = false; sprintBtn.classList.remove('active'); }, { passive: false });
   overlay.appendChild(sprintBtn);
 }
 
@@ -146,23 +112,30 @@ function updateJoystickDot() {
   joystickDotEl.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
 }
 
-//        TOUCH HANDLERS                                                                                                                                                                                     
 function onTouchStart(e) {
   if (!active) return;
-  e.preventDefault();
-  const halfW = renderer.domElement.clientWidth / 2;
+  
+  // Identify what the user touched
+  const isCanvas = e.target.tagName.toLowerCase() === 'canvas';
+  const isJoystick = e.target.closest('.vj-base');
+
+  // ONLY prevent default if they touched the game world or joystick
+  // This allows native UI buttons and dropdowns to continue working normally
+  if (isCanvas || isJoystick) {
+    e.preventDefault();
+  } else {
+    return; 
+  }
+
   for (const t of e.changedTouches) {
-    if (t.clientX < halfW && !joyOrigin) {
-      // Left half - activate joystick, but DO NOT move the visual base ring
+    // 1. Did they touch the explicit joystick element?
+    if (e.target.closest('.vj-base') && !joyOrigin) {
       joyOrigin = { x: t.clientX, y: t.clientY, id: t.identifier };
       joyDelta  = { x: 0, y: 0 };
-      
-      if (joystickEl) {
-        // Just fade it in. CSS handles the fixed position now.
-        joystickEl.style.opacity = '1';
-      }
-    } else if (t.clientX >= halfW && !lookTouch) {
-      // Right half - look
+      if (joystickEl) joystickEl.style.opacity = '1';
+    } 
+    // 2. Otherwise, if they touched the canvas, it's ALWAYS camera look
+    else if (isCanvas && !lookTouch) {
       lookTouch = { id: t.identifier };
       lookLast  = { x: t.clientX, y: t.clientY };
     }
@@ -171,24 +144,23 @@ function onTouchStart(e) {
 
 function onTouchMove(e) {
   if (!active) return;
-  e.preventDefault();
+  
   for (const t of e.changedTouches) {
     if (joyOrigin && t.identifier === joyOrigin.id) {
-      const DEAD = 8;  // dead zone pixels
+      e.preventDefault();
+      const DEAD = 8;
       const dx = t.clientX - joyOrigin.x;
       const dy = t.clientY - joyOrigin.y;
       const dist = Math.sqrt(dx*dx + dy*dy);
       if (dist < DEAD) {
         joyDelta = { x: 0, y: 0 };
       } else {
-        joyDelta = {
-          x: clamp(dx / 55, -1, 1),
-          y: clamp(dy / 55, -1, 1),
-        };
+        joyDelta = { x: clamp(dx / 40, -1, 1), y: clamp(dy / 40, -1, 1) };
       }
       updateJoystickDot();
     }
     if (lookTouch && t.identifier === lookTouch.id && lookLast) {
+      e.preventDefault();
       yaw   -= (t.clientX - lookLast.x) * T_SENS;
       pitch  = clamp(pitch - (t.clientY - lookLast.y) * T_SENS, P_MIN, P_MAX);
       lookLast = { x: t.clientX, y: t.clientY };
@@ -211,7 +183,6 @@ function onTouchEnd(e) {
   }
 }
 
-//        GYROSCOPE                                                                                                                                                                                                    
 export async function requestGyro() {
   if (typeof DeviceOrientationEvent.requestPermission === 'function') {
     const res = await DeviceOrientationEvent.requestPermission();
@@ -225,7 +196,6 @@ function onGyro(e) {
   pitch  = clamp(((e.beta || 0) - 30) * (Math.PI / 180), P_MIN, P_MAX);
 }
 
-//        UPDATE (per frame)                                                                                                                                                                         
 export function updateControls(delta) {
   if (!active || !camera) return;
 
@@ -246,13 +216,13 @@ export function updateControls(delta) {
     move.addScaledVector(forward, -joyDelta.y);
   }
 
-  // Apply movement (no velocity accumulation     instant stop)
+  // Apply movement
   if (move.lengthSq() > 0.0001) {
     move.normalize().multiplyScalar(speed * delta);
     camera.position.add(move);
   }
 
-  // Clamp to world bounds and eye height
+  // Clamp to world bounds
   camera.position.x = clamp(camera.position.x, WORLD.xMin || -320, WORLD.xMax || 320);
   camera.position.z = clamp(camera.position.z, WORLD.zMin || -260, WORLD.zMax || 235);
   camera.position.y = EYE_H;
@@ -263,11 +233,8 @@ export function updateControls(delta) {
   camera.rotation.x = pitch;
 }
 
-//        HELPERS                                                                                                                                                                                                          
 export function activate()   {
-  active = true;
-  keys.clear();
-  // Show joystick overlay on touch devices
+  active = true; keys.clear();
   const hasTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
   if (hasTouch) {
     const overlay = document.getElementById('joystick-overlay');
@@ -299,7 +266,6 @@ export function isMobile() {
 
 function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
 
-//        WEBXR                                                                                                                                                                                                                
 export async function enterVR(renderer, scene, camera, clock, onFrame) {
   if (!('xr' in navigator)) { alert('WebXR not supported on this device.'); return; }
   try {
