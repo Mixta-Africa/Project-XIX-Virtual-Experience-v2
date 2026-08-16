@@ -241,8 +241,21 @@ export function buildViewpointStrip(container, onSelect) {
       });
 
       wrapper.appendChild(btn);
-      // Append to body so it doesn't get clipped by the scrolling strip
-      document.body.appendChild(menu);
+      // Append to the 3D overlay so it stays in the correct stacking context
+      document.getElementById("world-overlay").appendChild(menu); 
+    }
+
+    container.appendChild(wrapper);
+  });
+
+  // Close dropdowns on outside click - IGNORING clicks inside the dropdown itself
+  document.addEventListener("click", e => {
+    if (!e.target.closest(".vp-wrapper") && !e.target.closest(".vp-dropdown")) {
+      document.querySelectorAll(".vp-dropdown").forEach(d=>d.style.display="none");
+      document.querySelectorAll(".vp-chevron").forEach(ch=>ch.innerHTML="&#9652;");
+    }
+  }, { passive:true });
+}
 
     } else {
       // Simple button: teleport + open product panel
