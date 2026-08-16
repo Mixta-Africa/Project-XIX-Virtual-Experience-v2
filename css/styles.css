@@ -2146,3 +2146,15 @@ body.interior-open { overflow: hidden; }
   border-color: var(--gold-500);
   color: var(--gold-300);
 }
+
+/* Fix Product Panel Scrolling on Mobile */
+.product-panel {
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch !important;
+  max-height: 100vh;
+}
+.pp-body {
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch !important;
+  padding-bottom: 80px; /* Give space at the bottom to scroll past the text */
+}
