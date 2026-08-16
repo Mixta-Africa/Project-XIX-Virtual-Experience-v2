@@ -112,7 +112,16 @@ export function loadHorseGLB() {
 }
 
 export function tickHorseAnim(delta, isMoving) {
-  if (horseMixer && isMoving) horseMixer.update(delta);
+  if (!horseMixer) return;
+  // Always advance the mixer — stopping mid-stride looks worse than slow idle.
+  // When stationary, slow the playback to 20% speed for a gentle idle sway.
+  horseMixer.timeScale = isMoving ? 1.2 : 0.2;
+  horseMixer.update(delta);
+}
+
+// Alias used by app.js (tickHorse without args = always tick)
+export function tickHorse(delta) {
+  if (horseMixer) horseMixer.update(delta);
 }
 
 // ─── IMPROVEMENT 6: TERRAIN HEIGHT FOLLOWING ─────────────────────────────────
@@ -128,26 +137,69 @@ function getGroundY(x, z) {
 export function setHorsePosition(x, z, yaw) {
   if (!horseGroup) return;
   const groundY = getGroundY(x, z);
-  const forwardOffset = horseViewMode === 'first' ? 1.0 : 4.5;
-  const downOffset    = horseViewMode === 'first' ? -2.0 : -2.5;
-  horseGroup.position.set(
-    x - Math.sin(yaw) * forwardOffset,
-    groundY + downOffset,
-    z - Math.cos(yaw) * forwardOffset
-  );
+  if (horseViewMode === 'first') {
+    // First-person ride: push horse 2m ahead so body is visible peripherally.
+    // Keep feet on true ground level — bbox auto-lift handles Y.
+    const fwd = 2.0;
+    horseGroup.position.set(
+      x - Math.sin(yaw) * fwd,
+      groundY,
+      z - Math.cos(yaw) * fwd
+    );
+  } else {
+    // Third-person: horse at camera XZ, body on ground.
+    horseGroup.position.set(x, groundY, z);
+  }
   horseGroup.rotation.y = yaw + Math.PI;
 }
 
-// ─── IMPROVEMENT 7: NPC HORSES ───────────────────────────────────────────────
-const npcHorses = [];  // { group, mixer, path, pathIdx, speed, progress }
+export function getThirdPersonCameraOffset() {
+  // Returns { back, up } — how far behind/above horse third-person cam sits
+  return { back: 5.5, up: 2.4 };
+}
+
+// ─── NPC HORSES ──────────────────────────────────────────────────────────────
+// 8 horses, all paths verified to avoid water bodies:
+//   Lake 1: centred [30,-115], extent ~[-70,-95] to [130,-135] — avoid z in [-95,-135]
+//   Lake 2 (east): centred [220,-48], small — avoid x in [210,230], z in [-60,-35]
+//
+// Paths use only dry-land waypoints.
+const npcHorses = [];
 
 const NPC_PATHS = [
-  // Paddock patrol — rectangular loop
-  [new THREE.Vector3(200,0,0),new THREE.Vector3(230,0,0),new THREE.Vector3(230,0,30),new THREE.Vector3(200,0,30)],
-  // Polo field canter — diagonal sweep
-  [new THREE.Vector3(-80,0,50),new THREE.Vector3(0,0,20),new THREE.Vector3(80,0,50),new THREE.Vector3(0,0,80)],
-  // Lake side wander
-  [new THREE.Vector3(-60,0,-100),new THREE.Vector3(60,0,-100),new THREE.Vector3(90,0,-90),new THREE.Vector3(60,0,-80)],
+  // 0: Paddock tight loop (east compound, no water near)
+  [new THREE.Vector3(202,0,-10),new THREE.Vector3(234,0,-10),new THREE.Vector3(234,0,28),new THREE.Vector3(202,0,28)],
+
+  // 1: Main polo field — full length gallop (z=+60 to z=-60, well above lake at z=-95)
+  [new THREE.Vector3(-100,0,60),new THREE.Vector3(0,0,55),new THREE.Vector3(100,0,60),
+   new THREE.Vector3(100,0,-60),new THREE.Vector3(0,0,-55),new THREE.Vector3(-100,0,-60)],
+
+  // 2: North perimeter — above the lake (z stays above -90)
+  [new THREE.Vector3(-140,0,-82),new THREE.Vector3(-60,0,-80),new THREE.Vector3(0,0,-82),
+   new THREE.Vector3(60,0,-80),new THREE.Vector3(130,0,-82),new THREE.Vector3(60,0,-80),new THREE.Vector3(-60,0,-82)],
+
+  // 3: West side road (x=-155 corridor, z well away from lake)
+  [new THREE.Vector3(-155,0,80),new THREE.Vector3(-155,0,40),new THREE.Vector3(-155,0,0),
+   new THREE.Vector3(-155,0,-40),new THREE.Vector3(-155,0,-70),new THREE.Vector3(-155,0,-40),
+   new THREE.Vector3(-155,0,0),new THREE.Vector3(-155,0,40)],
+
+  // 4: East side road (x=+155, mirror of west)
+  [new THREE.Vector3(155,0,-70),new THREE.Vector3(155,0,-40),new THREE.Vector3(155,0,0),
+   new THREE.Vector3(155,0,40),new THREE.Vector3(155,0,80),new THREE.Vector3(155,0,40),
+   new THREE.Vector3(155,0,0),new THREE.Vector3(155,0,-40)],
+
+  // 5: South precinct promenade (z=+150 to +210, stays south of clubhouse)
+  [new THREE.Vector3(-120,0,160),new THREE.Vector3(-60,0,155),new THREE.Vector3(0,0,160),
+   new THREE.Vector3(60,0,155),new THREE.Vector3(120,0,160),new THREE.Vector3(60,0,158),
+   new THREE.Vector3(0,0,163),new THREE.Vector3(-60,0,158)],
+
+  // 6: Stables yard loop (south-west, no water)
+  [new THREE.Vector3(-360,0,75),new THREE.Vector3(-360,0,105),new THREE.Vector3(-390,0,110),
+   new THREE.Vector3(-390,0,75),new THREE.Vector3(-375,0,70)],
+
+  // 7: Training field diagonal (south-west field, far from any water)
+  [new THREE.Vector3(-310,0,-55),new THREE.Vector3(-370,0,-10),new THREE.Vector3(-310,0,35),
+   new THREE.Vector3(-250,0,-10)],
 ];
 
 function spawnNPCHorse(pathIndex) {
@@ -808,11 +860,12 @@ export function initScene(canvas) {
       addServiceCompound();
       addLandscaping();
 
-      // IMPROVEMENT 7: NPC horses after everything else
+      // NPC horses — all 8 paths, staggered with setTimeout so they don't
+      // all trigger a Draco decode at the same millisecond.
       requestAnimationFrame(() => {
-        spawnNPCHorse(0); // paddock
-        spawnNPCHorse(1); // polo field
-        spawnNPCHorse(2); // lake side
+        for (let i = 0; i < 8; i++) {
+          setTimeout(() => spawnNPCHorse(i), i * 400);
+        }
       });
     });
   });
