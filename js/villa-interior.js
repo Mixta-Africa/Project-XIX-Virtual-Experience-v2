@@ -76,13 +76,13 @@ export const VILLA_VIEWPOINTS = [
 
 // ─── BUILD THE INTERIOR SCENE ─────────────────────────────────
 export function buildVillaInterior(scene) {
-  addLighting(scene);
+  // Lighting and Exterior Context removed. 
+  // The villa is now physically integrated into the main world's lighting and environment.
   addUndercroft(scene);
   addGroundFloor(scene);
   addFirstFloor(scene);
   addRoof(scene);
   addFurniture(scene);
-  addExteriorContext(scene);
 }
 
 // ── LIGHTING ─────────────────────────────────────────────────
