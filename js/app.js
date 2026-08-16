@@ -717,6 +717,9 @@ function bindSectionScrollAnim() {
 }
 
 //           VILLA INTERIOR
+//           VILLA INTERIOR (INTEGRATED INTO MAIN WORLD)
+let interiorGroup = null;
+
 function bindVillaInteriorBtn() {
   document.addEventListener("click", e => {
     const enterBtn = e.target.closest(".residence-card-btn");
@@ -747,71 +750,50 @@ function bindVillaInteriorBtn() {
 function openVillaInterior() {
   const overlay = document.getElementById("villa-overlay");
   if (!overlay) return;
+  
+  // Make the UI overlay transparent and hide the black canvas so the real world shows through
+  overlay.style.background = "transparent";
+  const villaCanvas = document.getElementById("villa-canvas");
+  if (villaCanvas) villaCanvas.style.display = "none";
+  
   overlay.classList.add("open");
-  document.body.style.overflow = "hidden";
 
-  if (!villaScene) {
-    const canvas = document.getElementById("villa-canvas");
-    if (!canvas) return;
-    villaRenderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: "high-performance" });
-    villaRenderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 1.5));
-    villaRenderer.shadowMap.enabled  = true;
-    villaRenderer.shadowMap.type     = THREE.PCFSoftShadowMap;
-    villaRenderer.toneMapping        = THREE.ACESFilmicToneMapping;
-    villaRenderer.toneMappingExposure = 1.1;
-    villaRenderer.outputColorSpace   = THREE.SRGBColorSpace;
-    villaScene = new THREE.Scene();
-    villaScene.background = new THREE.Color(0x7ab4d4);
-    villaScene.fog = new THREE.FogExp2(0x9ac5d4, 0.025);
-    buildVillaInterior(villaScene);
+  if (!interiorGroup) {
+    interiorGroup = new THREE.Group();
+    // Place physically in the North Villa row (x: -8, z: -135), facing South towards the Polo Field
+    interiorGroup.position.set(-8, 0, -135);
+    interiorGroup.rotation.y = Math.PI; 
+    getScene().add(interiorGroup);
+    buildVillaInterior(interiorGroup);
   }
 
   teleportVillaTo("approach");
   activate();
-  resizeVilla();
-  window.addEventListener("resize", resizeVilla);
-  startVillaLoop();
   buildVillaStrip();
 }
 
 function closeVillaInterior() {
   document.getElementById("villa-overlay")?.classList.remove("open");
-  document.body.style.overflow = "";
-  deactivate();
-  window.removeEventListener("resize", resizeVilla);
-  if (villaAnimId) { cancelAnimationFrame(villaAnimId); villaAnimId = null; }
-}
-
-let villaAnimId = null;
-
-function startVillaLoop() {
-  if (villaAnimId) cancelAnimationFrame(villaAnimId);
-  const cam = getCamera();
-  function frame() {
-    villaAnimId = requestAnimationFrame(frame);
-    const delta = Math.min(getClock().getDelta(), 0.033);
-    updateControls(delta);
-    if (villaRenderer && villaScene) villaRenderer.render(villaScene, cam);
-  }
-  frame();
-}
-
-function resizeVilla() {
-  const canvas = document.getElementById("villa-canvas");
-  if (!canvas || !villaRenderer) return;
-  const w = canvas.parentElement.clientWidth;
-  const h = canvas.parentElement.clientHeight;
-  villaRenderer.setSize(w, h);
-  const cam = getCamera();
-  cam.aspect = w / h;
-  cam.updateProjectionMatrix();
+  // Return to the main field when exiting the house
+  teleportTo("field_centre", VIEWPOINTS.field_centre);
 }
 
 function teleportVillaTo(key) {
   const vp = VILLA_VIEWPOINTS.find(v => v.key === key);
   if (!vp) return;
-  setView(vp.pos, vp.yaw, 0);
+  
+  // Translate the local interior coordinates to physical world coordinates
+  const localPos = new THREE.Vector3(...vp.pos);
+  localPos.applyAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI); // apply group rotation
+  
+  const worldX = -8 + localPos.x;
+  const worldY = localPos.y;
+  const worldZ = -135 + localPos.z;
+  const worldYaw = vp.yaw + Math.PI; // Look the correct direction
+
+  setView([worldX, worldY, worldZ], worldYaw, vp.pitch || 0);
   setCaption(vp.caption || vp.label);
+  
   document.querySelectorAll(".vp-floor-btn").forEach(b => {
     b.classList.toggle("active", b.dataset.key === key);
   });
