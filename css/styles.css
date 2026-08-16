@@ -1291,33 +1291,70 @@ button.residence-card-btn {
 /*           PLAN ROOM CLICK JS BINDING                                                                                               */
 /* Handled in app.js via data-key delegation */
 
-/*           WEATHER / TIME CONTROLS IN WORLD                                                                                   */
+/*           TOPBAR DROPDOWNS & CONTROLS IN WORLD                                                                                   */
 
-.wx-group {
+.topbar-dropdown {
+  position: relative;
   display: flex;
-  gap: 0.25rem;
-  align-items: center;
-  padding: 0 0.3rem;
-  border-right: 1px solid rgba(255,255,255,0.1);
+}
+
+.topbar-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
+  background: rgba(10, 20, 12, 0.96);
+  border: 1px solid rgba(201,168,76,0.3);
+  border-radius: 4px;
+  padding: 4px;
+  min-width: 130px;
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.7);
+  z-index: 500;
+}
+
+.topbar-dropdown:hover .topbar-dropdown-menu,
+.topbar-dropdown:focus-within .topbar-dropdown-menu {
+  display: flex;
 }
 
 .wx-btn {
-  padding: 0.28rem 0.65rem;
-  font-size: 0.62rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.68rem;
   font-weight: 500;
   letter-spacing: 0.05em;
   border-radius: 2px;
-  border: 1px solid rgba(255,255,255,0.15);
-  background: rgba(0,0,0,0.35);
-  color: rgba(240,236,224,0.65);
+  border: none;
+  background: transparent;
+  color: rgba(240,236,224,0.75);
   cursor: pointer;
-  transition: all 0.18s;
+  transition: all 0.15s;
   white-space: nowrap;
 }
-.wx-btn:hover { border-color: rgba(201,168,76,0.5); color: var(--gold-300); }
+
+.wx-btn:hover { 
+  background: rgba(201,168,76,0.12); 
+  color: var(--gold-300); 
+}
+
 .wx-btn.active {
   background: rgba(201,168,76,0.18);
-  border-color: rgba(201,168,76,0.6);
+  color: var(--gold-300);
+  border-left: 2px solid var(--gold-500);
+}
+
+.world-btn {
+  border: 1px solid rgba(201,168,76,0.25);
+  color: rgba(240,236,224,0.7);
+  background: rgba(0,0,0,0.2);
+}
+
+.world-btn:hover {
+  background: rgba(201,168,76,0.1);
+  border-color: rgba(201,168,76,0.5);
   color: var(--gold-300);
 }
 
