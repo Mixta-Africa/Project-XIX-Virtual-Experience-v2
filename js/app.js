@@ -18,8 +18,8 @@ import {
   highlightPlot, setPerfMode, PERF_MODE,
   RIDER_EYE_HEIGHT, FOOT_EYE_HEIGHT, tickHorse, tickHorseAnim,
   setHorsePosition, getThirdPersonCameraOffset, setAerialMode,
-  getSunLight, getHorseGroup,
-} from "./scene.js?v=36";
+  getSunLight, getHorseGroup, updateNightLights, updateBuildingNightGlow,
+} from "./scene.js";
 import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics } from "./graphics.js";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
@@ -227,73 +227,22 @@ function injectDayClock() {
   window._updateDayClock('afternoon');
 }
 
-// ── FIX: Make topbar dropdowns work on touch (no hover on mobile) ─────────────
+// ── FIX: Topbar dropdowns — reliable on desktop and touch ──────────────────────
+// Root cause of unresponsiveness was duplicate listeners (one with capture:true +
+// stopPropagation blocking the second). This version uses a single delegated
+// listener per wrapper with class-toggle state and no stopPropagation conflicts.
 function fixTopbarDropdowns() {
-  // Close all dropdowns
-  function closeAll() {
-    document.querySelectorAll('.topbar-dropdown-menu').forEach(m => {
-      m.style.display = 'none';
-    });
-    document.querySelectorAll('.world-btn[aria-haspopup]').forEach(b => {
-      b.setAttribute('aria-expanded','false');
-    });
-  }
-
-  // Wire each dropdown trigger
-  document.querySelectorAll('.topbar-dropdown').forEach(wrapper => {
-    const trigger = wrapper.querySelector('.world-btn[aria-haspopup]');
-    const menu    = wrapper.querySelector('.topbar-dropdown-menu');
-    if (!trigger || !menu) return;
-
-    // Override CSS hover with JS click
-    trigger.addEventListener('click', e => {
-      e.stopPropagation();
-      const isOpen = menu.style.display === 'flex';
-      closeAll();
-      if (!isOpen) {
-        menu.style.display = 'flex';
-        trigger.setAttribute('aria-expanded','true');
-      }
-    }, { capture: true });
-
-    // Each menu item: close menu after selection
-    menu.querySelectorAll('button, .wx-btn').forEach(item => {
-      item.addEventListener('click', e => {
-        e.stopPropagation();
-        // Run the onclick inline handler — it's already set in HTML
-        closeAll();
-      });
-    });
-  });
-
-  // Topbar action buttons (TOUR, AERIAL, EXIT) — already have onclick, ensure they work
-  // AERIAL: calls toggleAerial(this) — wire directly
-  const aerialBtn = document.querySelector('.world-btn-aerial') || 
-                    document.querySelector('[onclick*="toggleAerial"]');
-  if (aerialBtn && !aerialBtn.dataset.wired) {
-    aerialBtn.dataset.wired = '1';
-    aerialBtn.addEventListener('click', () => toggleAerial(aerialBtn));
-  }
-
-  // Close all dropdowns when clicking elsewhere in the world
-  document.getElementById('world-canvas')?.addEventListener('click', closeAll, { passive:true });
-  document.getElementById('world-overlay')?.addEventListener('click', e => {
-    if (!e.target.closest('.topbar-dropdown') && !e.target.closest('#perf-toggle-bar')) {
-      closeAll();
-    }
-  }, { passive:true });
-
-  // Style fix: ensure menus are hidden by default and positioned correctly
+  // Inject styles once
   const styleId = 'topbar-dropdown-fix';
   if (!document.getElementById(styleId)) {
     const s = document.createElement('style');
     s.id = styleId;
     s.textContent = `
-      /* Override CSS hover — JS controls visibility instead */
+      /* Disable CSS :hover on dropdowns — JS controls open state only */
       .topbar-dropdown .topbar-dropdown-menu {
-        display: none !important;  /* hidden by default */
-        position: fixed !important;
-        z-index: 9998 !important;
+        display: none;
+        position: fixed;
+        z-index: 9998;
         min-width: 160px;
         flex-direction: column;
         background: rgba(8,18,10,0.97);
@@ -302,69 +251,99 @@ function fixTopbarDropdowns() {
         padding: 4px;
         box-shadow: 0 8px 32px rgba(0,0,0,0.7);
         overflow: hidden;
+        pointer-events: all;
       }
-      .topbar-dropdown .topbar-dropdown-menu.open {
-        display: flex !important;  /* JS adds/removes open class below */
-      }
-      .topbar-dropdown:hover .topbar-dropdown-menu {
-        display: none !important; /* disable CSS hover — JS only */
-      }
+      .topbar-dropdown:hover .topbar-dropdown-menu { display: none; }
+      .topbar-dropdown .topbar-dropdown-menu.open { display: flex; }
       .wx-btn {
         background: none;
-        color: rgba(240,236,224,0.82);
+        color: rgba(240,236,224,0.85);
         border: none;
-        padding: 11px 16px;
+        padding: 12px 16px;
         cursor: pointer;
         font-size: 13px;
         text-align: left;
         white-space: nowrap;
         border-radius: 5px;
         transition: background .12s;
-        min-height: 44px;
+        min-height: 48px;
         display: flex;
         align-items: center;
         gap: 8px;
         -webkit-tap-highlight-color: transparent;
+        touch-action: manipulation;
+        width: 100%;
+        box-sizing: border-box;
+        pointer-events: all;
       }
-      .wx-btn:hover, .wx-btn.active {
-        background: rgba(201,168,76,0.15);
-        color: #c9a84c;
-      }
+      .wx-btn:hover, .wx-btn.active { background: rgba(201,168,76,0.18); color: #c9a84c; }
       .wx-btn.active { font-weight: 600; }
-      /* World button base touch fix */
       .world-btn {
         -webkit-tap-highlight-color: transparent;
         touch-action: manipulation;
-        min-height: 40px;
+        min-height: 44px;
         cursor: pointer;
+        pointer-events: all;
+      }
+      /* Ensure dropdown trigger buttons are always clickable */
+      .topbar-dropdown > .world-btn {
+        position: relative;
+        z-index: 10;
+        pointer-events: all;
       }
     `;
     document.head.appendChild(s);
   }
 
-  // Now rewire using class toggle instead of display (works with the !important above)
-  // Re-implement using .open class
+  function closeAll() {
+    document.querySelectorAll('.topbar-dropdown-menu').forEach(m => {
+      m.classList.remove('open');
+    });
+  }
+
+  // Wire each dropdown — skip already-wired wrappers
   document.querySelectorAll('.topbar-dropdown').forEach(wrapper => {
+    if (wrapper.dataset.dropdownFixed) return;
+    wrapper.dataset.dropdownFixed = '1';
+
     const trigger = wrapper.querySelector('.world-btn[aria-haspopup]');
     const menu    = wrapper.querySelector('.topbar-dropdown-menu');
     if (!trigger || !menu) return;
-    // Remove the previous listener (can't easily, so use a flag)
-    if (wrapper.dataset.dropdownFixed) return;
-    wrapper.dataset.dropdownFixed = '1';
-    trigger.addEventListener('click', e => {
-      e.stopPropagation();
-      const isOpen = menu.classList.contains('open');
-      // Close all
-      document.querySelectorAll('.topbar-dropdown-menu').forEach(m => m.classList.remove('open'));
-      if (!isOpen) menu.classList.add('open');
-    }, { capture: false });
+
+    // Position menu under trigger when opened
+    function positionMenu() {
+      const r = trigger.getBoundingClientRect();
+      menu.style.top  = (r.bottom + 4) + 'px';
+      menu.style.left = Math.max(4, r.left) + 'px';
+    }
+
+    // Single clean listener — no capture, no stopPropagation
+    trigger.addEventListener('pointerup', e => {
+      e.preventDefault();
+      const wasOpen = menu.classList.contains('open');
+      closeAll();
+      if (!wasOpen) {
+        positionMenu();
+        menu.classList.add('open');
+        trigger.setAttribute('aria-expanded', 'true');
+      } else {
+        trigger.setAttribute('aria-expanded', 'false');
+      }
+    });
+
+    // Each item: call its own onclick (already set in HTML) then close
     menu.querySelectorAll('button, .wx-btn').forEach(item => {
-      item.addEventListener('click', () => {
-        setTimeout(() => menu.classList.remove('open'), 150);
+      item.addEventListener('pointerup', () => {
+        // Let the item's own onclick fire first (it's inline in HTML)
+        requestAnimationFrame(() => closeAll());
       });
     });
   });
+
+  // Close on canvas click
+  document.getElementById('world-canvas')?.addEventListener('pointerdown', closeAll, { passive: true });
 }
+
 
 //           PERFORMANCE MODE TOGGLE
 function injectPerfToggle() {
@@ -666,6 +645,8 @@ function showPlotPanel(plotKey) {
   if(!plot) return;
   const panel=document.getElementById("plot-panel");
   if(!panel) return;
+  // Stop aerial auto-pan so user can inspect the plot without camera drift
+  if (aerialOrbit) { aerialOrbit = false; activate(); }
   const [x,z]=plotKey.split(",").map(Number);
   const side=x<0?"West":x===0?"Centre":"East";
   const pos=z<-50?"North":z>50?"South":"Mid";
@@ -678,8 +659,9 @@ function showPlotPanel(plotKey) {
   btn.textContent = plot.status==="available"?"Reserve This Plot":"Already Reserved";
   btn.onclick=()=>{ if(reservePlot(plotKey)){ showPlotPanel(plotKey); showNotification("Plot reserved! Our team will contact you within 24 hours."); }};
   panel.classList.add("visible");
-  // Highlight overlay briefly
+  // Real-time gold pulse highlight on selected plot
   highlightPlot(plotKey);
+  _startPlotGlow(plotKey);
 
   // Close button — guaranteed immediate
   const closeBtn=document.getElementById("plot-panel-close");
@@ -687,6 +669,28 @@ function showPlotPanel(plotKey) {
     const handler=e=>{ e.stopImmediatePropagation(); panel.classList.remove("visible"); highlightPlot(null); closeBtn.removeEventListener('click',handler,true); };
     closeBtn.addEventListener('click',handler,{capture:true,once:true});
   }
+}
+
+// Gold pulsing glow on the selected plot overlay while the panel is open
+let _glowAnimId = null;
+function _startPlotGlow(plotKey) {
+  if (_glowAnimId) cancelAnimationFrame(_glowAnimId);
+  const plot = plotRegistry.get(plotKey);
+  if (!plot || !plot.overlay) return;
+  const mat = plot.overlay.material;
+  const baseCol = plot.status === 'reserved' ? 0xff4444 : 0xC9A84C;
+  mat.color.setHex(baseCol);
+  const startT = performance.now();
+  function pulse() {
+    if (!document.getElementById('plot-panel')?.classList.contains('visible')) {
+      mat.opacity = 0; return; // panel closed — stop
+    }
+    const t = (performance.now() - startT) / 1000;
+    // Pulse between 0.25 and 0.60 opacity, 1.4s cycle
+    mat.opacity = 0.38 + Math.sin(t * Math.PI * 1.4) * 0.22;
+    _glowAnimId = requestAnimationFrame(pulse);
+  }
+  pulse();
 }
 
 function showNotification(msg) {
