@@ -29,17 +29,38 @@ export function setPerfModeGraphics(mode) {
   _perfMode = mode;
   if (_renderer) {
     const dpr = window.devicePixelRatio || 1;
-    const r = mode==='fast' ? Math.min(dpr,1.5) : mode==='balanced' ? Math.min(dpr,1.75) : dpr;
+    // Fast: cap at 1.5 for GPU headroom; Balanced: cap at 2.0 (full Retina);
+    // Rich: full native DPR (up to 3x on Pro displays) — premium authentic feel
+    const r = mode==='fast' ? Math.min(dpr, 1.5)
+             : mode==='balanced' ? Math.min(dpr, 2.0)
+             : Math.min(dpr, 3.0);
     _renderer.setPixelRatio(r);
+    // Anisotropy: fast=2, balanced=8, rich=max (16) — critical for ground texture clarity
+    const maxAniso = _renderer.capabilities.getMaxAnisotropy();
+    const aniso = mode==='fast' ? 2 : mode==='balanced' ? 8 : maxAniso;
+    // Apply anisotropy to all current textures
+    if (_scene) {
+      _scene.traverse(obj => {
+        if (!obj.isMesh || !obj.material) return;
+        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+        mats.forEach(m => {
+          ['map','normalMap','roughnessMap','metalnessMap','aoMap','emissiveMap'].forEach(k => {
+            if (m[k]) { m[k].anisotropy = aniso; m[k].needsUpdate = true; }
+          });
+        });
+      });
+    }
   }
   if (!bloomPass) return;
   if (mode==='fast') {
     bloomPass.enabled=false; if(smaaPass) smaaPass.enabled=false;
   } else if (mode==='balanced') {
-    bloomPass.enabled=true; bloomPass.strength=0.22; bloomPass.threshold=0.75; bloomPass.radius=0.55;
-    if(smaaPass) smaaPass.enabled=false;
+    // Balanced: soft, subtle bloom — premium without GPU spike
+    bloomPass.enabled=true; bloomPass.strength=0.25; bloomPass.threshold=0.72; bloomPass.radius=0.58;
+    if(smaaPass) smaaPass.enabled=true; // SMAA on in balanced too for clean edges
   } else {
-    bloomPass.enabled=true; bloomPass.strength=0.28; bloomPass.threshold=0.72; bloomPass.radius=0.60;
+    // Rich: cinematic bloom — full strength for gold/glass highlights
+    bloomPass.enabled=true; bloomPass.strength=0.35; bloomPass.threshold=0.68; bloomPass.radius=0.65;
     if(smaaPass) smaaPass.enabled=true;
   }
 }
@@ -48,7 +69,7 @@ export function setPerfModeGraphics(mode) {
 export function initPostProcessing(renderer, scene, camera) {
   _renderer=renderer; _scene=scene; _camera=camera;
   renderer.toneMapping=THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure=0.85;
+  renderer.toneMappingExposure=0.88;
   const w=Math.max(renderer.domElement.width||window.innerWidth,1);
   const h=Math.max(renderer.domElement.height||window.innerHeight,1);
   composer=new EffectComposer(renderer);
