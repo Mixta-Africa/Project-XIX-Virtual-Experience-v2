@@ -333,26 +333,53 @@
       <div id="scene-caption" class="world-caption">Project XIX — Virtual Estate</div>
     </div>
     <div class="world-controls">
-      <!-- Time of day -->
-      <div class="wx-group" role="group" aria-label="Time of day">
-        <button class="wx-btn wx-time-btn active" data-time="morning"   onclick="applyTimePreset('morning')">&#127749; Morning</button>
-        <button class="wx-btn wx-time-btn"         data-time="afternoon" onclick="applyTimePreset('afternoon')">&#9728; Afternoon</button>
-        <button class="wx-btn wx-time-btn"         data-time="sunset"    onclick="applyTimePreset('sunset')">&#127751; Sunset</button>
-        <button class="wx-btn wx-time-btn"         data-time="night"     onclick="applyTimePreset('night')">&#127769; Night</button>
+      <!-- Time Dropdown -->
+      <div class="topbar-dropdown" tabindex="0">
+        <button class="world-btn" aria-label="Time of day">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+          Time <span class="vp-chevron">&#9662;</span>
+        </button>
+        <div class="topbar-dropdown-menu">
+          <button class="wx-btn wx-time-btn active" data-time="morning" onclick="applyTimePreset('morning')">Morning</button>
+          <button class="wx-btn wx-time-btn" data-time="afternoon" onclick="applyTimePreset('afternoon')">Afternoon</button>
+          <button class="wx-btn wx-time-btn" data-time="sunset" onclick="applyTimePreset('sunset')">Sunset</button>
+          <button class="wx-btn wx-time-btn" data-time="night" onclick="applyTimePreset('night')">Night</button>
+        </div>
       </div>
-      <!-- Weather -->
-      <div class="wx-group" role="group" aria-label="Weather">
-        <button class="wx-btn wx-weather-btn active" data-weather="clear"  onclick="applyWeather('clear')">Clear</button>
-        <button class="wx-btn wx-weather-btn"        data-weather="cloudy" onclick="applyWeather('cloudy')">Cloudy</button>
-        <button class="wx-btn wx-weather-btn"        data-weather="rain"   onclick="applyWeather('rain')">Rain</button>
+
+      <!-- Weather Dropdown -->
+      <div class="topbar-dropdown" tabindex="0">
+        <button class="world-btn" aria-label="Weather">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.5 19c1.93 0 3.5-1.57 3.5-3.5a3.5 3.5 0 0 0-3.3-3.49C17.2 9.17 14.85 7 12 7c-2.48 0-4.57 1.76-5.1 4.09A4.5 4.5 0 0 0 7 20"/></svg>
+          Weather <span class="vp-chevron">&#9662;</span>
+        </button>
+        <div class="topbar-dropdown-menu">
+          <button class="wx-btn wx-weather-btn active" data-weather="clear" onclick="applyWeather('clear')">Clear</button>
+          <button class="wx-btn wx-weather-btn" data-weather="cloudy" onclick="applyWeather('cloudy')">Cloudy</button>
+          <button class="wx-btn wx-weather-btn" data-weather="rain" onclick="applyWeather('rain')">Rain</button>
+        </div>
       </div>
+
+      <!-- Quality Dropdown -->
+      <div class="topbar-dropdown" tabindex="0">
+        <button class="world-btn" aria-label="Performance Quality">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          Quality <span class="vp-chevron">&#9662;</span>
+        </button>
+        <div class="topbar-dropdown-menu">
+          <button class="wx-btn perf-btn active" data-mode="fast" onclick="switchPerfMode('fast')">Fast</button>
+          <button class="wx-btn perf-btn" data-mode="balanced" onclick="switchPerfMode('balanced')">Balanced</button>
+          <button class="wx-btn perf-btn" data-mode="rich" onclick="switchPerfMode('rich')">Rich</button>
+        </div>
+      </div>
+
       <!-- Aerial -->
       <button class="world-btn world-btn-aerial" id="btn-aerial" aria-label="Toggle aerial orbit view" onclick="toggleAerial(this)">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>
         Aerial
       </button>
       <button class="world-btn world-btn-vr" id="vr-btn" aria-label="Enter VR mode">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 8s3-2 10-2 10 2 10 2v6s-3 2-10 2-10-2-10-2V8z"/><circle cx="8" cy="11" r="2"/><circle cx="16" cy="11" r="2"/></svg>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 8s3-2 10-2 10 2 10 2v6s-3 2-10 2-10-2-10-2V8z"/><circle cx="8" cy="11" r="2"/><circle cx="16" cy="11" r="2"/></svg>
         VR
       </button>
       <button class="world-btn world-btn-close" id="btn-close-world" aria-label="Return to website">
