@@ -22,7 +22,7 @@ import {
 import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics } from "./graphics.js";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
-  requestGyro, enterVR
+  requestGyro, enterVR, setYOwner
 } from "./controls.js";
 import {
   initMinimap, updateMinimap,
@@ -42,9 +42,10 @@ let animFrameId    = null;
 let composer       = null;
 let aerialOrbit    = false;
 let aerialAngle    = 0, aerialYawOffset = 0;
-let aerialPitch    = -Math.PI / 2.5;
+// Correct depression: camera at R=340 x=0, y=280 → atan(280/340) ≈ 0.685 rad
+let aerialPitch    = -0.685;
 let aerialDragging = false, aerialLastX = 0, aerialLastY = 0;
-const AERIAL_RADIUS = 220, AERIAL_HEIGHT = 200, AERIAL_SPEED = 0.12;
+const AERIAL_RADIUS = 340, AERIAL_HEIGHT = 280, AERIAL_SPEED = 0.12;
 
 // Movement mode: 'ride' = mounted horse (default), 'walk' = free roam on foot
 let moveMode = 'ride'; // 'ride' | 'walk'
@@ -56,6 +57,10 @@ let _currentEyeY = RIDER_EYE_HEIGHT;
 window.setMoveMode = function(mode) {
   if (mode === 'aerial') { toggleAerial(document.getElementById('btn-aerial')); return; }
   moveMode = mode;
+  // Tell controls.js who owns camera.position.y to prevent the Y-fight.
+  // ride: app.js owns Y (sets _currentEyeY = RIDER_EYE_HEIGHT each frame)
+  // walk: controls.js owns Y (sets EYE_H = 1.72 each frame)
+  setYOwner(mode === 'ride' ? 'app' : 'controls');
   // Only change eye height — never reposition X/Z. Horse spawns at wherever camera is.
   _targetEyeY = (mode === 'ride') ? RIDER_EYE_HEIGHT : FOOT_EYE_HEIGHT;
   // If switching into walk mode, seed _currentEyeY immediately to avoid a slow drift
@@ -155,7 +160,7 @@ function injectModeToggle() {
   const style = document.createElement('style');
   style.textContent = `
     #mode-toggle-bar {
-      position:absolute; bottom:74px; left:50%; transform:translateX(-50%);
+      position:absolute; bottom:28px; right:16px; left:auto; transform:none;
       z-index:200; display:flex; align-items:center; gap:0;
       background:rgba(10,20,12,0.82); backdrop-filter:blur(8px);
       border:1px solid rgba(201,168,76,0.3); border-radius:8px;
@@ -175,17 +180,17 @@ function injectModeToggle() {
     .mode-divider { width:1px; background:rgba(201,168,76,0.2); align-self:stretch; }
     /* V key hint — desktop only */
     #view-hint {
-      position:absolute; bottom:74px; right:16px; z-index:200;
+      position:absolute; bottom:84px; right:16px; z-index:200;
       font-size:10px; color:rgba(255,255,255,0.35); letter-spacing:.06em;
       pointer-events:none; font-family:Inter,sans-serif;
     }
     /* Billboard: scale up toggle */
-    .device-billboard #mode-toggle-bar { bottom:110px; }
+    .device-billboard #mode-toggle-bar { bottom:110px; right:16px; }
     .device-billboard .move-mode-btn { padding:14px 26px; font-size:0.9rem; min-height:56px; }
-    /* Mobile: move above viewpoint strip */
+    /* Mobile: keep right-anchored, tighten padding */
     @media(max-width:640px) {
-      #mode-toggle-bar { bottom:80px; }
-      .move-mode-btn { padding:8px 14px; font-size:11px; }
+      #mode-toggle-bar { bottom:28px; right:12px; }
+      .move-mode-btn { padding:8px 12px; font-size:11px; }
     }
   `;
   document.head.appendChild(style);
@@ -474,6 +479,8 @@ async function openWorldAt(viewKey) {
   _currentEyeY = cam.position.y;
   _targetEyeY  = cam.position.y;
 
+  // Sync Y ownership with initial move mode (ride by default — app.js owns Y)
+  setYOwner(moveMode === 'ride' ? 'app' : 'controls');
   activate();
   if(isMobile()){
     showJoystick(); // pinned bottom-left by ui.js
@@ -517,7 +524,7 @@ function toggleAerial(btn){
   if(aerialOrbit){
     btn&&btn.classList.add("active");
     deactivate();
-    aerialAngle=0; aerialYawOffset=0; aerialPitch=-Math.PI/2.5;
+    aerialAngle=0; aerialYawOffset=0; aerialPitch=-0.685; // atan(AERIAL_HEIGHT/AERIAL_RADIUS)
     setCaption("Aerial view — orbits automatically — drag to steer");
     bindAerialPointer();
   } else {
@@ -560,7 +567,7 @@ function aerialMouseUp(){aerialDragging=false;}
 function aerialMouseMove(e){
   if(!aerialDragging) return;
   aerialYawOffset-=(e.clientX-aerialLastX)*0.004;
-  aerialPitch=Math.max(-Math.PI*0.9,Math.min(-0.15,aerialPitch-(e.clientY-aerialLastY)*0.003));
+  aerialPitch=Math.max(-1.4,Math.min(-0.25,aerialPitch-(e.clientY-aerialLastY)*0.003));
   aerialLastX=e.clientX; aerialLastY=e.clientY;
 }
 function aerialTouchStart(e){const t=e.touches[0];aerialDragging=true;aerialLastX=t.clientX;aerialLastY=t.clientY;}
@@ -568,7 +575,7 @@ function aerialTouchMove(e){
   e.preventDefault();
   const t=e.touches[0];
   aerialYawOffset-=(t.clientX-aerialLastX)*0.004;
-  aerialPitch=Math.max(-Math.PI*0.9,Math.min(-0.15,aerialPitch-(t.clientY-aerialLastY)*0.003));
+  aerialPitch=Math.max(-1.4,Math.min(-0.25,aerialPitch-(t.clientY-aerialLastY)*0.003));
   aerialLastX=t.clientX; aerialLastY=t.clientY;
 }
 window.toggleAerial=toggleAerial;
@@ -620,12 +627,11 @@ function startRenderLoop(){
     if(aerialOrbit){
       aerialAngle += AERIAL_SPEED * delta;
       const totalAngle = aerialAngle + aerialYawOffset;
-      // Orbit around estate centre [0, 0, 0]. Radius 340 sees x±340, z±340 which
-      // covers the full estate footprint (x±400 is extreme edge).
-      const R = 340;
-      camera.position.x = Math.sin(totalAngle) * R;
-      camera.position.z = Math.cos(totalAngle) * R;
-      camera.position.y = 280; // high enough that LOD shows full GLBs on close villas
+      // Orbit around estate centre [0, 0, 0].
+      // AERIAL_RADIUS=340, AERIAL_HEIGHT=280 → depression = atan(280/340) = 0.685 rad
+      camera.position.x = Math.sin(totalAngle) * AERIAL_RADIUS;
+      camera.position.z = Math.cos(totalAngle) * AERIAL_RADIUS;
+      camera.position.y = AERIAL_HEIGHT;
       // Stable rotation: set directly without lookAt to avoid gimbal conflicts
       camera.rotation.order = 'YXZ';
       camera.rotation.y = totalAngle + Math.PI; // face centre
