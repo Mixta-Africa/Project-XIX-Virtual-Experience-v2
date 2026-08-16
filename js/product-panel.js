@@ -304,7 +304,9 @@ function initGLBViewer(product) {
 
   if (product.glb) {
     if (fallback) fallback.style.display = "none";
-    new GLTFLoader().load(
+    const loader = new GLTFLoader();
+    loader.setDRACOLoader(dracoLoader); // decompress Draco-compressed GLBs
+    loader.load(
       product.glb,
       gltf => {
         // Centre and scale the model
