@@ -23,7 +23,8 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
 import { GLTFLoader }  from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/GLTFLoader.js";
 import { DRACOLoader } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/DRACOLoader.js";
 import {
-  PBR, createWaterMat, addGrassField, tickGrass, tickWater,
+  PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
+  buildPalmInstances, tickPalms,
   setPerfModeGraphics, setBloomForTime, setSkyForTime, createAtmosphericSky,
   buildEnvMapFromSky, applyPS4Materials,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
@@ -1043,12 +1044,14 @@ function _makeMicroTexture(col1, col2, planeW, planeD) {
 }
 
 function addGrassRing(){
-  const count = PERF_MODE==='fast' ? 80 : 180;
-  const cards = [
+  const count = PERF_MODE==='fast' ? 80 : 200;
+  // Collect all grass card definitions (raw data, not meshes)
+  const allCards = [
     ...addGrassField(0,-115,140,12,count), ...addGrassField(0,115,140,12,count),
     ...addGrassField(-165,0,12,90,count/2), ...addGrassField(165,0,12,90,count/2),
   ];
-  cards.forEach(card=>scene.add(card));
+  // Commit as single InstancedMesh — ~4x fewer draw calls than individual PlaneGeometry meshes
+  commitGrass(scene, allCards);
 }
 
 function addPoloField(){
@@ -1312,24 +1315,17 @@ function addServiceCompound(){
 }
 
 function addLandscaping(){
-  const palmMats=[];
-  const tl2=new THREE.TextureLoader();
-  ['assets/palm-sprite.png','assets/palm-sprite-2.png'].forEach(src=>{
-    const t=tl2.load(src); t.colorSpace=THREE.SRGBColorSpace;
-    palmMats.push(new THREE.MeshBasicMaterial({map:t,transparent:true,alphaTest:.1,depthWrite:false,side:THREE.DoubleSide}));
-  });
-  function addPalm(x,y,z,scale=1){
+  // Collect all palm positions as data — buildPalmInstances creates 2 InstancedMesh
+  // objects total (one per cross-plane orientation) instead of 120+ individual meshes
+  const palmDefs=[];
+  function queuePalm(x,y,z,scale=1){
     if(isInNoBuildZone(x,z)) return;
-    const mat=palmMats[Math.floor(Math.random()*palmMats.length)];
-    const h=(13+Math.random()*5)*scale,w=h*.5;
-    for(const ry of[0,Math.PI/2]){
-      const m=new THREE.Mesh(new THREE.PlaneGeometry(w,h),mat);
-      m.position.set(x,y+h/2,z); m.rotation.y=ry; scene.add(m); palmBillboards.push(m);
-    }
+    palmDefs.push({x,y,z,scale,randH:Math.random()*5});
   }
-  for(let x=-280;x<=280;x+=28){addPalm(x,.1,206,1.3);addPalm(x,.1,224,1.2);}
-  for(let z=-95;z<=95;z+=40){addPalm(-160,.1,z,1.1);addPalm(160,.1,z,1.1);}
-  for(const pz of[95,103,111,119]){addPalm(-16,.1,pz,1.2);addPalm(16,.1,pz,1.2);}
+  for(let x=-280;x<=280;x+=28){queuePalm(x,.1,206,1.3);queuePalm(x,.1,224,1.2);}
+  for(let z=-95;z<=95;z+=40){queuePalm(-160,.1,z,1.1);queuePalm(160,.1,z,1.1);}
+  for(const pz of[95,103,111,119]){queuePalm(-16,.1,pz,1.2);queuePalm(16,.1,pz,1.2);}
+  buildPalmInstances(scene, palmDefs);
 }
 
 function _createVillaFallback(){
@@ -1360,11 +1356,10 @@ export function tickScene(elapsed, camera){
   tickWater(waterMeshes, elapsed);
   tickGrass(camera);
   // Palm billboard update: rate-limited per perf mode
+  // Palm billboard facing — instanced, runs every palmDiv frames
   const palmDiv = PERF_SETTINGS[PERF_MODE].palmTickDiv;
   if (_tickFrame % palmDiv === 0) {
-    palmBillboards.forEach(pb=>{
-      pb.rotation.y=Math.atan2(camera.position.x-pb.position.x,camera.position.z-pb.position.z);
-    });
+    tickPalms(camera);
   }
   // Hotspot pulse
   tickHotspots(elapsed);
