@@ -203,14 +203,16 @@ export function buildViewpointStrip(container, onSelect) {
         sbtn.className   = "vp-dropdown-item";
         sbtn.textContent = sv.label;
         sbtn.addEventListener("click", e => {
-          e.stopPropagation();
+          e.preventDefault();   // Prevent default behavior
+          e.stopPropagation();  // STOP the click from bubbling up to the main button
+          
           document.querySelectorAll(".vp-btn").forEach(b=>b.classList.remove("active"));
           btn.classList.add("active");
           menu.style.display = "none";
-          btn.querySelector(".vp-chevron").innerHTML = "&#9652;";
-          // Teleport
+          const chevron = btn.querySelector(".vp-chevron");
+          if (chevron) chevron.innerHTML = "&#9652;";
+          
           onSelect(sv.key, sv);
-          // Open product panel
           const fn = window.__moduleReady?.showProductPanel;
           if (fn) fn(PRODUCT_MAP[key] || PRODUCT_MAP[sv.key]);
         });
