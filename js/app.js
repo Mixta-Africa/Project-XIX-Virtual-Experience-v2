@@ -18,7 +18,7 @@ import {
   highlightPlot, setPerfMode, PERF_MODE,
   RIDER_EYE_HEIGHT, FOOT_EYE_HEIGHT, tickHorse, tickHorseAnim,
   setHorsePosition, getThirdPersonCameraOffset, setAerialMode,
-} from "./scene.js?v=33";
+} from "./scene.js?v=34";
 import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics } from "./graphics.js";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
