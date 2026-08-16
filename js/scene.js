@@ -22,6 +22,7 @@
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
 import { GLTFLoader }  from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/GLTFLoader.js";
 import { DRACOLoader } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/DRACOLoader.js";
+import { Reflector } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/objects/Reflector.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
   buildPalmInstances, tickPalms,
@@ -1256,17 +1257,34 @@ function addRoads(){
 }
 
 function addLake(){
-  const wm=createWaterMat();
-  // Main lake body
-  const lb=new THREE.Mesh(new THREE.BoxGeometry(195,.35,22),wm);
-  lb.position.set(30,.16,-115); lb.receiveShadow=true; scene.add(lb); waterMeshes.push(lb);
+  const wm = createWaterMat();
+  
+  // Phase 2: Real-time Planar Mirror Lake for the 200m Crescent Centerpiece
+  const lakeGeo = new THREE.PlaneGeometry(195, 22);
+  const lakeReflection = new Reflector(lakeGeo, {
+    clipBias: 0.003,
+    textureWidth: window.innerWidth * Math.min(window.devicePixelRatio || 1, 2) * 0.5,
+    textureHeight: window.innerHeight * Math.min(window.devicePixelRatio || 1, 2) * 0.5,
+    color: 0x7799a8,
+  });
+  
+  // CORRECTED: Top surface height = 0.16 (center) + 0.175 (half height) = 0.335
+  lakeReflection.position.set(30, 0.335, -115);
+  lakeReflection.rotation.x = -Math.PI / 2;
+  scene.add(lakeReflection);
+  waterMeshes.push(lakeReflection);
+
   // End-caps: flat CylinderGeometry discs — no dome bulge above waterline
   for(const ex of [-68, 128]){
     const ep=new THREE.Mesh(new THREE.CylinderGeometry(11,11,.35,32),wm);
-    ep.position.set(ex,.16,-115); scene.add(ep); waterMeshes.push(ep);
+    ep.position.set(ex,.16,-115); // Center is 0.16, top is 0.335
+    scene.add(ep); 
+    waterMeshes.push(ep);
   }
+  
   const sg=MATS.grassGreen();
-  s(plane(220,6,sg,[30,.12,-104])); s(plane(220,6,sg,[30,.12,-126]));
+  s(plane(220,6,sg,[30,.12,-104])); 
+  s(plane(220,6,sg,[30,.12,-126]));
 }
 
 function addEastLake(){
