@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <!-- Viewport: covers all device types. interactive-widget keeps keyboard from shifting layout on mobile. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -11,42 +12,82 @@
   <meta property="og:title" content="Project XIX | Mixta Africa" />
   <meta property="og:description" content="A polo and equestrian lifestyle estate at Lakowe, Ibeju-Lekki. Walk the grounds virtually." />
   <meta property="og:image" content="assets/plan-2d.png" />
-  <title>Project XIX | Mixta Africa — High Fidelity</title>
+  <title>Project XIX | Mixta Africa</title>
   <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
   <link rel="stylesheet" href="css/styles.css" />
-  
-  <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
-<script>eruda.init();</script>
 
-  
-  <!-- Mobile Debugger & Topbar Dropdown Styles -->
+  <!-- Eruda mobile debugger — remove before production -->
+  <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
+  <script>eruda.init();</script>
+
   <script>
+    // Global crash reporter for mobile debugging
     window.onerror = function(msg, url, lineNo) {
-      alert("CRASH REPORT:\n\n" + msg + "\n\nFile: " + (url ? url.split('/').pop() : 'Unknown') + "\nLine: " + lineNo);
+      console.error("CRASH:", msg, url, lineNo);
       return false;
     };
+
+    // Device class detection — set once, used by JS and CSS
+    (function() {
+      const ua = navigator.userAgent;
+      const touch = navigator.maxTouchPoints > 0;
+      const W = screen.width, H = screen.height;
+      // Billboard: landscape touchscreen >= 1920px wide
+      const isBillboard = touch && W >= 1920 && W > H;
+      // Tablet: touch, 768-1919px
+      const isTablet = touch && !isBillboard && Math.max(W,H) >= 768;
+      // Phone: touch, < 768px
+      const isMobile = touch && !isBillboard && !isTablet;
+      const cls = isBillboard ? 'device-billboard' : isTablet ? 'device-tablet' : isMobile ? 'device-mobile' : 'device-desktop';
+      document.documentElement.classList.add(cls);
+      if (touch) document.documentElement.classList.add('touch');
+      window.XIX_DEVICE = { isBillboard, isTablet, isMobile, isDesktop: !touch || isBillboard };
+      // Auto-set perf mode by device
+      window.XIX_DEFAULT_PERF = isBillboard ? 'balanced' : (isMobile ? 'fast' : 'balanced');
+    })();
   </script>
+
   <style>
+    /* ── TOPBAR DROPDOWN (inline for render-critical styles) ── */
     .topbar-dropdown { position: relative; display: inline-block; }
     .topbar-dropdown-menu {
       display: none; position: absolute; top: calc(100% + 8px); right: 0;
-      background: rgba(10, 20, 12, 0.95); border: 1px solid rgba(201,168,76,0.3);
-      min-width: 120px; z-index: 9999; border-radius: 4px; padding: 4px;
+      background: rgba(10,20,12,0.97); border: 1px solid rgba(201,168,76,0.3);
+      min-width: 130px; z-index: 9999; border-radius: 6px; padding: 4px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.6);
     }
     .topbar-dropdown:hover .topbar-dropdown-menu,
     .topbar-dropdown:focus-within .topbar-dropdown-menu { display: flex; flex-direction: column; }
     .wx-btn {
-      background: transparent; color: rgba(240,236,224,0.7); border: none;
-      padding: 8px 12px; text-align: left; font-size: 0.7rem; cursor: pointer; white-space: nowrap;
+      background: transparent; color: rgba(240,236,224,0.75); border: none;
+      padding: 10px 14px; text-align: left; font-size: 0.72rem; cursor: pointer;
+      white-space: nowrap; border-radius: 4px; transition: background .12s, color .12s;
+      min-height: 44px; display: flex; align-items: center;
     }
-    .wx-btn:hover, .wx-btn.active { color: #c9a84c; background: rgba(201,168,76,0.1); border-left: 2px solid #c9a84c; }
-    .world-btn { background: rgba(0,0,0,0.3); color: rgba(240,236,224,0.8); border: 1px solid rgba(255,255,255,0.15); display: flex; align-items: center; gap: 4px; padding: 6px 12px; border-radius: 3px; cursor: pointer; font-size: 0.7rem; }
-    .world-btn:hover { background: rgba(201,168,76,0.2); border-color: #c9a84c; color: #c9a84c; }
+    .wx-btn:hover, .wx-btn.active {
+      color: #c9a84c; background: rgba(201,168,76,0.12);
+    }
+    .wx-btn.active { font-weight: 600; }
+    .world-btn {
+      background: rgba(0,0,0,0.35); color: rgba(240,236,224,0.85);
+      border: 1px solid rgba(255,255,255,0.15); display: flex; align-items: center;
+      gap: 6px; padding: 8px 14px; border-radius: 4px; cursor: pointer;
+      font-size: 0.72rem; white-space: nowrap; min-height: 44px;
+      transition: background .15s, border-color .15s, color .15s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .world-btn:hover, .world-btn.active {
+      background: rgba(201,168,76,0.2); border-color: #c9a84c; color: #c9a84c;
+    }
+    /* Billboard: scale up all interactive targets */
+    .device-billboard .world-btn { padding: 12px 20px; font-size: 0.85rem; min-height: 56px; gap: 8px; }
+    .device-billboard .wx-btn   { padding: 14px 18px; font-size: 0.82rem; min-height: 52px; }
+    .device-billboard .topbar-dropdown-menu { min-width: 180px; }
   </style>
 </head>
 <body>
 
-<!-- ═══ LOADING SCREEN ═══════════════════════════════════════════ -->
+<!-- ══ LOADING SCREEN ═══════════════════════════════════════════════ -->
 <div id="loading-screen" style="display:none;">
   <div class="loading-mark">XIX</div>
   <div class="loading-title">Preparing Estate Experience</div>
@@ -54,7 +95,7 @@
   <div class="loading-sub">Lakowe · Ibeju-Lekki · Lagos</div>
 </div>
 
-<!-- ═══ NAV ══════════════════════════════════════════════════════ -->
+<!-- ══ NAV ══════════════════════════════════════════════════════════ -->
 <header class="topbar" role="banner">
   <a class="brand" href="#" aria-label="Project XIX home">
     <span class="brand-mark">XIX</span>
@@ -66,21 +107,40 @@
     <a href="#" data-section="investment">Investors</a>
     <a href="#" data-section="contact">Enquire</a>
   </nav>
+  <!-- Mobile hamburger — shown on phones only -->
+  <button class="nav-hamburger" id="nav-hamburger" aria-label="Open menu" aria-expanded="false">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+  </button>
 </header>
 
-<!-- ═══ HERO ══════════════════════════════════════════════════════ -->
+<!-- Mobile nav drawer -->
+<div id="mobile-nav" class="mobile-nav" role="dialog" aria-modal="true" aria-label="Navigation">
+  <button class="mobile-nav-close" id="mobile-nav-close" aria-label="Close menu">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+  </button>
+  <nav class="mobile-nav-links">
+    <a href="#" data-section="masterplan" class="mobile-nav-link">Masterplan</a>
+    <a href="#" data-section="residences" class="mobile-nav-link">Residences</a>
+    <a href="#" data-section="investment" class="mobile-nav-link">Investors</a>
+    <a href="#" data-section="contact" class="mobile-nav-link">Enquire</a>
+  </nav>
+  <div class="mobile-nav-cta">
+    <button class="btn btn-gold btn-enter-3d" style="width:100%;justify-content:center;">
+      Enter Virtual Estate
+    </button>
+  </div>
+</div>
+<div class="mobile-nav-backdrop" id="mobile-nav-backdrop"></div>
+
+<!-- ══ HERO ══════════════════════════════════════════════════════════ -->
 <section class="hero" id="hero" aria-label="Project XIX hero">
   <canvas id="hero-canvas" aria-hidden="true"></canvas>
-
   <div class="hero-content">
     <div class="hero-copy">
       <p class="eyebrow">Lakowe · Ibeju-Lekki · Lagos State</p>
       <h1 class="display">Project<br>XIX</h1>
       <p class="hero-sub">A polo estate unlike any other in West Africa</p>
-      <p class="hero-desc">
-        18.8 hectares of polo fields, private residences, and equestrian facilities
-        set among royal palms at Lakowe. Developed by Mixta Africa.
-      </p>
+      <p class="hero-desc">18.8 hectares of polo fields, private residences, and equestrian facilities set among royal palms at Lakowe. Developed by Mixta Africa.</p>
       <div class="hero-actions">
         <button class="btn btn-gold btn-explore">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M12 3l9 9-9 9"/></svg>
@@ -92,80 +152,50 @@
         </button>
       </div>
     </div>
-
     <aside class="hero-stats" aria-label="Estate highlights">
-      <div class="stat">
-        <div class="stat-value">18.8<span style="font-size:0.55em">ha</span></div>
-        <div class="stat-label">Site Area</div>
-      </div>
-      <div class="stat">
-        <div class="stat-value">223</div>
-        <div class="stat-label">Residences</div>
-      </div>
-      <div class="stat">
-        <div class="stat-value">56</div>
-        <div class="stat-label">Stable Stalls</div>
-      </div>
+      <div class="stat"><div class="stat-value">18.8<span style="font-size:0.55em">ha</span></div><div class="stat-label">Site Area</div></div>
+      <div class="stat"><div class="stat-value">223</div><div class="stat-label">Residences</div></div>
+      <div class="stat"><div class="stat-value">56</div><div class="stat-label">Stable Stalls</div></div>
     </aside>
   </div>
-
   <div class="hero-scroll-cue" aria-hidden="true">
     <span class="scroll-label">Explore</span>
     <div class="scroll-line"></div>
   </div>
 </section>
 
-<!-- ═══ INTRO FACTS STRIP ════════════════════════════════════════ -->
+<!-- ══ INTRO STRIP ══════════════════════════════════════════════════ -->
 <section class="intro-strip" aria-label="Estate facts">
   <div class="intro-strip-inner">
-    <div class="intro-fact anim-fade">
-      <div class="intro-fact-value">FIP</div>
-      <div class="intro-fact-label">International Standard</div>
-    </div>
+    <div class="intro-fact anim-fade"><div class="intro-fact-value">FIP</div><div class="intro-fact-label">International Standard</div></div>
     <div class="intro-divider" aria-hidden="true"></div>
-    <div class="intro-fact anim-fade">
-      <div class="intro-fact-value">274m</div>
-      <div class="intro-fact-label">Main Polo Field</div>
-    </div>
+    <div class="intro-fact anim-fade"><div class="intro-fact-value">274m</div><div class="intro-fact-label">Main Polo Field</div></div>
     <div class="intro-divider" aria-hidden="true"></div>
-    <div class="intro-fact anim-fade">
-      <div class="intro-fact-value">43</div>
-      <div class="intro-fact-label">Premium Villas</div>
-    </div>
+    <div class="intro-fact anim-fade"><div class="intro-fact-value">43</div><div class="intro-fact-label">Premium Villas</div></div>
     <div class="intro-divider" aria-hidden="true"></div>
-    <div class="intro-fact anim-fade">
-      <div class="intro-fact-value">3,419<span style="font-size:0.55em">m²</span></div>
-      <div class="intro-fact-label">Clubhouse</div>
-    </div>
+    <div class="intro-fact anim-fade"><div class="intro-fact-value">3,419<span style="font-size:0.55em">m²</span></div><div class="intro-fact-label">Clubhouse</div></div>
   </div>
 </section>
 
-<!-- ═══ MASTERPLAN ════════════════════════════════════════════════ -->
+<!-- ══ MASTERPLAN ═══════════════════════════════════════════════════ -->
 <section class="masterplan-section" id="masterplan" aria-label="Interactive masterplan">
   <div class="section-header anim-fade">
     <p class="eyebrow">Guided Discovery</p>
     <h2>Interactive<br><em>Masterplan</em></h2>
-    <p>Hover or tap any zone to learn more. Click to enter the virtual walkthrough of that area.</p>
+    <p>Tap any zone to learn more. Tap again to enter the virtual walkthrough.</p>
   </div>
-
   <div class="masterplan-shell">
     <div class="plan-frame anim-fade">
-      <img
-        id="plan-image"
-        src="assets/plan-2d.png"
-        alt="Project XIX masterplan: polo field (east-west), crescent lake to the north, clubhouse to the south, premium villas surrounding the field, training field and stables to the south-west, paddock and recreation to the east."
-      />
+      <img id="plan-image" src="assets/plan-2d.png" alt="Project XIX masterplan: polo field, crescent lake, clubhouse, premium villas, training field, stables and paddock." />
       <div id="zone-layer" aria-label="Clickable estate zones" role="region"></div>
     </div>
-
-    <!-- Zone info panel -->
     <aside id="zone-panel" aria-live="polite" aria-label="Zone details">
       <span class="zone-type">Select a zone</span>
       <span class="zone-label">Project XIX</span>
-      <span class="zone-tagline">Hover or tap a zone on the masterplan</span>
-      <p class="zone-desc">Each zone on this masterplan is individually clickable. Hover to preview; click to open the 3D virtual walkthrough of that area.</p>
+      <span class="zone-tagline">Tap a zone on the masterplan</span>
+      <p class="zone-desc">Each zone is individually tappable. Select to preview; tap again to open the 3D virtual walkthrough.</p>
       <p class="zone-client-label">Client lens</p>
-      <p class="zone-client">Hover over any zone to see the buyer or investor story for that part of the estate.</p>
+      <p class="zone-client">Tap any zone to see the buyer or investor story for that part of the estate.</p>
       <button class="zone-enter-btn btn-enter-3d">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
         Enter Virtual Estate
@@ -174,7 +204,7 @@
   </div>
 </section>
 
-<!-- ═══ RESIDENCES ════════════════════════════════════════════════ -->
+<!-- ══ RESIDENCES ═══════════════════════════════════════════════════ -->
 <section class="residences-section section" id="residences" aria-label="Residences">
   <div class="container">
     <div class="section-header anim-fade">
@@ -182,144 +212,84 @@
       <h2>Six residence<br><em>typologies</em></h2>
       <p>From the polo-front 3-bedroom villa to the lock-up loft terrace — each typology is designed for a distinct ownership story.</p>
     </div>
-
     <div class="residence-grid">
-      <!-- 3-bed Villa -->
       <article class="residence-card anim-fade">
         <img class="residence-card-img" src="assets/villa-3-bedroom.png" alt="3 Bedroom Villa exterior" loading="lazy" />
         <div class="residence-card-body">
           <div class="residence-card-type">3 Bed Villa</div>
           <div class="residence-card-name">Premium Villa</div>
           <div class="residence-card-meta">43 units · 330 m² · Polo-facing</div>
-          <button class="residence-card-btn btn-enter-3d">
-            Walk through
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-          </button>
+          <button class="residence-card-btn btn-enter-3d">Walk through <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg></button>
         </div>
       </article>
-
-      <!-- 2-bed Loft -->
       <article class="residence-card anim-fade">
         <img class="residence-card-img" src="assets/loft-terrace.png" alt="2 Bedroom Loft Terrace" loading="lazy" />
         <div class="residence-card-body">
           <div class="residence-card-type">2 Bed Loft</div>
           <div class="residence-card-name">Loft Terrace</div>
           <div class="residence-card-meta">96 units · 125 m² · South precinct</div>
-          <button class="residence-card-btn btn-enter-3d">
-            Walk through
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-          </button>
+          <button class="residence-card-btn btn-enter-3d">Walk through <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg></button>
         </div>
       </article>
-
-      <!-- Apartment Block -->
       <article class="residence-card anim-fade">
         <img class="residence-card-img" src="assets/apartment-block.png" alt="Apartment Block" loading="lazy" />
         <div class="residence-card-body">
           <div class="residence-card-type">2 Bed Flat</div>
           <div class="residence-card-name">Apartment Block</div>
           <div class="residence-card-meta">48 units · 204 m² · South zone</div>
-          <button class="residence-card-btn btn-enter-3d">
-            Walk through
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-          </button>
+          <button class="residence-card-btn btn-enter-3d">Walk through <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg></button>
         </div>
       </article>
-
-      <!-- Clubhouse -->
       <article class="residence-card anim-fade">
         <img class="residence-card-img" src="assets/clubhouse.png" alt="Clubhouse" loading="lazy" />
         <div class="residence-card-body">
           <div class="residence-card-type">Social Anchor</div>
           <div class="residence-card-name">Club House</div>
           <div class="residence-card-meta">3,419 m² · 3 floors · 8 skyboxes</div>
-          <button class="residence-card-btn btn-enter-3d">
-            Walk through
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-          </button>
+          <button class="residence-card-btn btn-enter-3d">Walk through <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg></button>
         </div>
       </article>
-
-      <!-- Stables -->
       <article class="residence-card anim-fade">
         <img class="residence-card-img" src="assets/horse-stables.png" alt="Horse Stables" loading="lazy" />
         <div class="residence-card-body">
           <div class="residence-card-type">Equestrian</div>
           <div class="residence-card-name">Horse Stables</div>
           <div class="residence-card-meta">4 blocks · 56 stalls · Cobblestone yard</div>
-          <button class="residence-card-btn btn-enter-3d">
-            Walk through
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-          </button>
+          <button class="residence-card-btn btn-enter-3d">Walk through <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg></button>
         </div>
       </article>
-
-      <!-- Studio/Maisonette info card -->
-      <article class="residence-card anim-fade" style="background: var(--green-800); display:flex; flex-direction:column; justify-content:flex-end;">
-        <div class="residence-card-body" style="flex:1; display:flex; flex-direction:column; justify-content:flex-end; gap:0.8rem;">
-          <div>
-            <div class="residence-card-type">Also available</div>
-            <div class="residence-card-name" style="font-size:1.1rem;">1 Bed Maisonette<br>+ Studio</div>
-          </div>
+      <article class="residence-card anim-fade" style="background:var(--green-800);display:flex;flex-direction:column;justify-content:flex-end;">
+        <div class="residence-card-body" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;gap:0.8rem;">
+          <div><div class="residence-card-type">Entry Level</div><div class="residence-card-name" style="font-size:1.1rem;">1 Bed Maisonette<br>+ Studio</div></div>
           <div class="residence-card-meta">24 units · 117 m² · Outer ring<br>12 studios · 33 m²</div>
-          <p style="font-size:0.8rem; color:var(--text-muted); line-height:1.6;">
-            Maisonettes on the north crescent and studio apartments integrated into the loft blocks offer the most accessible entry into the Project XIX address.
-          </p>
-          <a class="residence-card-btn" href="mailto:o.olasunkanmi@mixtafrica.com?subject=Project XIX Enquiry">
-            Request details
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-          </a>
+          <p style="font-size:0.8rem;color:var(--text-muted);line-height:1.6;">The most accessible entry into the Project XIX address.</p>
+          <a class="residence-card-btn" href="mailto:o.olasunkanmi@mixtafrica.com?subject=Project XIX Enquiry">Request details <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg></a>
         </div>
       </article>
     </div>
   </div>
 </section>
 
-<!-- ═══ INVESTOR SECTION ══════════════════════════════════════════ -->
+<!-- ══ INVESTOR ══════════════════════════════════════════════════════ -->
 <section class="investor-section" id="investment" aria-label="Investment case">
   <div class="container">
     <div class="section-header anim-fade">
       <p class="eyebrow">Investor Narrative</p>
       <h2>The commercial<br><em>case</em></h2>
-      <p>Polo-led destination estates outperform standard residential on scarcity, rental yield, and brand premium. Project XIX builds each of these levers in.</p>
+      <p>Polo-led destination estates outperform standard residential on scarcity, rental yield, and brand premium.</p>
     </div>
-
     <div class="investor-grid anim-fade">
-      <div class="investor-card">
-        <div class="investor-num">01</div>
-        <div class="investor-title">Destination Identity</div>
-        <p class="investor-text">A polo estate is a category of one in West Africa. The FIP-standard field, equestrian compound, and Clubhouse create a singular address that standard residential cannot replicate.</p>
-      </div>
-      <div class="investor-card">
-        <div class="investor-num">02</div>
-        <div class="investor-title">13 Revenue Streams</div>
-        <p class="investor-text">Real estate sales, polo memberships, tournament hosting, Clubhouse hospitality, commercial lets, waterfront premium, events, coaching, advertising, horse industry services, health & wellness, digital, and short-let.</p>
-      </div>
-      <div class="investor-card">
-        <div class="investor-num">03</div>
-        <div class="investor-title">Lakowe Corridor Position</div>
-        <p class="investor-text">Ibeju-Lekki's infrastructure investment — Lekki Free Zone, Dangote Refinery, new road corridors — positions Lakowe as the next premium address tier. Project XIX is placed at that frontier.</p>
-      </div>
-      <div class="investor-card">
-        <div class="investor-num">04</div>
-        <div class="investor-title">Mixed-Use Resilience</div>
-        <p class="investor-text">223 residential units across six typologies, commercial block, and hospitality infrastructure provide multiple absorption channels and reduce single-typology concentration risk.</p>
-      </div>
-      <div class="investor-card">
-        <div class="investor-num">05</div>
-        <div class="investor-title">Mixta Africa Track Record</div>
-        <p class="investor-text">Developer of Lakowe Lakes Golf and Country Estate — an established exit comparable in the same corridor — with multi-phase delivery capability and a DFI-grade development model.</p>
-      </div>
-      <div class="investor-card">
-        <div class="investor-num">06</div>
-        <div class="investor-title">Comparable Premiums</div>
-        <p class="investor-text">Lagos polo corridor estates command 92–213% premium over VI/Lekki comparables. Global benchmarks: Val-de-Vie (South Africa), Al-Habtoor Polo Resort (Dubai), Grand Polo Club — Emaar (Dubai).</p>
-      </div>
+      <div class="investor-card"><div class="investor-num">01</div><div class="investor-title">Destination Identity</div><p class="investor-text">A polo estate is a category of one in West Africa. The FIP-standard field, equestrian compound, and Clubhouse create a singular address that standard residential cannot replicate.</p></div>
+      <div class="investor-card"><div class="investor-num">02</div><div class="investor-title">13 Revenue Streams</div><p class="investor-text">Real estate sales, polo memberships, tournament hosting, Clubhouse hospitality, commercial lets, waterfront premium, events, coaching, advertising, horse industry services, health & wellness, digital, and short-let.</p></div>
+      <div class="investor-card"><div class="investor-num">03</div><div class="investor-title">Lakowe Corridor Position</div><p class="investor-text">Ibeju-Lekki's infrastructure investment — Lekki Free Zone, Dangote Refinery, new road corridors — positions Lakowe as the next premium address tier.</p></div>
+      <div class="investor-card"><div class="investor-num">04</div><div class="investor-title">Mixed-Use Resilience</div><p class="investor-text">223 residential units across six typologies, commercial block, and hospitality infrastructure provide multiple absorption channels.</p></div>
+      <div class="investor-card"><div class="investor-num">05</div><div class="investor-title">Mixta Africa Track Record</div><p class="investor-text">Developer of Lakowe Lakes Golf and Country Estate — an established exit comparable in the same corridor — with multi-phase delivery capability.</p></div>
+      <div class="investor-card"><div class="investor-num">06</div><div class="investor-title">Comparable Premiums</div><p class="investor-text">Lagos polo corridor estates command 92–213% premium over VI/Lekki comparables. Global benchmarks: Val-de-Vie, Al-Habtoor Polo Resort, Grand Polo Club Emaar.</p></div>
     </div>
   </div>
 </section>
 
-<!-- ═══ CTA ════════════════════════════════════════════════════════ -->
+<!-- ══ CTA ══════════════════════════════════════════════════════════ -->
 <section class="cta-section" id="contact" aria-label="Contact and enquiry">
   <div class="cta-inner anim-fade">
     <p class="eyebrow">Concierge Enquiry</p>
@@ -338,21 +308,17 @@
   </div>
 </section>
 
-<!-- ═══ FOOTER ════════════════════════════════════════════════════ -->
+<!-- ══ FOOTER ════════════════════════════════════════════════════════ -->
 <footer>
   <div class="footer-inner">
-    <div class="footer-brand">
-      <strong>Project XIX</strong> · Developed by Mixta Africa · Lakowe, Ibeju-Lekki
-    </div>
-    <div class="footer-legal">
-      Artist impressions. Subject to planning and design development. © 2026 Mixta Africa.
-    </div>
+    <div class="footer-brand"><strong>Project XIX</strong> · Developed by Mixta Africa · Lakowe, Ibeju-Lekki</div>
+    <div class="footer-legal">Artist impressions. Subject to planning and design development. © 2026 Mixta Africa.</div>
   </div>
 </footer>
 
-<!-- ═══════════════════════════════════════════════════════════════
-     3D WORLD OVERLAY — Fullscreen virtual estate experience
-     ═══════════════════════════════════════════════════════════════ -->
+<!-- ══════════════════════════════════════════════════════════════════
+     3D WORLD OVERLAY
+     ══════════════════════════════════════════════════════════════════ -->
 <div id="world-overlay" role="dialog" aria-modal="true" aria-label="Virtual estate walkthrough">
 
   <!-- World top bar -->
@@ -361,82 +327,90 @@
       <span class="world-brand-mark">XIX</span>
       <div id="scene-caption" class="world-caption">Project XIX — Virtual Estate</div>
     </div>
+
     <div class="world-controls">
-      <!-- Time Dropdown -->
+      <!-- Time -->
       <div class="topbar-dropdown" tabindex="0">
-        <button class="world-btn" aria-label="Time of day">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
-          Time <span class="vp-chevron">&#9662;</span>
+        <button class="world-btn" aria-haspopup="true" aria-label="Time of day">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/></svg>
+          <span class="world-btn-label">Time</span>
         </button>
         <div class="topbar-dropdown-menu">
-          <button class="wx-btn wx-time-btn active" data-time="morning" onclick="applyTimePreset('morning')">Morning</button>
-          <button class="wx-btn wx-time-btn" data-time="afternoon" onclick="applyTimePreset('afternoon')">Afternoon</button>
-          <button class="wx-btn wx-time-btn" data-time="sunset" onclick="applyTimePreset('sunset')">Sunset</button>
-          <button class="wx-btn wx-time-btn" data-time="night" onclick="applyTimePreset('night')">Night</button>
+          <button class="wx-btn wx-time-btn active" data-time="morning"   onclick="applyTimePreset('morning')">🌅 Morning</button>
+          <button class="wx-btn wx-time-btn"        data-time="afternoon" onclick="applyTimePreset('afternoon')">☀️ Afternoon</button>
+          <button class="wx-btn wx-time-btn"        data-time="sunset"    onclick="applyTimePreset('sunset')">🌇 Sunset</button>
+          <button class="wx-btn wx-time-btn"        data-time="night"     onclick="applyTimePreset('night')">🌙 Night</button>
         </div>
       </div>
 
-      <!-- Weather Dropdown -->
+      <!-- Weather -->
       <div class="topbar-dropdown" tabindex="0">
-        <button class="world-btn" aria-label="Weather">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path></svg>
-          Weather <span class="vp-chevron">&#9662;</span>
+        <button class="world-btn" aria-haspopup="true" aria-label="Weather">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>
+          <span class="world-btn-label">Weather</span>
         </button>
         <div class="topbar-dropdown-menu">
-          <button class="wx-btn wx-weather-btn active" data-weather="clear" onclick="applyWeather('clear')">Clear</button>
-          <button class="wx-btn wx-weather-btn" data-weather="cloudy" onclick="applyWeather('cloudy')">Cloudy</button>
-          <button class="wx-btn wx-weather-btn" data-weather="rain" onclick="applyWeather('rain')">Rain</button>
+          <button class="wx-btn wx-weather-btn active" data-weather="clear"  onclick="applyWeather('clear')">☀️ Clear</button>
+          <button class="wx-btn wx-weather-btn"        data-weather="cloudy" onclick="applyWeather('cloudy')">⛅ Cloudy</button>
+          <button class="wx-btn wx-weather-btn"        data-weather="rain"   onclick="applyWeather('rain')">🌧 Rain</button>
         </div>
       </div>
 
-      <!-- Quality Dropdown -->
+      <!-- Quality -->
       <div class="topbar-dropdown" tabindex="0">
-        <button class="world-btn" aria-label="Quality">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
-          Quality <span class="vp-chevron">&#9662;</span>
+        <button class="world-btn" aria-haspopup="true" aria-label="Render quality">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+          <span class="world-btn-label">Quality</span>
         </button>
         <div class="topbar-dropdown-menu">
-          <button class="wx-btn perf-btn active" data-mode="fast" onclick="switchPerfMode('fast')">Fast</button>
-          <button class="wx-btn perf-btn" data-mode="balanced" onclick="switchPerfMode('balanced')">Balanced</button>
-          <button class="wx-btn perf-btn" data-mode="rich" onclick="switchPerfMode('rich')">Rich</button>
+          <button class="wx-btn perf-btn active" data-mode="fast"     onclick="switchPerfMode('fast')">⚡ Fast</button>
+          <button class="wx-btn perf-btn"        data-mode="balanced" onclick="switchPerfMode('balanced')">⚖️ Balanced</button>
+          <button class="wx-btn perf-btn"        data-mode="rich"     onclick="switchPerfMode('rich')">💎 Rich</button>
         </div>
       </div>
-      
-      <button class="world-btn world-btn-aerial" id="btn-aerial" aria-label="Toggle aerial orbit view" onclick="toggleAerial(this)">
+
+      <!-- Tour button -->
+      <button class="world-btn world-btn-tour" id="btn-tour" aria-label="Guided tour" onclick="window.__tourActive ? window.__tourStop() : window.startTour && window.startTour(window.__tourTeleport)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M12 3l9 9-9 9"/></svg>
+        <span class="world-btn-label">Tour</span>
+      </button>
+
+      <!-- Aerial -->
+      <button class="world-btn world-btn-aerial" id="btn-aerial" aria-label="Toggle aerial view" onclick="toggleAerial(this)">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>
-        Aerial
+        <span class="world-btn-label">Aerial</span>
       </button>
-      <button class="world-btn world-btn-vr" id="vr-btn" aria-label="Enter VR mode">
+
+      <!-- VR -->
+      <button class="world-btn world-btn-vr" id="vr-btn" aria-label="Enter VR mode" style="display:none">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 8s3-2 10-2 10 2 10 2v6s-3 2-10 2-10-2-10-2V8z"/><circle cx="8" cy="11" r="2"/><circle cx="16" cy="11" r="2"/></svg>
-        VR
+        <span class="world-btn-label">VR</span>
       </button>
+
+      <!-- Exit -->
       <button class="world-btn world-btn-close" id="btn-close-world" aria-label="Return to website">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        Exit
+        <span class="world-btn-label">Exit</span>
       </button>
     </div>
   </div>
 
-  <!-- Main render area -->
+  <!-- Render area -->
   <div class="world-body">
-    <canvas id="world-canvas" aria-label="3D estate environment — use WASD to walk, drag to look"></canvas>
-
-    <!-- Crosshair (visible when pointer locked) -->
+    <canvas id="world-canvas" aria-label="3D estate environment"></canvas>
     <div class="crosshair" aria-hidden="true"></div>
-
-    <!-- Enter prompt -->
-    <div id="enter-prompt" aria-live="polite">Click to lock cursor · WASD to walk</div>
+    <div id="enter-prompt" aria-live="polite"></div>
 
     <!-- Minimap -->
     <div id="minimap" aria-label="Estate minimap">
-      <canvas id="minimap-canvas" width="320" height="200" aria-hidden="true"></canvas>
+      <canvas id="minimap-canvas" width="200" height="130" aria-hidden="true"></canvas>
       <div class="minimap-label">Estate Map</div>
     </div>
 
-    <!-- Viewpoint strip -->
+    <!-- Viewpoint strip (bottom) -->
     <div id="viewpoint-strip" role="toolbar" aria-label="Named viewpoints"></div>
 
-    <!-- Zone info in world -->
+    <!-- Zone panel (in-world) -->
     <aside id="world-zone-panel" aria-live="polite" aria-label="Zone details">
       <span class="zone-type">Zone</span>
       <span class="zone-label" style="font-size:1.3rem;">—</span>
@@ -444,206 +418,135 @@
       <p class="zone-desc" style="font-size:0.82rem;"></p>
     </aside>
 
-    <!-- PLOT RESERVATION PANEL -->
+    <!-- Plot reservation panel -->
     <aside id="plot-panel" role="dialog" aria-label="Plot details" class="plot-panel">
-      <button id="plot-panel-close" class="plot-panel-close" aria-label="Close">&times;</button>
-      <div class="plot-eyebrow">Project XIX &mdash; Premium Villa Plot</div>
+      <button id="plot-panel-close" class="plot-panel-close" aria-label="Close panel">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+      <div class="plot-eyebrow">Project XIX — Premium Villa Plot</div>
       <div class="plot-id">Plot 0,0</div>
       <div class="plot-location">Select a plot on the estate</div>
       <div class="plot-divider"></div>
       <div class="plot-spec-grid">
         <div><span class="spec-label">Type</span><span class="spec-val">3-Bedroom Premium Villa</span></div>
         <div><span class="spec-label">Floors</span><span class="spec-val">3 levels + undercroft</span></div>
-        <div><span class="spec-label">Area</span><span class="spec-val">330 m&sup2;</span></div>
+        <div><span class="spec-label">Area</span><span class="spec-val">330 m²</span></div>
         <div><span class="spec-label">View</span><span class="spec-val">Polo field-facing</span></div>
         <div><span class="spec-label">Parking</span><span class="spec-val">2-car undercroft</span></div>
         <div><span class="spec-label">Garden</span><span class="spec-val">Private landscaped</span></div>
       </div>
       <div class="plot-divider"></div>
       <div class="plot-status available">Available</div>
-      <button class="plot-reserve-btn btn btn-gold" style="width:100%;margin-top:.8rem">Reserve This Plot</button>
-      <p class="plot-disclaimer">Reservation places this plot on a 48-hour hold. Our concierge team will contact you to confirm details and discuss pricing.</p>
+      <button class="plot-reserve-btn btn btn-gold" style="width:100%;margin-top:.8rem;justify-content:center;">Reserve This Plot</button>
+      <p class="plot-disclaimer">Reservation places this plot on a 48-hour hold. Our concierge team will contact you to confirm details.</p>
     </aside>
 
-    <!-- NOTIFICATION TOAST -->
+    <!-- Notification toast -->
     <div id="notification" role="alert" aria-live="assertive" class="notification"></div>
 
-    <!-- Touch joystick overlay (mobile) -->
+    <!-- Touch joystick (mobile/billboard) -->
     <div id="joystick-overlay" aria-hidden="true">
-      <div class="look-hint-mobile" aria-hidden="true">Drag right<br>to look</div>
+      <div class="look-hint-mobile" aria-hidden="true">Drag right to look</div>
+    </div>
+
+    <!-- Billboard-specific floating CTA — shown on large touchscreens only -->
+    <div id="billboard-cta" class="billboard-cta" aria-hidden="true">
+      <div class="billboard-cta-text">Touch the estate to walk through it</div>
+      <button class="billboard-cta-btn btn btn-gold btn-enter-3d">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+        Enter Virtual Estate
+      </button>
     </div>
   </div>
 </div>
 
-
-<!-- ═══ VILLA INTERIOR OVERLAY (Now integrated to main world) ════════════════════════════════ -->
+<!-- ══ VILLA INTERIOR OVERLAY ════════════════════════════════════════ -->
 <div id="villa-overlay" role="dialog" aria-modal="true" aria-label="Villa interior walkthrough">
-
   <div class="world-topbar">
     <div class="world-brand">
       <span class="world-brand-mark">XIX</span>
-      <div id="scene-caption" class="world-caption">3 Bedroom Premium Villa — Interior</div>
+      <div class="world-caption">3 Bedroom Premium Villa — Interior</div>
     </div>
     <div class="world-controls">
       <button class="world-btn world-btn-close" id="btn-close-villa" aria-label="Return to estate">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        Exit Interior
+        <span class="world-btn-label">Exit Interior</span>
       </button>
     </div>
   </div>
-
   <div class="world-body">
-    <!-- Blank transparent canvas space (the real world renders behind it) -->
     <canvas id="villa-canvas" style="display:none;"></canvas>
-    
     <div class="crosshair" aria-hidden="true"></div>
-    <div id="enter-prompt" aria-live="polite" style="margin-top:20px; font-size:11px;">Click to look · WASD to walk · ESC to exit</div>
-
-    <!-- Floor plan side panel -->
+    <div id="villa-enter-prompt" aria-live="polite" style="margin-top:20px;font-size:11px;">Click to look · WASD to walk · ESC to exit</div>
     <aside class="villa-plan-panel" aria-label="Villa floor plans">
-      <div class="villa-plan-header">
-        <span class="eyebrow">3 Bedroom Villa</span>
-        <h3>Floor Plans</h3>
-      </div>
-
+      <div class="villa-plan-header"><span class="eyebrow">3 Bedroom Villa</span><h3>Floor Plans</h3></div>
       <div class="villa-plan-tabs">
         <button class="plan-tab active" data-plan="undercroft">Undercroft</button>
         <button class="plan-tab" data-plan="ground">Ground</button>
         <button class="plan-tab" data-plan="first">First</button>
       </div>
-
-      <!-- Room list by floor -->
       <div class="plan-rooms" id="plan-undercroft">
-        <div class="plan-room" data-key="undercroft">
-          <span class="room-name">Undercroft Parking</span>
-          <span class="room-area">2.4m clear</span>
-        </div>
-        <div class="plan-room" data-key="approach">
-          <span class="room-name">Street Approach</span>
-          <span class="room-area">Ramp entry</span>
-        </div>
+        <div class="plan-room" data-key="undercroft"><span class="room-name">Undercroft Parking</span><span class="room-area">2.4m clear</span></div>
+        <div class="plan-room" data-key="approach"><span class="room-name">Street Approach</span><span class="room-area">Ramp entry</span></div>
       </div>
-
       <div class="plan-rooms hidden" id="plan-ground">
-        <div class="plan-room" data-key="ante_room">
-          <span class="room-name">Ante Room</span>
-          <span class="room-area">12 m²</span>
-        </div>
-        <div class="plan-room" data-key="living">
-          <span class="room-name">Living / Dining</span>
-          <span class="room-area">42 m²</span>
-        </div>
-        <div class="plan-room" data-key="terrace_gf">
-          <span class="room-name">Front Terrace</span>
-          <span class="room-area">Polo view</span>
-        </div>
-        <div class="plan-room" data-key="kitchen">
-          <span class="room-name">Kitchen</span>
-          <span class="room-area">26 m²</span>
-        </div>
+        <div class="plan-room" data-key="ante_room"><span class="room-name">Ante Room</span><span class="room-area">12 m²</span></div>
+        <div class="plan-room" data-key="living"><span class="room-name">Living / Dining</span><span class="room-area">42 m²</span></div>
+        <div class="plan-room" data-key="terrace_gf"><span class="room-name">Front Terrace</span><span class="room-area">Polo view</span></div>
+        <div class="plan-room" data-key="kitchen"><span class="room-name">Kitchen</span><span class="room-area">26 m²</span></div>
       </div>
-
       <div class="plan-rooms hidden" id="plan-first">
-        <div class="plan-room" data-key="family_lounge">
-          <span class="room-name">Family Lounge</span>
-          <span class="room-area">23 m²</span>
-        </div>
-        <div class="plan-room" data-key="master">
-          <span class="room-name">Master Bedroom</span>
-          <span class="room-area">27 m²</span>
-        </div>
-        <div class="plan-room" data-key="master_bath">
-          <span class="room-name">Master Bathroom</span>
-          <span class="room-area">7 m²</span>
-        </div>
-        <div class="plan-room" data-key="bedroom2">
-          <span class="room-name">Bedroom 2</span>
-          <span class="room-area">16 m²</span>
-        </div>
-        <div class="plan-room" data-key="bedroom3">
-          <span class="room-name">Bedroom 3</span>
-          <span class="room-area">17 m²</span>
-        </div>
-        <div class="plan-room" data-key="terrace_ff">
-          <span class="room-name">First Floor Terrace</span>
-          <span class="room-area">South-facing</span>
-        </div>
+        <div class="plan-room" data-key="family_lounge"><span class="room-name">Family Lounge</span><span class="room-area">23 m²</span></div>
+        <div class="plan-room" data-key="master"><span class="room-name">Master Bedroom</span><span class="room-area">27 m²</span></div>
+        <div class="plan-room" data-key="master_bath"><span class="room-name">Master Bathroom</span><span class="room-area">7 m²</span></div>
+        <div class="plan-room" data-key="bedroom2"><span class="room-name">Bedroom 2</span><span class="room-area">16 m²</span></div>
+        <div class="plan-room" data-key="bedroom3"><span class="room-name">Bedroom 3</span><span class="room-area">17 m²</span></div>
+        <div class="plan-room" data-key="terrace_ff"><span class="room-name">First Floor Terrace</span><span class="room-area">South-facing</span></div>
       </div>
-
       <div class="villa-level-info">
         <div class="level-row"><span class="level-label">Level 0</span><span class="level-desc">Garden grade</span></div>
         <div class="level-row"><span class="level-label">Level 5 / 2100mm</span><span class="level-desc">Undercroft parking</span></div>
         <div class="level-row"><span class="level-label">Level 2 / 2850mm</span><span class="level-desc">Ground floor living</span></div>
         <div class="level-row"><span class="level-label">Level 3 / 6150mm</span><span class="level-desc">First floor bedrooms</span></div>
-        <div class="level-row"><span class="level-label">Level 4 / 9450mm</span><span class="level-desc">Roof eave</span></div>
       </div>
-
-      <a class="villa-enquire-btn" href="mailto:o.olasunkanmi@mixtafrica.com?subject=Project XIX — 3 Bedroom Villa Enquiry">
-        Enquire About This Villa
-      </a>
+      <a class="villa-enquire-btn" href="mailto:o.olasunkanmi@mixtafrica.com?subject=Project XIX — 3 Bedroom Villa Enquiry">Enquire About This Villa</a>
     </aside>
-
-    <!-- Villa viewpoint strip -->
-    <div id="villa-vp-strip" role="toolbar" aria-label="Villa viewpoints"></div>
+    <div id="villa-vp-strip" class="villa-vp-strip" role="toolbar"></div>
   </div>
 </div>
 
-
-<!-- ═══ PRODUCT PANEL ════════════════════════════════════════════════════════ -->
-<div id="product-panel" class="product-panel" role="dialog" aria-modal="true" aria-label="Product details">
+<!-- ══ PRODUCT PANEL ════════════════════════════════════════════════ -->
+<div id="product-panel" class="product-panel" role="dialog" aria-modal="true" aria-label="Property details">
   <div class="pp-header">
     <div>
-      <span class="pp-type eyebrow">Type</span>
-      <h2 class="pp-title display">Building</h2>
+      <span class="pp-type eyebrow"></span>
+      <h2 class="pp-title"></h2>
       <p class="pp-tagline"></p>
     </div>
-    <button class="pp-close" onclick="closeProductPanel()" aria-label="Close">&times;</button>
+    <button class="pp-close" onclick="closeProductPanel()" aria-label="Close panel">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
   </div>
-
   <div class="pp-body">
-    <!-- Left: 3D GLB viewer -->
     <div class="pp-viewer">
-      <div class="pp-viewer-label eyebrow">Interactive 3D Model &mdash; drag to rotate</div>
+      <div class="pp-viewer-label eyebrow">Interactive 3D Model — drag to rotate</div>
       <canvas id="pp-glb-canvas" aria-label="Rotatable 3D building model"></canvas>
-      <div id="pp-glb-fallback" class="pp-glb-fallback" style="display:none">
-        <span>3D model loading&hellip;</span>
-      </div>
+      <div id="pp-glb-fallback" class="pp-glb-fallback" style="display:none"><span>3D model loading…</span></div>
     </div>
-
-    <!-- Right: Details -->
     <div class="pp-details">
-      <!-- Specs grid -->
-      <div class="pp-specs-section">
-        <div class="eyebrow" style="margin-bottom:.6rem">Specifications</div>
-        <div class="pp-specs"></div>
-      </div>
-
-      <!-- Floor plan -->
-      <div class="pp-plans-section">
-        <div class="eyebrow" style="margin-bottom:.6rem">Floor Plans &amp; Renders</div>
-        <div class="pp-plan-tabs"></div>
-        <img class="pp-plan-img" src="" alt="Floor plan" loading="lazy" />
-      </div>
-
-      <!-- Description -->
+      <div class="pp-specs-section"><div class="eyebrow" style="margin-bottom:.6rem">Specifications</div><div class="pp-specs"></div></div>
+      <div class="pp-plans-section"><div class="eyebrow" style="margin-bottom:.6rem">Floor Plans &amp; Renders</div><div class="pp-plan-tabs"></div><img class="pp-plan-img" src="" alt="Floor plan" loading="lazy" /></div>
       <p class="pp-desc"></p>
-
-      <!-- CTA -->
       <div class="pp-cta">
-        <button class="btn btn-gold" onclick="closeProductPanel(); setTimeout(()=>document.getElementById('contact').scrollIntoView({behavior:'smooth'}),200)">
-          Enquire About This Property
-        </button>
-        <a class="btn btn-outline" href="mailto:o.olasunkanmi@mixtafrica.com?subject=Project XIX Enquiry" target="_blank">
-          Email Project Team
-        </a>
+        <button class="btn btn-gold" onclick="closeProductPanel();setTimeout(()=>document.getElementById('contact').scrollIntoView({behavior:'smooth'}),200)">Enquire About This Property</button>
+        <a class="btn btn-outline" href="mailto:o.olasunkanmi@mixtafrica.com?subject=Project XIX Enquiry" target="_blank">Email Project Team</a>
       </div>
     </div>
   </div>
 </div>
 <div class="pp-overlay" onclick="closeProductPanel()"></div>
 
-
-<!-- INTERIOR WALKTHROUGH OVERLAY -->
+<!-- ══ INTERIOR OVERLAY ══════════════════════════════════════════════ -->
 <div id="interior-overlay" class="interior-overlay" aria-modal="true" role="dialog">
   <div class="int-header">
     <div class="int-header-left">
@@ -652,132 +555,116 @@
       <span class="int-room-hint">Polo field view</span>
     </div>
     <div class="int-header-right">
-      <button id="int-exit-btn" class="int-exit-btn" aria-label="Exit interior view">
-        &times; Exit Interior
-      </button>
+      <button id="int-exit-btn" class="int-exit-btn" aria-label="Exit interior view">× Exit Interior</button>
     </div>
   </div>
-
   <canvas id="interior-canvas" aria-label="Interior walkthrough view"></canvas>
-
   <div class="int-crosshair" aria-hidden="true"></div>
-
-  <div class="int-room-strip" id="int-room-strip">
-    <!-- Room buttons injected by JS -->
-  </div>
-
-  <div class="int-controls-hint" aria-hidden="true">
-    Click to look &middot; WASD to walk &middot; ESC to exit
-  </div>
+  <div class="int-room-strip" id="int-room-strip"></div>
+  <div class="int-controls-hint" aria-hidden="true">Click to look · WASD to walk · ESC to exit</div>
 </div>
 
-<!-- ═══ SCRIPTS ═══════════════════════════════════════════════════ -->
+<!-- ══ SCRIPTS ═══════════════════════════════════════════════════════ -->
 <script type="importmap">
-  {
-    "imports": {
-      "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
-      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
-    }
-  }
+  { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/" } }
 </script>
-<!-- Bridge: exposes module functions to inline onclick handlers -->
+
 <script>
+// Bridge for onclick handlers before modules load
 window._pendingCalls = [];
-['applyTimePreset','applyWeather','toggleAerial','rotateVillaGLB','showProductPanel','switchPerfMode'].forEach(fn=>{
-  window[fn] = function(...args){
-    if(window.__moduleReady && window.__moduleReady[fn]) window.__moduleReady[fn](...args);
-    else window._pendingCalls.push({fn,args});
+['applyTimePreset','applyWeather','toggleAerial','rotateVillaGLB','showProductPanel','switchPerfMode'].forEach(fn => {
+  window[fn] = function(...args) {
+    if (window.__moduleReady && window.__moduleReady[fn]) window.__moduleReady[fn](...args);
+    else window._pendingCalls.push({fn, args});
   };
 });
+
+// Mobile nav drawer
+document.addEventListener('DOMContentLoaded', () => {
+  const hamburger = document.getElementById('nav-hamburger');
+  const mobileNav = document.getElementById('mobile-nav');
+  const backdrop  = document.getElementById('mobile-nav-backdrop');
+  const closeBtn  = document.getElementById('mobile-nav-close');
+
+  function openNav() {
+    mobileNav.classList.add('open');
+    backdrop.classList.add('visible');
+    hamburger.setAttribute('aria-expanded','true');
+    document.body.style.overflow = 'hidden';
+  }
+  function closeNav() {
+    mobileNav.classList.remove('open');
+    backdrop.classList.remove('visible');
+    hamburger.setAttribute('aria-expanded','false');
+    document.body.style.overflow = '';
+  }
+  hamburger?.addEventListener('click', openNav);
+  closeBtn?.addEventListener('click', closeNav);
+  backdrop?.addEventListener('click', closeNav);
+  document.querySelectorAll('.mobile-nav-link').forEach(a => a.addEventListener('click', closeNav));
+
+  // Billboard mode: show the floating CTA on the hero/landing only
+  if (window.XIX_DEVICE?.isBillboard) {
+    document.getElementById('billboard-cta')?.removeAttribute('aria-hidden');
+    document.getElementById('billboard-cta')?.style.setProperty('display','flex');
+  }
+
+  // Pointer lock crosshair
+  document.addEventListener('pointerlockchange', () => {
+    document.body.classList.toggle('pointer-locked', !!document.pointerLockElement);
+  });
+});
 </script>
-<!-- CACHE BUSTER ADDED TO APP.JS -->
-<script type="module" src="js/app.js?v=999"></script>
+
+<script type="module" src="js/app.js?v=25"></script>
 
 <script type="module">
 import { initInterior, openInterior, closeInterior, resizeInterior, getInteriorRooms, INTERIORS } from "./js/interior.js";
-
-// Init interior renderer on the canvas
 const intCanvas = document.getElementById("interior-canvas");
 initInterior(intCanvas);
-
-// Expose to window
 window.openInteriorView = function(buildingType, roomKey) {
   const overlay = document.getElementById("interior-overlay");
-  const bld = INTERIORS[buildingType];
-  if (!bld) return;
-
-  // Set header
+  const bld = INTERIORS[buildingType]; if (!bld) return;
   overlay.querySelector(".int-building-name").textContent = bld.name;
-
-  // Build room strip
-  const strip = document.getElementById("int-room-strip");
-  strip.innerHTML = "";
+  const strip = document.getElementById("int-room-strip"); strip.innerHTML = "";
   bld.rooms.forEach(room => {
     const btn = document.createElement("button");
-    btn.className = "int-room-btn";
-    btn.dataset.key = room.key;
+    btn.className = "int-room-btn"; btn.dataset.key = room.key;
     btn.innerHTML = `<span class="irb-label">${room.label}</span><span class="irb-sub">${room.sublabel}</span>`;
     btn.addEventListener("click", () => {
       document.querySelectorAll(".int-room-btn").forEach(b=>b.classList.remove("active"));
       btn.classList.add("active");
       overlay.querySelector(".int-room-label").textContent = room.label;
-      overlay.querySelector(".int-room-hint").textContent  = room.hint || room.sublabel;
+      overlay.querySelector(".int-room-hint").textContent  = room.hint||room.sublabel;
       openInterior(buildingType, room.key);
     });
     strip.appendChild(btn);
   });
-
-  // Activate first room
   strip.querySelector(".int-room-btn")?.classList.add("active");
   const firstRoom = bld.rooms[0];
   overlay.querySelector(".int-room-label").textContent = firstRoom.label;
-  overlay.querySelector(".int-room-hint").textContent  = firstRoom.hint || firstRoom.sublabel;
-
-  // Size canvas
-  const W = window.innerWidth, H = window.innerHeight;
-  intCanvas.width  = W; intCanvas.height = H;
-  resizeInterior(W, H);
-
-  // Open
+  overlay.querySelector(".int-room-hint").textContent  = firstRoom.hint||firstRoom.sublabel;
+  const W=window.innerWidth, H=window.innerHeight;
+  intCanvas.width=W; intCanvas.height=H; resizeInterior(W,H);
   openInterior(buildingType, firstRoom.key);
-  overlay.classList.add("open");
-  document.body.classList.add("interior-open");
+  overlay.classList.add("open"); document.body.classList.add("interior-open");
 };
-
 window.closeInteriorView = function() {
   document.getElementById("interior-overlay")?.classList.remove("open");
-  document.body.classList.remove("interior-open");
-  closeInterior();
+  document.body.classList.remove("interior-open"); closeInterior();
 };
-
-document.getElementById("int-exit-btn")?.addEventListener("click", () => window.closeInteriorView());
-window.addEventListener("resize", () => {
-  const W=window.innerWidth, H=window.innerHeight;
-  intCanvas.width=W; intCanvas.height=H;
-  resizeInterior(W, H);
-});
+document.getElementById("int-exit-btn")?.addEventListener("click", ()=>window.closeInteriorView());
+window.addEventListener("resize", ()=>{ const W=window.innerWidth,H=window.innerHeight; intCanvas.width=W; intCanvas.height=H; resizeInterior(W,H); });
 </script>
+
 <script type="module">
-  import { openProductPanel, closeProductPanel, resizePanelViewer } from "./js/product-panel.js";
-  // Register immediately AND set up a persistent getter so app.js overwrite cannot break it
-  window.__moduleReady = window.__moduleReady || {};
-  window.__moduleReady.showProductPanel = openProductPanel;
-  window.__moduleReady.closeProductPanel = closeProductPanel;
-  window.closeProductPanel = closeProductPanel;
-  // Re-register after a tick in case app.js DOMContentLoaded fires later and overwrites
-  setTimeout(() => {
-    window.__moduleReady = window.__moduleReady || {};
-    window.__moduleReady.showProductPanel = openProductPanel;
-    window.__moduleReady.closeProductPanel = closeProductPanel;
-  }, 500);
-  window.addEventListener("resize", resizePanelViewer, { passive: true });
-</script>
-
-<!-- Pointer lock body class for crosshair -->
-<script>
-  document.addEventListener("pointerlockchange", () => {
-    document.body.classList.toggle("pointer-locked", !!document.pointerLockElement);
-  });
+import { openProductPanel, closeProductPanel, resizePanelViewer } from "./js/product-panel.js";
+window.__moduleReady = window.__moduleReady || {};
+window.__moduleReady.showProductPanel = openProductPanel;
+window.__moduleReady.closeProductPanel = closeProductPanel;
+window.closeProductPanel = closeProductPanel;
+setTimeout(() => { window.__moduleReady.showProductPanel = openProductPanel; window.__moduleReady.closeProductPanel = closeProductPanel; }, 500);
+window.addEventListener("resize", resizePanelViewer, { passive:true });
 </script>
 </body>
 </html>
