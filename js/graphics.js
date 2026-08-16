@@ -52,15 +52,27 @@ export function setPerfModeGraphics(mode) {
     }
   }
   if (!bloomPass) return;
+  // Bloom is ALWAYS on via EffectComposer — this is a premium product.
+  // Disabling bloom also bypasses OutputPass which handles linear→sRGB conversion,
+  // making diffuse surfaces render incorrectly. We only tune strength per mode.
+  //
+  // Threshold 0.75+ means only surfaces brighter than 75% white bloom:
+  //   ✓ Glass catching direct sun, water specular, gold trim, lamp globes
+  //   ✗ Diffuse concrete, grass, brick — never bloom (correct)
+  //
+  // Fast:     minimal bloom — just enough for glass/water highlights. Zero SMAA.
+  // Balanced: full bloom + SMAA — sharp edges, cinematic glow. True Retina quality.
+  // Rich:     maximum bloom + SMAA — every gold surface and glass pane glows.
+  bloomPass.enabled = true; // always
   if (mode==='fast') {
-    bloomPass.enabled=false; if(smaaPass) smaaPass.enabled=false;
+    bloomPass.strength=0.22; bloomPass.threshold=0.75; bloomPass.radius=0.55;
+    if(smaaPass) smaaPass.enabled=false; // SMAA too costly at fast — bloom is the priority
   } else if (mode==='balanced') {
-    // Balanced: soft, subtle bloom — premium without GPU spike
-    bloomPass.enabled=true; bloomPass.strength=0.25; bloomPass.threshold=0.72; bloomPass.radius=0.58;
-    if(smaaPass) smaaPass.enabled=true; // SMAA on in balanced too for clean edges
+    bloomPass.strength=0.28; bloomPass.threshold=0.72; bloomPass.radius=0.58;
+    if(smaaPass) smaaPass.enabled=true;
   } else {
-    // Rich: cinematic bloom — full strength for gold/glass highlights
-    bloomPass.enabled=true; bloomPass.strength=0.35; bloomPass.threshold=0.68; bloomPass.radius=0.65;
+    // Rich: cinematic — sun disc, water, gold gate pillars, glass all glow distinctly
+    bloomPass.strength=0.38; bloomPass.threshold=0.68; bloomPass.radius=0.65;
     if(smaaPass) smaaPass.enabled=true;
   }
 }
@@ -76,12 +88,12 @@ export function initPostProcessing(renderer, scene, camera) {
   composer.addPass(new RenderPass(scene,camera));
   try {
     bloomPass=new UnrealBloomPass(new THREE.Vector2(w,h),0.22,0.55,0.75);
-    bloomPass.enabled=(_perfMode!=='fast');
+    bloomPass.enabled=true; // always on — tuned per mode by setPerfModeGraphics()
     composer.addPass(bloomPass);
   } catch(e){ console.warn('[XIX] Bloom init:',e.message); bloomPass=null; }
   try {
     smaaPass=new SMAAPass(w,h);
-    smaaPass.enabled=(_perfMode==='rich');
+    smaaPass.enabled=false; // setPerfModeGraphics() will enable for balanced/rich
     composer.addPass(smaaPass);
   } catch(e){ console.warn('[XIX] SMAA init:',e.message); smaaPass=null; }
   composer.addPass(new OutputPass());
@@ -96,8 +108,17 @@ export function resizeComposer(w,h) {
 }
 
 export function renderFrame() {
-  if(composer){ composer.render(); return; }
-  if(_renderer&&_scene&&_camera) _renderer.render(_scene,_camera);
+  // Always render through EffectComposer — even in Fast mode.
+  // EffectComposer's OutputPass handles the linear→sRGB conversion correctly.
+  // The bare _renderer.render() bypass produces washed-out colours because it
+  // skips that conversion step. Bloom at strength 0.22, threshold 0.75 adds
+  // negligible GPU cost vs the correctness benefit.
+  if (composer) {
+    composer.render();
+  } else if (_renderer && _scene && _camera) {
+    // Fallback only if composer was never initialised (e.g. WebGL1 context)
+    _renderer.render(_scene, _camera);
+  }
 }
 
 export function setBloomForTime(name) {
@@ -105,7 +126,7 @@ export function setBloomForTime(name) {
   const p={morning:{s:0.30,t:0.78,r:0.50},afternoon:{s:0.22,t:0.75,r:0.55},
            sunset:{s:0.65,t:0.68,r:0.70},night:{s:0.90,t:0.52,r:0.80}}[name]||{s:0.22,t:0.75,r:0.55};
   bloomPass.strength=p.s; bloomPass.threshold=p.t; bloomPass.radius=p.r;
-  if(_perfMode!=='fast') bloomPass.enabled=true;
+  bloomPass.enabled=true; // always on — time of day modulates strength, never kills bloom
 }
 
 // ─── IBL ENV MAP ──────────────────────────────────────────────────────────────
