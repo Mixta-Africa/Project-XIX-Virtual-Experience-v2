@@ -1,19 +1,25 @@
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
 /**
- * Project XIX     Main Application Entry Point
- * Optimized: Unified rendering (villa interior physically added to main world)
- * Optimized: EffectComposer totally bypassed in 'fast' mode
+ * Project XIX  —  Main Application Entry Point  v24
+ * Changes from v23:
+ *  - Villa 0°/90°/180°/270° buttons removed from toolbar (still available via console: rotateVillaGLB())
+ *  - Horse GLB used; tickHorse(delta) called each frame; setHorsePosition() synced to camera
+ *  - setPerfMode now wired through to graphics.js (postfx bypassed in Fast)
+ *  - switchPerfMode() updates both scene and graphics
+ *  - Plot panel: highlightPlot() called on open so overlay briefly shows, hides on close
+ *  - Villas dropdown: wired and styled — works on click
  */
 
 import { VIEWPOINTS, ZONES, WORLD } from "./data.js";
 import { buildVillaInterior, VILLA_VIEWPOINTS } from "./villa-interior.js";
 import {
-  initScene, getRenderer, getScene, getCamera, getClock, tickScene, updateSky,
-  plotRegistry, reservePlot, getPlotAtRay,
-  setPerfMode, PERF_MODE, RIDER_EYE_HEIGHT, FOOT_EYE_HEIGHT,
-  tickHorseAnim, setHorsePosition,
-} from "./scene.js?v=23";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime } from "./graphics.js";
+  initScene, getRenderer, getScene, getCamera, getClock,
+  tickScene, updateSky, plotRegistry, reservePlot, getPlotAtRay,
+  highlightPlot, setPerfMode, PERF_MODE,
+  RIDER_EYE_HEIGHT, FOOT_EYE_HEIGHT, tickHorse, tickHorseAnim,
+  setHorsePosition, getThirdPersonCameraOffset,
+} from "./scene.js?v=27";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics } from "./graphics.js";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR
@@ -28,25 +34,35 @@ import {
 } from "./ui.js";
 
 //           STATE
-let sceneReady      = false;
-let introPlaying    = false;
-let currentViewKey  = "field_centre";
-let animFrameId     = null;
-let composer        = null;
-let aerialOrbit     = false;
-let aerialAngle     = 0;
-let aerialYawOffset = 0;
-let aerialPitch     = -Math.PI / 2.5;
-let aerialDragging  = false;
-let aerialLastX     = 0, aerialLastY = 0;
-const AERIAL_RADIUS = 220;
-const AERIAL_HEIGHT = 200;
-const AERIAL_SPEED  = 0.12;
+let sceneReady     = false;
+let villaScene     = null, villaRenderer = null;
+let introPlaying   = false;
+let currentViewKey = "field_centre";
+let animFrameId    = null;
+let composer       = null;
+let aerialOrbit    = false;
+let aerialAngle    = 0, aerialYawOffset = 0;
+let aerialPitch    = -Math.PI / 2.5;
+let aerialDragging = false, aerialLastX = 0, aerialLastY = 0;
+const AERIAL_RADIUS = 220, AERIAL_HEIGHT = 200, AERIAL_SPEED = 0.12;
 
-let horseMode = true; // ON by default
+// Movement mode: 'ride' = mounted horse (default), 'walk' = free roam on foot
+let moveMode = 'ride'; // 'ride' | 'walk'
 let _prevCamX = 0, _prevCamZ = 0;
+let _targetEyeY = RIDER_EYE_HEIGHT; // smoothly interpolated
+let _currentEyeY = RIDER_EYE_HEIGHT;
 
-//           WEATHER / TIME PRESETS
+// Expose toggle for the mode button
+window.setMoveMode = function(mode) {
+  moveMode = mode;
+  _targetEyeY = (mode === 'ride') ? RIDER_EYE_HEIGHT : FOOT_EYE_HEIGHT;
+  // Update UI button states
+  document.querySelectorAll('.move-mode-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.mode === mode)
+  );
+};
+
+//           TIME PRESETS
 const TIME_PRESETS = {
   morning:   { sky:["#1e3a5a","#7aaac8","#4a7a38"], sunCol:0xffd080, sunInt:1.8, sunPos:[-80,55,-80],   fog:"#8ab8cc", fogD:0.0008, exp:0.92, hemiInt:0.9 },
   afternoon: { sky:["#1a3a6a","#5a9acc","#3a6a30"], sunCol:0xffe8b0, sunInt:2.2, sunPos:[-160,160,100], fog:"#8ab8cc", fogD:0.0009, exp:1.02, hemiInt:1.2 },
@@ -62,14 +78,12 @@ function applyTimePreset(name) {
   try { setBloomForTime(name); } catch(e){}
   const sc = getScene();
   if (sc && sc.fog) { sc.fog.color.set(p.fog); sc.fog.density = p.fogD; }
-  if (sc) {
-    sc.traverse(o => {
-      if (o.isDirectionalLight && o.castShadow) {
-        o.color.setHex(p.sunCol); o.intensity = p.sunInt; o.position.set(...p.sunPos);
-      }
-      if (o.isHemisphereLight) o.intensity = p.hemiInt || 1.2;
-    });
-  }
+  if (sc) sc.traverse(o => {
+    if (o.isDirectionalLight && o.castShadow) {
+      o.color.setHex(p.sunCol); o.intensity = p.sunInt; o.position.set(...p.sunPos);
+    }
+    if (o.isHemisphereLight) o.intensity = p.hemiInt || 1.2;
+  });
   const r = getRenderer();
   if (r) r.toneMappingExposure = p.exp;
 }
@@ -86,36 +100,141 @@ function applyWeather(w) {
 }
 
 window.applyTimePreset = applyTimePreset;
-window.applyWeather = applyWeather;
+window.applyWeather    = applyWeather;
+
+// rotateVillaGLB still works from console — just not in toolbar
+window.rotateVillaGLB = function(degrees) {
+  const rads = degrees * Math.PI / 180;
+  const sc = getScene();
+  if (!sc) return;
+  sc.traverse(obj => {
+    if (obj.userData?.isVillaGLB)
+      obj.rotation.y = obj.userData.baseRotY + rads;
+  });
+  console.log('[XIX] Villa GLB rotated', degrees, 'deg');
+};
 
 //           PERFORMANCE MODE TOGGLE
+function injectPerfToggle() {
+  if (document.getElementById('perf-toggle-bar')) return;
+  const style = document.createElement('style');
+  style.textContent = `
+    #perf-toggle-bar { position:absolute; top:14px; right:14px; z-index:200;
+      display:flex; align-items:center; gap:4px;
+      background:rgba(10,20,12,0.78); backdrop-filter:blur(8px);
+      border:1px solid rgba(201,168,76,0.3); border-radius:8px;
+      padding:5px 10px; font-family:Inter,sans-serif; pointer-events:all; }
+    #perf-toggle-bar .perf-label { color:rgba(255,255,255,0.45); font-size:11px; margin-right:2px; }
+    #perf-toggle-bar .perf-btn {
+      background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.65);
+      border:1px solid rgba(255,255,255,0.12); border-radius:5px;
+      padding:3px 11px; cursor:pointer; font-size:11px; transition:all .15s; }
+    #perf-toggle-bar .perf-btn.active {
+      background:rgba(201,168,76,0.9); color:#0a1008;
+      border-color:transparent; font-weight:600; }
+    #perf-toggle-bar .perf-btn:hover:not(.active) { background:rgba(255,255,255,0.14); }
+  `;
+  document.head.appendChild(style);
+  const bar = document.createElement('div');
+  bar.id = 'perf-toggle-bar';
+  bar.innerHTML = `
+    <span class="perf-label">Quality</span>
+    <button class="perf-btn active" data-mode="fast"     onclick="window.switchPerfMode('fast')">Fast</button>
+    <button class="perf-btn"        data-mode="balanced" onclick="window.switchPerfMode('balanced')">Balanced</button>
+    <button class="perf-btn"        data-mode="rich"     onclick="window.switchPerfMode('rich')">Rich</button>
+  `;
+  document.getElementById('world-overlay')?.appendChild(bar);
+}
+
+// ── MODE TOGGLE: Walk / Ride ───────────────────────────────────────────────
+function injectModeToggle() {
+  if (document.getElementById('mode-toggle-bar')) return;
+  const style = document.createElement('style');
+  style.textContent = `
+    #mode-toggle-bar {
+      position:absolute; bottom:74px; left:50%; transform:translateX(-50%);
+      z-index:200; display:flex; align-items:center; gap:0;
+      background:rgba(10,20,12,0.82); backdrop-filter:blur(8px);
+      border:1px solid rgba(201,168,76,0.3); border-radius:8px;
+      overflow:hidden; pointer-events:all; font-family:Inter,sans-serif;
+    }
+    .move-mode-btn {
+      background:none; color:rgba(255,255,255,0.6); border:none;
+      padding:8px 18px; cursor:pointer; font-size:12px; font-weight:500;
+      display:flex; align-items:center; gap:6px; min-height:40px;
+      transition:background .15s, color .15s; white-space:nowrap;
+      -webkit-tap-highlight-color:transparent;
+    }
+    .move-mode-btn.active {
+      background:rgba(201,168,76,0.85); color:#0a1008;
+    }
+    .move-mode-btn:hover:not(.active) { background:rgba(255,255,255,0.1); }
+    .mode-divider { width:1px; background:rgba(201,168,76,0.2); align-self:stretch; }
+    /* V key hint — desktop only */
+    #view-hint {
+      position:absolute; bottom:74px; right:16px; z-index:200;
+      font-size:10px; color:rgba(255,255,255,0.35); letter-spacing:.06em;
+      pointer-events:none; font-family:Inter,sans-serif;
+    }
+    /* Billboard: scale up toggle */
+    .device-billboard #mode-toggle-bar { bottom:110px; }
+    .device-billboard .move-mode-btn { padding:14px 26px; font-size:0.9rem; min-height:56px; }
+    /* Mobile: move above viewpoint strip */
+    @media(max-width:640px) {
+      #mode-toggle-bar { bottom:80px; }
+      .move-mode-btn { padding:8px 14px; font-size:11px; }
+    }
+  `;
+  document.head.appendChild(style);
+
+  const bar = document.createElement('div');
+  bar.id = 'mode-toggle-bar';
+  bar.innerHTML = `
+    <button class="move-mode-btn active" data-mode="ride"
+      onclick="window.setMoveMode('ride')" aria-label="Ride mode — mounted on horse">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+        <path d="M4 17c1-2 3-3 5-3s3 1 4 2 3 2 5 1"/>
+        <circle cx="7" cy="11" r="2"/><path d="M9 11c1-3 4-5 7-4l2 1 1 3-2 1"/>
+      </svg>
+      Ride
+    </button>
+    <div class="mode-divider"></div>
+    <button class="move-mode-btn" data-mode="walk"
+      onclick="window.setMoveMode('walk')" aria-label="Walk mode — explore on foot">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+        <circle cx="12" cy="5" r="1.5"/>
+        <path d="M9 19l1-5 2 3 2-3 1 5M8 12l1-3 3 2 3-2 1 3"/>
+      </svg>
+      Walk
+    </button>
+    <div class="mode-divider"></div>
+    <button class="move-mode-btn" data-mode="aerial"
+      onclick="toggleAerial(document.getElementById('btn-aerial'))" aria-label="Aerial view">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+        <circle cx="12" cy="12" r="9"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/>
+      </svg>
+      Aerial
+    </button>
+  `;
+  document.getElementById('world-overlay')?.appendChild(bar);
+
+  // V key hint for desktop
+  if (!('ontouchstart' in window)) {
+    const hint = document.createElement('div');
+    hint.id = 'view-hint';
+    hint.textContent = 'V key — toggle 1st / 3rd person';
+    document.getElementById('world-overlay')?.appendChild(hint);
+    // Hide after 8 seconds
+    setTimeout(() => hint.style.opacity = '0', 8000);
+  }
+}
+
 window.switchPerfMode = function(mode) {
-  window.PERF_MODE = mode; // Store globally so render loop knows to bypass
-  setPerfMode(mode);
+  setPerfMode(mode);          // updates scene (shadow map, pixel ratio, fog)
+  setPerfModeGraphics(mode);  // updates graphics pipeline (bloom, SMAA, direct render)
   document.querySelectorAll('.perf-btn').forEach(b =>
     b.classList.toggle('active', b.dataset.mode === mode));
 };
-
-//           PANEL CLOSE FIX
-function bindAllPanelCloses() {
-  document.addEventListener('click', e => {
-    const btn = e.target.closest('[data-close-panel], .panel-close, .plot-close, #plot-panel-close, .zone-panel-close, .zone-close, [aria-label="Close"], .btn-close');
-    if (!btn) return;
-    e.stopPropagation();
-    const panel = btn.closest('.panel, .zone-panel, #plot-panel, .product-panel, .info-panel, [class*="-panel"]');
-    if (panel) {
-      panel.classList.remove('visible', 'open', 'active');
-      panel.style.display = '';
-    }
-  }, true); 
-
-  document.addEventListener('DOMContentLoaded', () => {
-    document.getElementById('plot-panel-close')?.addEventListener('click', e => {
-      e.stopImmediatePropagation();
-      document.getElementById('plot-panel')?.classList.remove('visible');
-    }, { capture: true });
-  });
-}
 
 //           BOOT
 document.addEventListener("DOMContentLoaded", () => {
@@ -127,9 +246,9 @@ document.addEventListener("DOMContentLoaded", () => {
   bindPlotSystem();
   bindVillaInteriorBtn();
   initAudio();
-  bindAllPanelCloses();
   window.__moduleReady = Object.assign(window.__moduleReady || {}, {
-    applyTimePreset, applyWeather, toggleAerial, switchPerfMode: window.switchPerfMode,
+    applyTimePreset, applyWeather, toggleAerial, rotateVillaGLB: window.rotateVillaGLB,
+    switchPerfMode: window.switchPerfMode,
   });
   (window._pendingCalls || []).forEach(({fn,args}) => {
     if(window.__moduleReady[fn]) window.__moduleReady[fn](...args);
@@ -137,535 +256,515 @@ document.addEventListener("DOMContentLoaded", () => {
   window._pendingCalls = [];
 });
 
-//           HERO CANVAS ANIMATION
+//           HERO CANVAS
 function bootLandingCanvas() {
   const canvas = document.getElementById("hero-canvas");
   if (!canvas) return;
   const ctx = canvas.getContext("2d");
-  let tick = 0;
-  let w = 0, h = 0;
-
+  let tick = 0, w = 0, h = 0;
   function resize() {
     const dpr = window.devicePixelRatio || 1;
     w = canvas.offsetWidth; h = canvas.offsetHeight;
-    canvas.width  = w * dpr;
-    canvas.height = h * dpr;
+    canvas.width = w * dpr; canvas.height = h * dpr;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
-
   function draw() {
     tick += 0.004;
-    const sky = ctx.createLinearGradient(0, 0, 0, h);
-    sky.addColorStop(0,    "#0d2218");
-    sky.addColorStop(0.55, "#0a1810");
-    sky.addColorStop(1,    "#070d08");
-    ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, w, h);
-
-    ctx.fillStyle = "rgba(255,248,220,0.7)";
-    for (let i = 0; i < 60; i++) {
-      const sx = ((i * 137.5) % w);
-      const sy = ((i * 91.3) % (h * 0.45));
-      const size = (Math.sin(tick * 2 + i) * 0.5 + 0.5) * 1.2 + 0.4;
-      ctx.beginPath();
-      ctx.arc(sx, sy, size, 0, Math.PI * 2);
-      ctx.fill();
+    const sky = ctx.createLinearGradient(0,0,0,h);
+    sky.addColorStop(0,"#0d2218"); sky.addColorStop(0.55,"#0a1810"); sky.addColorStop(1,"#070d08");
+    ctx.fillStyle=sky; ctx.fillRect(0,0,w,h);
+    ctx.fillStyle="rgba(255,248,220,0.7)";
+    for(let i=0;i<60;i++){
+      const sx=((i*137.5)%w), sy=((i*91.3)%(h*0.45));
+      const size=(Math.sin(tick*2+i)*0.5+0.5)*1.2+0.4;
+      ctx.beginPath(); ctx.arc(sx,sy,size,0,Math.PI*2); ctx.fill();
     }
-
-    const lakeGlow = ctx.createRadialGradient(w * 0.5, h * 0.22, 20, w * 0.5, h * 0.22, w * 0.38);
-    lakeGlow.addColorStop(0,   `rgba(30,130,170,${0.18 + Math.sin(tick * 3) * 0.04})`);
-    lakeGlow.addColorStop(1,   "rgba(0,0,0,0)");
-    ctx.fillStyle = lakeGlow;
-    ctx.fillRect(0, 0, w, h);
-
-    const ground = ctx.createLinearGradient(0, h * 0.52, 0, h);
-    ground.addColorStop(0, "rgba(22, 65, 40, 0.9)");
-    ground.addColorStop(1, "rgba(10, 30, 18, 1)");
-    ctx.fillStyle = ground;
-    ctx.beginPath();
-    ctx.moveTo(0, h * 0.52);
-    ctx.bezierCurveTo(w * 0.25, h * 0.48, w * 0.75, h * 0.56, w, h * 0.50);
-    ctx.lineTo(w, h);
-    ctx.lineTo(0, h);
-    ctx.closePath();
-    ctx.fill();
-
+    const ground=ctx.createLinearGradient(0,h*0.52,0,h);
+    ground.addColorStop(0,"rgba(22,65,40,0.9)"); ground.addColorStop(1,"rgba(10,30,18,1)");
+    ctx.fillStyle=ground;
+    ctx.beginPath(); ctx.moveTo(0,h*0.52);
+    ctx.bezierCurveTo(w*0.25,h*0.48,w*0.75,h*0.56,w,h*0.50);
+    ctx.lineTo(w,h); ctx.lineTo(0,h); ctx.closePath(); ctx.fill();
+    for(let i=0;i<14;i++){
+      const px=(i/13)*w, pBase=h*0.51+Math.sin(i*1.7)*h*0.03, pScale=0.7+Math.sin(i*0.9)*0.3;
+      drawPalmSilhouette(ctx,px,pBase,pScale,tick+i);
+    }
     requestAnimationFrame(draw);
   }
-
   window.addEventListener("resize", resize);
-  resize();
-  draw();
+  resize(); draw();
+}
+
+function drawPalmSilhouette(ctx,x,base,scale,phase){
+  const h_trunk=55*scale;
+  ctx.strokeStyle="rgba(8,22,14,0.9)"; ctx.lineWidth=2.5*scale;
+  ctx.beginPath(); ctx.moveTo(x,base);
+  const lean=Math.sin(phase*0.5)*4;
+  ctx.bezierCurveTo(x+lean,base-h_trunk*0.4,x+lean*1.5,base-h_trunk*0.7,x+lean*2,base-h_trunk);
+  ctx.stroke();
+  ctx.lineWidth=1.2*scale;
+  for(let i=0;i<7;i++){
+    const angle=(i/7)*Math.PI*2+phase*0.2;
+    ctx.beginPath(); ctx.moveTo(x+lean*2,base-h_trunk);
+    ctx.quadraticCurveTo(x+lean*2+Math.cos(angle)*22*scale,base-h_trunk+Math.sin(angle)*8*scale-10*scale,
+      x+lean*2+Math.cos(angle)*30*scale,base-h_trunk+Math.sin(angle)*18*scale);
+    ctx.stroke();
+  }
 }
 
 //           MASTERPLAN
 function bindMasterplan() {
-  const planImg  = document.getElementById("plan-image");
-  const zoneLayer = document.getElementById("zone-layer");
-  if (!planImg || !zoneLayer) return;
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("viewBox", "0 0 100 100");
-  svg.setAttribute("preserveAspectRatio", "none");
-  svg.style.cssText = "position:absolute;inset:0;width:100%;height:100%;cursor:crosshair;";
-
-  Object.entries(ZONES).forEach(([key, zone]) => {
-    const { l, t, w, h } = zone.hot;
-    const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-    rect.setAttribute("x", l); rect.setAttribute("y", t);
-    rect.setAttribute("width", w); rect.setAttribute("height", h);
-    rect.setAttribute("rx", "0.8");
-    rect.setAttribute("fill", zone.color + "28");
-    rect.setAttribute("stroke", zone.color);
-    rect.setAttribute("stroke-width", "0.4");
-    rect.style.cursor = "pointer"; rect.style.transition = "fill 0.2s";
-    const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    text.setAttribute("x", l + w / 2); text.setAttribute("y", t + h / 2 + 1);
-    text.setAttribute("text-anchor", "middle"); text.setAttribute("font-size", "2.2");
-    text.setAttribute("fill", "#f8f4e8"); text.setAttribute("font-family", "Inter, sans-serif");
-    text.setAttribute("font-weight", "500"); text.setAttribute("paint-order", "stroke");
-    text.setAttribute("stroke", "#0a1008"); text.setAttribute("stroke-width", "0.8");
-    text.setAttribute("pointer-events", "none"); text.textContent = zone.label;
-    rect.addEventListener("mouseenter", () => { rect.setAttribute("fill", zone.color + "55"); showZonePanel(key); });
-    rect.addEventListener("mouseleave", () => { rect.setAttribute("fill", zone.color + "28"); });
-    rect.addEventListener("click", () => { showZonePanel(key); if (zone.viewpoint) openWorldAt(zone.viewpoint); });
+  const planImg=document.getElementById("plan-image");
+  const zoneLayer=document.getElementById("zone-layer");
+  if(!planImg||!zoneLayer) return;
+  const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");
+  svg.setAttribute("viewBox","0 0 100 100");
+  svg.setAttribute("preserveAspectRatio","none");
+  svg.style.cssText="position:absolute;inset:0;width:100%;height:100%;cursor:crosshair;";
+  Object.entries(ZONES).forEach(([key,zone])=>{
+    const {l,t,w,h}=zone.hot;
+    const rect=document.createElementNS("http://www.w3.org/2000/svg","rect");
+    rect.setAttribute("x",l); rect.setAttribute("y",t);
+    rect.setAttribute("width",w); rect.setAttribute("height",h);
+    rect.setAttribute("rx","0.8");
+    rect.setAttribute("fill",zone.color+"28"); rect.setAttribute("stroke",zone.color);
+    rect.setAttribute("stroke-width","0.4");
+    rect.style.cursor="pointer"; rect.style.transition="fill 0.2s";
+    const text=document.createElementNS("http://www.w3.org/2000/svg","text");
+    text.setAttribute("x",l+w/2); text.setAttribute("y",t+h/2+1);
+    text.setAttribute("text-anchor","middle"); text.setAttribute("font-size","2.2");
+    text.setAttribute("fill","#f8f4e8"); text.setAttribute("font-family","Inter,sans-serif");
+    text.setAttribute("font-weight","500"); text.setAttribute("paint-order","stroke");
+    text.setAttribute("stroke","#0a1008"); text.setAttribute("stroke-width","0.8");
+    text.setAttribute("pointer-events","none"); text.textContent=zone.label;
+    rect.addEventListener("mouseenter",()=>{ rect.setAttribute("fill",zone.color+"55"); showZonePanel(key); });
+    rect.addEventListener("mouseleave",()=>{ rect.setAttribute("fill",zone.color+"28"); });
+    rect.addEventListener("click",()=>{ showZonePanel(key); if(zone.viewpoint) openWorldAt(zone.viewpoint); });
     svg.appendChild(rect); svg.appendChild(text);
   });
   zoneLayer.appendChild(svg);
 }
 
-//           NAV
+//           PLOT SYSTEM
 function bindPlotSystem() {
-  const canvas = document.getElementById("world-canvas");
-  if (!canvas) return;
+  const canvas=document.getElementById("world-canvas");
+  if(!canvas) return;
   canvas.addEventListener("click", e => {
-    if (!document.getElementById("world-overlay")?.classList.contains("open")) return;
-    const rect = canvas.getBoundingClientRect();
-    const mouse = new THREE.Vector2(
-      ((e.clientX - rect.left) / rect.width)  * 2 - 1,
-     -((e.clientY - rect.top)  / rect.height) * 2 + 1
+    if(!document.getElementById("world-overlay")?.classList.contains("open")) return;
+    const rect=canvas.getBoundingClientRect();
+    const mouse=new THREE.Vector2(
+      ((e.clientX-rect.left)/rect.width)*2-1,
+     -((e.clientY-rect.top)/rect.height)*2+1
     );
-    const raycaster = new THREE.Raycaster();
-    raycaster.setFromCamera(mouse, getCamera());
-    const plotKey = getPlotAtRay(raycaster);
-    if (plotKey) showPlotPanel(plotKey);
+    const raycaster=new THREE.Raycaster();
+    raycaster.setFromCamera(mouse,getCamera());
+    const plotKey=getPlotAtRay(raycaster);
+    if(plotKey) showPlotPanel(plotKey);
   });
 }
 
 function showPlotPanel(plotKey) {
-  const plot = plotRegistry.get(plotKey);
-  if (!plot) return;
-  const panel = document.getElementById("plot-panel");
-  if (!panel) return;
-  const [x, z] = plotKey.split(",").map(Number);
-  const side = x < 0 ? "West" : x === 0 ? "Centre" : "East";
-  const pos  = z < -50 ? "North" : z > 50 ? "South" : "Mid";
-  panel.querySelector(".plot-id").textContent      = `Plot ${plotKey}`;
-  panel.querySelector(".plot-location").textContent = `${pos} ${side}     Premium Villa`;
-  panel.querySelector(".plot-status").textContent   = plot.status === "available" ? "Available" : "Reserved";
-  panel.querySelector(".plot-status").className     = "plot-status " + plot.status;
-  const btn = panel.querySelector(".plot-reserve-btn");
-  btn.disabled    = plot.status !== "available";
-  btn.textContent = plot.status === "available" ? "Reserve This Plot" : "Already Reserved";
-  btn.onclick = () => {
-    if (reservePlot(plotKey)) {
-      showPlotPanel(plotKey);
-      showNotification("Plot reserved! Our team will contact you within 24 hours.");
-    }
-  };
+  const plot=plotRegistry.get(plotKey);
+  if(!plot) return;
+  const panel=document.getElementById("plot-panel");
+  if(!panel) return;
+  const [x,z]=plotKey.split(",").map(Number);
+  const side=x<0?"West":x===0?"Centre":"East";
+  const pos=z<-50?"North":z>50?"South":"Mid";
+  panel.querySelector(".plot-id").textContent       = `Plot ${plotKey}`;
+  panel.querySelector(".plot-location").textContent = `${pos} ${side}  —  Premium Villa`;
+  panel.querySelector(".plot-status").textContent   = plot.status==="available"?"Available":"Reserved";
+  panel.querySelector(".plot-status").className     = "plot-status "+plot.status;
+  const btn=panel.querySelector(".plot-reserve-btn");
+  btn.disabled    = plot.status!=="available";
+  btn.textContent = plot.status==="available"?"Reserve This Plot":"Already Reserved";
+  btn.onclick=()=>{ if(reservePlot(plotKey)){ showPlotPanel(plotKey); showNotification("Plot reserved! Our team will contact you within 24 hours."); }};
   panel.classList.add("visible");
-  
-  const closeBtn = document.getElementById("plot-panel-close");
-  if (closeBtn) {
-    const closeHandler = e => {
-      e.stopImmediatePropagation();
-      panel.classList.remove("visible");
-      closeBtn.removeEventListener('click', closeHandler, true);
-    };
-    closeBtn.addEventListener('click', closeHandler, { capture: true, once: true });
+  // Highlight overlay briefly
+  highlightPlot(plotKey);
+
+  // Close button — guaranteed immediate
+  const closeBtn=document.getElementById("plot-panel-close");
+  if(closeBtn){
+    const handler=e=>{ e.stopImmediatePropagation(); panel.classList.remove("visible"); highlightPlot(null); closeBtn.removeEventListener('click',handler,true); };
+    closeBtn.addEventListener('click',handler,{capture:true,once:true});
   }
 }
 
 function showNotification(msg) {
-  const n = document.getElementById("notification");
-  if (!n) return;
-  n.textContent = msg; n.classList.add("show");
-  setTimeout(() => n.classList.remove("show"), 4500);
+  const n=document.getElementById("notification");
+  if(!n) return;
+  n.textContent=msg; n.classList.add("show");
+  setTimeout(()=>n.classList.remove("show"),4500);
 }
 
-window.closeWorldAndPlot = function() {
+window.closeWorldAndPlot=function(){
   document.getElementById("plot-panel")?.classList.remove("visible");
   document.getElementById("world-overlay")?.classList.remove("open");
-  document.body.style.overflow = "";
+  document.body.style.overflow="";
 };
 
 function bindNav() {
-  document.querySelectorAll("[data-section]").forEach(link => {
-    link.addEventListener("click", e => {
+  document.querySelectorAll("[data-section]").forEach(link=>{
+    link.addEventListener("click",e=>{
       e.preventDefault();
-      const target = document.getElementById(link.dataset.section);
-      if (target) target.scrollIntoView({ behavior: "smooth" });
+      document.getElementById(link.dataset.section)?.scrollIntoView({behavior:"smooth"});
     });
   });
-  document.querySelectorAll(".btn-explore").forEach(btn => {
-    btn.addEventListener("click", () => document.getElementById("masterplan").scrollIntoView({ behavior: "smooth" }));
+  document.querySelectorAll(".btn-explore").forEach(btn=>{
+    btn.addEventListener("click",()=>document.getElementById("masterplan").scrollIntoView({behavior:"smooth"}));
   });
-  document.querySelectorAll(".btn-enter-3d").forEach(btn => {
-    btn.addEventListener("click", () => openWorldAt("field_centre"));
+  document.querySelectorAll(".btn-enter-3d").forEach(btn=>{
+    btn.addEventListener("click",()=>openWorldAt("field_centre"));
   });
 }
 
 //           WORLD ENTRY
 async function openWorldAt(viewKey) {
-  currentViewKey = viewKey;
-  const vp = VIEWPOINTS[viewKey] || VIEWPOINTS.field_centre;
+  currentViewKey=viewKey;
+  const vp=VIEWPOINTS[viewKey]||VIEWPOINTS.field_centre;
+  showLoading(); setLoadingProgress(10);
 
-  showLoading();
-  setLoadingProgress(10);
-
-  if (!sceneReady) {
-    const canvas3d = document.getElementById("world-canvas");
+  if(!sceneReady){
+    const canvas3d=document.getElementById("world-canvas");
     initScene(canvas3d);
     setLoadingProgress(40);
-    initControls(getCamera(), getRenderer());
+    initControls(getCamera(),getRenderer());
     setLoadingProgress(70);
     initMinimap("assets/plan-2d.png");
     setLoadingProgress(85);
-    composer = initPostProcessing(getRenderer(), getScene(), getCamera());
+    composer=initPostProcessing(getRenderer(),getScene(),getCamera());
+    // Apply Fast mode to graphics immediately
+    setPerfModeGraphics('fast');
     setLoadingProgress(90);
-
-    showVRButton(() => {
-      enterVR(getRenderer(), getScene(), getCamera(), getClock(), tick => {
+    showVRButton(()=>{
+      enterVR(getRenderer(),getScene(),getCamera(),getClock(),tick=>{
         updateControls(tick);
-        updateMinimap(getCamera().position.x, getCamera().position.z, getYaw());
-        updateSpatialAudio(getCamera().position.x, getCamera().position.z);
+        updateMinimap(getCamera().position.x,getCamera().position.z,getYaw());
+        updateSpatialAudio(getCamera().position.x,getCamera().position.z);
       });
     });
-
-    buildViewpointStrip(
-      document.getElementById("viewpoint-strip"),
-      (key, vp) => teleportTo(key, vp)
-    );
-
-    sceneReady = true;
-    setLoadingProgress(100);
+    buildViewpointStrip(document.getElementById("viewpoint-strip"),(key,vp)=>teleportTo(key,vp));
+    sceneReady=true; setLoadingProgress(100);
   }
 
-  await new Promise(r => setTimeout(r, 300));
+  await new Promise(r=>setTimeout(r,300));
   hideLoading();
-
-  const overlay = document.getElementById("world-overlay");
+  const overlay=document.getElementById("world-overlay");
   overlay.classList.add("open");
-  document.body.style.overflow = "hidden";
-
+  document.body.style.overflow="hidden";
+  injectPerfToggle();
+  injectModeToggle();
   resizeWorld();
-  window.addEventListener("resize", resizeWorld);
+  window.addEventListener("resize",resizeWorld);
 
-  if (viewKey === "field_centre" && !introPlaying) {
+  if(viewKey==="field_centre"&&!introPlaying){
     await cinematicIntro();
   } else {
-    const pos = vp.pos;
-    setView(pos, vp.yaw, vp.pitch || 0);
+    setView(vp.pos,vp.yaw,vp.pitch||0);
     setCaption(vp.caption);
   }
 
-  if (horseMode) {
-    const cam = getCamera();
-    cam.position.y = RIDER_EYE_HEIGHT;
-  }
+  // Set riding eye height
+  const cam=getCamera();
+  cam.position.y=RIDER_EYE_HEIGHT;
 
   activate();
-
-  if (isMobile()) {
-    showJoystick();
-    showEnterPrompt("Drag right to look    Left joystick to walk");
+  if(isMobile()){
+    showJoystick(); // pinned bottom-left by ui.js
+    showEnterPrompt("Drag right to look  •  Joystick to move");
   } else {
-    showEnterPrompt("Click to lock cursor    WASD / arrows to walk    Shift to sprint");
+    showEnterPrompt("Click to lock cursor  •  WASD to walk  •  Shift to sprint");
   }
-
   enableAudio();
   startRenderLoop();
 }
 
-async function cinematicIntro() {
-  introPlaying = true;
-  const introVp = VIEWPOINTS.intro;
-  setView(introVp.pos, introVp.yaw, introVp.pitch);
+async function cinematicIntro(){
+  introPlaying=true;
+  const introVp=VIEWPOINTS.intro;
+  setView(introVp.pos,introVp.yaw,introVp.pitch);
   setCaption(introVp.caption);
-
-  const targetVp = VIEWPOINTS.field_centre;
-  const startPos = [...introVp.pos];
-  const endPos   = targetVp.pos;
-  const duration = 3800;
-  const start    = performance.now();
-
-  await new Promise(resolve => {
-    function ease(t) { return t < 0.5 ? 2*t*t : -1+(4-2*t)*t; }
-    function step(now) {
-      const t = Math.min((now - start) / duration, 1);
-      const e = ease(t);
-      const cam = getCamera();
-      cam.position.x = startPos[0] + (endPos[0] - startPos[0]) * e;
-      cam.position.y = startPos[1] + (endPos[1] - startPos[1]) * e;
-      cam.position.z = startPos[2] + (endPos[2] - startPos[2]) * e;
-      const startP = introVp.pitch;
-      const camPitch = startP + (0 - startP) * e;
-      cam.rotation.order = "YXZ";
-      cam.rotation.x = camPitch;
-      cam.rotation.y = introVp.yaw + (targetVp.yaw - introVp.yaw) * e;
-      if (t < 1) requestAnimationFrame(step);
-      else resolve();
+  const targetVp=VIEWPOINTS.field_centre;
+  const startPos=[...introVp.pos], endPos=targetVp.pos;
+  const duration=3800, start=performance.now();
+  await new Promise(resolve=>{
+    function ease(t){return t<0.5?2*t*t:-1+(4-2*t)*t;}
+    function step(now){
+      const t=Math.min((now-start)/duration,1), e=ease(t);
+      const cam=getCamera();
+      cam.position.x=startPos[0]+(endPos[0]-startPos[0])*e;
+      cam.position.y=startPos[1]+(endPos[1]-startPos[1])*e;
+      cam.position.z=startPos[2]+(endPos[2]-startPos[2])*e;
+      cam.rotation.order="YXZ";
+      cam.rotation.x=introVp.pitch+(0-introVp.pitch)*e;
+      cam.rotation.y=introVp.yaw+(targetVp.yaw-introVp.yaw)*e;
+      if(t<1) requestAnimationFrame(step); else resolve();
     }
     requestAnimationFrame(step);
   });
-
-  setView(endPos, targetVp.yaw, 0);
+  setView(endPos,targetVp.yaw,0);
   setCaption(targetVp.caption);
 }
 
-function toggleAerial(btn) {
-  aerialOrbit = !aerialOrbit;
-  if (aerialOrbit) {
-    btn && btn.classList.add("active");
+function toggleAerial(btn){
+  aerialOrbit=!aerialOrbit;
+  if(aerialOrbit){
+    btn&&btn.classList.add("active");
     deactivate();
-    aerialAngle = 0; aerialYawOffset = 0; aerialPitch = -Math.PI / 2.5;
-    setCaption("Aerial view     hover orbits automatically    drag to steer");
+    aerialAngle=0; aerialYawOffset=0; aerialPitch=-Math.PI/2.5;
+    setCaption("Aerial view — orbits automatically — drag to steer");
     bindAerialPointer();
   } else {
-    btn && btn.classList.remove("active");
+    btn&&btn.classList.remove("active");
     unbindAerialPointer();
     activate();
-    teleportTo("field_centre", VIEWPOINTS.field_centre);
+    teleportTo("field_centre",VIEWPOINTS.field_centre);
   }
 }
 
-function bindAerialPointer() {
-  const el = getRenderer()?.domElement;
-  if (!el) return;
-  el.addEventListener("mousedown",  aerialMouseDown,  { passive:true });
-  el.addEventListener("mousemove",  aerialMouseMove,  { passive:true });
-  el.addEventListener("mouseup",    aerialMouseUp,    { passive:true });
-  el.addEventListener("touchstart", aerialTouchStart, { passive:true });
-  el.addEventListener("touchmove",  aerialTouchMove,  { passive:false });
-  el.addEventListener("touchend",   aerialMouseUp,    { passive:true });
+function bindAerialPointer(){
+  const el=getRenderer()?.domElement; if(!el) return;
+  el.addEventListener("mousedown",aerialMouseDown,{passive:true});
+  el.addEventListener("mousemove",aerialMouseMove,{passive:true});
+  el.addEventListener("mouseup",aerialMouseUp,{passive:true});
+  el.addEventListener("touchstart",aerialTouchStart,{passive:true});
+  el.addEventListener("touchmove",aerialTouchMove,{passive:false});
+  el.addEventListener("touchend",aerialMouseUp,{passive:true});
 }
-function unbindAerialPointer() {
-  const el = getRenderer()?.domElement;
-  if (!el) return;
-  el.removeEventListener("mousedown",  aerialMouseDown);
-  el.removeEventListener("mousemove",  aerialMouseMove);
-  el.removeEventListener("mouseup",    aerialMouseUp);
-  el.removeEventListener("touchstart", aerialTouchStart);
-  el.removeEventListener("touchmove",  aerialTouchMove);
-  el.removeEventListener("touchend",   aerialMouseUp);
+function unbindAerialPointer(){
+  const el=getRenderer()?.domElement; if(!el) return;
+  el.removeEventListener("mousedown",aerialMouseDown);
+  el.removeEventListener("mousemove",aerialMouseMove);
+  el.removeEventListener("mouseup",aerialMouseUp);
+  el.removeEventListener("touchstart",aerialTouchStart);
+  el.removeEventListener("touchmove",aerialTouchMove);
+  el.removeEventListener("touchend",aerialMouseUp);
 }
-function aerialMouseDown(e)  { aerialDragging=true; aerialLastX=e.clientX; aerialLastY=e.clientY; }
-function aerialMouseUp()     { aerialDragging=false; }
-function aerialMouseMove(e)  {
-  if (!aerialDragging) return;
-  aerialYawOffset -= (e.clientX - aerialLastX) * 0.004;
-  aerialPitch = Math.max(-Math.PI*0.9, Math.min(-0.15, aerialPitch - (e.clientY - aerialLastY) * 0.003));
+function aerialMouseDown(e){aerialDragging=true;aerialLastX=e.clientX;aerialLastY=e.clientY;}
+function aerialMouseUp(){aerialDragging=false;}
+function aerialMouseMove(e){
+  if(!aerialDragging) return;
+  aerialYawOffset-=(e.clientX-aerialLastX)*0.004;
+  aerialPitch=Math.max(-Math.PI*0.9,Math.min(-0.15,aerialPitch-(e.clientY-aerialLastY)*0.003));
   aerialLastX=e.clientX; aerialLastY=e.clientY;
 }
-function aerialTouchStart(e) { const t=e.touches[0]; aerialDragging=true; aerialLastX=t.clientX; aerialLastY=t.clientY; }
-function aerialTouchMove(e) {
+function aerialTouchStart(e){const t=e.touches[0];aerialDragging=true;aerialLastX=t.clientX;aerialLastY=t.clientY;}
+function aerialTouchMove(e){
   e.preventDefault();
   const t=e.touches[0];
-  aerialYawOffset -= (t.clientX - aerialLastX) * 0.004;
-  aerialPitch = Math.max(-Math.PI*0.9, Math.min(-0.15, aerialPitch - (t.clientY - aerialLastY) * 0.003));
+  aerialYawOffset-=(t.clientX-aerialLastX)*0.004;
+  aerialPitch=Math.max(-Math.PI*0.9,Math.min(-0.15,aerialPitch-(t.clientY-aerialLastY)*0.003));
   aerialLastX=t.clientX; aerialLastY=t.clientY;
 }
-window.toggleAerial = toggleAerial;
+window.toggleAerial=toggleAerial;
 
-function teleportTo(key, vp) {
-  setView(vp.pos, vp.yaw, vp.pitch || 0);
+function teleportTo(key,vp){
+  setView(vp.pos,vp.yaw,vp.pitch||0);
   setCaption(vp.caption);
-  if (vp.zoneKey) showZonePanel(vp.zoneKey);
-  else hideZonePanel();
+  if(vp.zoneKey) showZonePanel(vp.zoneKey); else hideZonePanel();
 }
 
-//           EXIT WORLD
-function bindExitButton() {
-  document.getElementById("btn-close-world")?.addEventListener("click", closeWorld, { capture: true });
-  document.addEventListener("keydown", e => {
-    if (e.key === "Escape" && document.getElementById("world-overlay")?.classList.contains("open")) {
-      if (document.pointerLockElement) document.exitPointerLock();
+//           EXIT
+function bindExitButton(){
+  document.getElementById("btn-close-world")?.addEventListener("click",closeWorld,{capture:true});
+  document.addEventListener("keydown",e=>{
+    if(e.key==="Escape"&&document.getElementById("world-overlay")?.classList.contains("open")){
+      if(document.pointerLockElement) document.exitPointerLock();
       else closeWorld();
     }
   });
 }
 
-function closeWorld() {
-  deactivate();
-  hideJoystick();
+function closeWorld(){
+  deactivate(); hideJoystick();
   document.getElementById("world-overlay")?.classList.remove("open");
-  document.getElementById("plot-panel")?.classList.remove("visible");  // also close any open panel
-  document.body.style.overflow = "";
-  if (animFrameId) { cancelAnimationFrame(animFrameId); animFrameId = null; }
-  window.removeEventListener("resize", resizeWorld);
+  document.getElementById("plot-panel")?.classList.remove("visible");
+  document.body.style.overflow="";
+  if(animFrameId){cancelAnimationFrame(animFrameId);animFrameId=null;}
+  window.removeEventListener("resize",resizeWorld);
 }
 
 //           RENDER LOOP
-function startRenderLoop() {
-  if (animFrameId) cancelAnimationFrame(animFrameId);
-  const renderer = getRenderer();
-  const scene    = getScene();
-  const camera   = getCamera();
-  const clock    = getClock();
-  const startTime = performance.now();
+function startRenderLoop(){
+  if(animFrameId) cancelAnimationFrame(animFrameId);
+  const clock=getClock();
+  const startTime=performance.now();
 
-  function frame() {
-    animFrameId = requestAnimationFrame(frame);
-    const delta   = Math.min(clock.getDelta(), 0.033);
-    const elapsed = (performance.now() - startTime) / 1000;
+  function frame(){
+    animFrameId=requestAnimationFrame(frame);
+    const delta=Math.min(clock.getDelta(),0.033);
+    const elapsed=(performance.now()-startTime)/1000;
+    const camera=getCamera();
 
-    if (aerialOrbit) {
-      aerialAngle += AERIAL_SPEED * delta;
-      const totalAngle = aerialAngle + aerialYawOffset;
-      camera.position.x = Math.sin(totalAngle) * AERIAL_RADIUS;
-      camera.position.z = Math.cos(totalAngle) * AERIAL_RADIUS;
-      camera.position.y = AERIAL_HEIGHT;
-      camera.lookAt(0, 0, 0);
-      camera.rotation.x = aerialPitch;
+    if(aerialOrbit){
+      aerialAngle+=AERIAL_SPEED*delta;
+      const totalAngle=aerialAngle+aerialYawOffset;
+      camera.position.x=Math.sin(totalAngle)*AERIAL_RADIUS;
+      camera.position.z=Math.cos(totalAngle)*AERIAL_RADIUS;
+      camera.position.y=AERIAL_HEIGHT;
+      camera.lookAt(0,0,0);
+      camera.rotation.x=aerialPitch;
     } else {
       updateControls(delta);
 
-      if (horseMode) {
-        camera.position.y += (RIDER_EYE_HEIGHT - camera.position.y) * Math.min(delta * 12, 1);
+      // Smooth eye height — interpolates to target without fighting controls.js.
+      // Key fix: we only SET Y here, never both read AND write in a lerp loop.
+      _currentEyeY += (_targetEyeY - _currentEyeY) * Math.min(delta * 6, 1);
+      // Only override Y when in ride mode (walk mode: let controls.js handle Y)
+      if (moveMode === 'ride') {
+        camera.position.y = _currentEyeY;
       }
 
-      const moved = Math.abs(camera.position.x - _prevCamX) > 0.01 || Math.abs(camera.position.z - _prevCamZ) > 0.01;
+      // Detect movement for animation speed
+      const moved = Math.abs(camera.position.x - _prevCamX) > 0.008 ||
+                    Math.abs(camera.position.z - _prevCamZ) > 0.008;
       _prevCamX = camera.position.x;
       _prevCamZ = camera.position.z;
 
-      setHorsePosition(camera.position.x, 0, camera.position.z, getYaw());
-      tickHorseAnim(delta, moved);
+      if (moveMode === 'ride') {
+        if (window.horseViewMode === 'first') {
+          // First-person ride: horse in front of camera
+          setHorsePosition(camera.position.x, camera.position.z, camera.rotation.y);
+        } else {
+          // Third-person: camera orbits 5.5m behind, 2.4m above horse
+          const { back, up } = getThirdPersonCameraOffset();
+          const yaw = camera.rotation.y;
+          // Horse stays at its own ground position; camera follows
+          setHorsePosition(camera.position.x, camera.position.z, yaw);
+          camera.position.x += Math.sin(yaw) * back;
+          camera.position.z += Math.cos(yaw) * back;
+          camera.position.y = _currentEyeY + up;
+        }
+        tickHorseAnim(delta, moved);
+      } else {
+        // Walk mode: hide horse below ground (don't remove from scene, just park it)
+        setHorsePosition(camera.position.x, camera.position.z - 9999, camera.rotation.y);
+      }
     }
 
-    tickScene(elapsed, camera);
-    updateMinimap(camera.position.x, camera.position.z, getYaw());
-    updateSpatialAudio(camera.position.x, camera.position.z);
-    
-    // OPTIMIZATION: Bypass EffectComposer completely in fast mode
-    if (window.PERF_MODE === 'fast' || !composer) {
-      renderer.render(scene, camera);
-    } else {
-      renderFrame();
-    }
+    tickScene(elapsed,camera);
+    updateMinimap(camera.position.x,camera.position.z,getYaw());
+    updateSpatialAudio(camera.position.x,camera.position.z);
+    renderFrame(); // Fast mode = direct renderer.render(); Balanced/Rich = EffectComposer
   }
 
   frame();
 }
 
-function resizeWorld() {
-  const renderer = getRenderer();
-  const camera   = getCamera();
-  if (!renderer || !camera) return;
-  const canvas = document.getElementById("world-canvas");
-  const w = canvas.parentElement.clientWidth;
-  const h = canvas.parentElement.clientHeight;
-  renderer.setSize(w, h);
-  camera.aspect = w / h;
-  camera.updateProjectionMatrix();
-  resizeComposer(w, h);
+function resizeWorld(){
+  const renderer=getRenderer(), camera=getCamera();
+  if(!renderer||!camera) return;
+  const canvas=document.getElementById("world-canvas");
+  const w=canvas.parentElement.clientWidth, h=canvas.parentElement.clientHeight;
+  renderer.setSize(w,h); camera.aspect=w/h; camera.updateProjectionMatrix();
+  resizeComposer(w,h);
 }
 
-//           SCROLL ANIMATIONS
-function bindSectionScrollAnim() {
-  const io = new IntersectionObserver((entries) => {
-    entries.forEach(e => { if (e.isIntersecting) e.target.classList.add("in-view"); });
-  }, { threshold: 0.12 });
-  document.querySelectorAll(".anim-fade").forEach(el => io.observe(el));
+//           SCROLL ANIM
+function bindSectionScrollAnim(){
+  const io=new IntersectionObserver(entries=>{
+    entries.forEach(e=>{if(e.isIntersecting) e.target.classList.add("in-view");});
+  },{threshold:0.12});
+  document.querySelectorAll(".anim-fade").forEach(el=>io.observe(el));
 }
 
-//           VILLA INTERIOR (INTEGRATED INTO MAIN WORLD)
-let isVillaBuiltInWorld = false;
-
-function bindVillaInteriorBtn() {
-  document.addEventListener("click", e => {
-    const enterBtn = e.target.closest(".residence-card-btn");
-    const card = enterBtn?.closest(".residence-card");
-    if (enterBtn && card?.querySelector(".residence-card-type")?.textContent?.includes("3 Bed")) {
+//           VILLA INTERIOR
+function bindVillaInteriorBtn(){
+  document.addEventListener("click",e=>{
+    const enterBtn=e.target.closest(".residence-card-btn");
+    const card=enterBtn?.closest(".residence-card");
+    if(enterBtn&&card?.querySelector(".residence-card-type")?.textContent?.includes("3 Bed")){
       openVillaInterior(); return;
     }
-    const tab = e.target.closest(".plan-tab");
-    if (tab) {
-      document.querySelectorAll(".plan-tab").forEach(t => t.classList.remove("active"));
+    const tab=e.target.closest(".plan-tab");
+    if(tab){
+      document.querySelectorAll(".plan-tab").forEach(t=>t.classList.remove("active"));
       tab.classList.add("active");
-      const plan = tab.dataset.plan;
-      document.querySelectorAll(".plan-rooms").forEach(r => r.classList.add("hidden"));
-      document.getElementById("plan-" + plan)?.classList.remove("hidden");
+      document.querySelectorAll(".plan-rooms").forEach(r=>r.classList.add("hidden"));
+      document.getElementById("plan-"+tab.dataset.plan)?.classList.remove("hidden");
       return;
     }
-    const room = e.target.closest(".plan-room");
-    if (room?.dataset.key) {
+    const room=e.target.closest(".plan-room");
+    if(room?.dataset.key){
       teleportVillaTo(room.dataset.key);
-      document.querySelectorAll(".plan-room").forEach(r => r.classList.remove("active"));
+      document.querySelectorAll(".plan-room").forEach(r=>r.classList.remove("active"));
       room.classList.add("active");
-      return;
     }
   });
-  document.getElementById("btn-close-villa")?.addEventListener("click", closeVillaInterior, { capture: true });
+  document.getElementById("btn-close-villa")?.addEventListener("click",closeVillaInterior,{capture:true});
 }
 
-function openVillaInterior() {
-  const overlay = document.getElementById("villa-overlay");
-  if (!overlay) return;
-  
-  // Make the UI overlay transparent and hide the black canvas so the real world shows through
-  overlay.style.background = "transparent";
-  const vCanvas = document.getElementById("villa-canvas");
-  if (vCanvas) vCanvas.style.display = "none";
-  
+function openVillaInterior(){
+  const overlay=document.getElementById("villa-overlay");
+  if(!overlay) return;
   overlay.classList.add("open");
-
-  // Physically spawn the interior walls into the main scene at the North Villa coordinates
-  if (!isVillaBuiltInWorld) {
-    const intGroup = new THREE.Group();
-    intGroup.position.set(0, 0.1, -132); // Exact North Villa plot
-    getScene().add(intGroup);
-    buildVillaInterior(intGroup);
-    isVillaBuiltInWorld = true;
+  document.body.style.overflow="hidden";
+  if(!villaScene){
+    const canvas=document.getElementById("villa-canvas");
+    if(!canvas) return;
+    villaRenderer=new THREE.WebGLRenderer({canvas,antialias:false,powerPreference:"high-performance"});
+    villaRenderer.setPixelRatio(Math.min(window.devicePixelRatio||1,1.5));
+    villaRenderer.shadowMap.enabled=true;
+    villaRenderer.shadowMap.type=THREE.PCFSoftShadowMap;
+    villaRenderer.toneMapping=THREE.ACESFilmicToneMapping;
+    villaRenderer.toneMappingExposure=1.1;
+    villaRenderer.outputColorSpace=THREE.SRGBColorSpace;
+    villaScene=new THREE.Scene();
+    villaScene.background=new THREE.Color(0x7ab4d4);
+    villaScene.fog=new THREE.FogExp2(0x9ac5d4,0.025);
+    buildVillaInterior(villaScene);
   }
-
   teleportVillaTo("approach");
-  activate();
-  buildVillaStrip();
+  activate(); resizeVilla();
+  window.addEventListener("resize",resizeVilla);
+  startVillaLoop(); buildVillaStrip();
 }
 
-function closeVillaInterior() {
+function closeVillaInterior(){
   document.getElementById("villa-overlay")?.classList.remove("open");
-  // Return to the main field when exiting the house
-  teleportTo("field_centre", VIEWPOINTS.field_centre);
+  document.body.style.overflow="";
+  deactivate();
+  window.removeEventListener("resize",resizeVilla);
+  if(villaAnimId){cancelAnimationFrame(villaAnimId);villaAnimId=null;}
 }
 
-function teleportVillaTo(key) {
-  const vp = VILLA_VIEWPOINTS.find(v => v.key === key);
-  if (!vp) return;
-  
-  // Translate the local interior coordinates to physical world coordinates
-  const worldX = vp.pos[0];
-  const worldY = vp.pos[1];
-  const worldZ = vp.pos[2] - 132;
-  const worldYaw = vp.yaw + Math.PI; // Look the correct direction
+let villaAnimId=null;
 
-  setView([worldX, worldY, worldZ], worldYaw, vp.pitch || 0);
-  setCaption(vp.caption || vp.label);
-  
-  document.querySelectorAll(".vp-floor-btn").forEach(b => {
-    b.classList.toggle("active", b.dataset.key === key);
-  });
+function startVillaLoop(){
+  if(villaAnimId) cancelAnimationFrame(villaAnimId);
+  const cam=getCamera();
+  function frame(){
+    villaAnimId=requestAnimationFrame(frame);
+    const delta=Math.min(getClock().getDelta(),0.033);
+    updateControls(delta);
+    if(villaRenderer&&villaScene) villaRenderer.render(villaScene,cam);
+  }
+  frame();
 }
 
-function buildVillaStrip() {
-  const strip = document.getElementById("villa-vp-strip");
-  if (!strip) return;
-  strip.innerHTML = "";
-  VILLA_VIEWPOINTS.forEach(vp => {
-    const btn = document.createElement("button");
-    btn.className = "vp-btn vp-floor-btn";
-    btn.dataset.key = vp.key;
-    btn.innerHTML = `<span class="vp-label">${vp.label}</span>`;
-    btn.addEventListener("click", () => teleportVillaTo(vp.key));
+function resizeVilla(){
+  const canvas=document.getElementById("villa-canvas");
+  if(!canvas||!villaRenderer) return;
+  const w=canvas.parentElement.clientWidth, h=canvas.parentElement.clientHeight;
+  villaRenderer.setSize(w,h);
+  const cam=getCamera(); cam.aspect=w/h; cam.updateProjectionMatrix();
+}
+
+function teleportVillaTo(key){
+  const vp=VILLA_VIEWPOINTS.find(v=>v.key===key); if(!vp) return;
+  setView(vp.pos,vp.yaw,0); setCaption(vp.caption||vp.label);
+  document.querySelectorAll(".vp-floor-btn").forEach(b=>b.classList.toggle("active",b.dataset.key===key));
+}
+
+function buildVillaStrip(){
+  const strip=document.getElementById("villa-vp-strip"); if(!strip) return;
+  strip.innerHTML="";
+  VILLA_VIEWPOINTS.forEach(vp=>{
+    const btn=document.createElement("button");
+    btn.className="vp-btn vp-floor-btn"; btn.dataset.key=vp.key;
+    btn.innerHTML=`<span class="vp-label">${vp.label}</span>`;
+    btn.addEventListener("click",()=>teleportVillaTo(vp.key));
     strip.appendChild(btn);
   });
 }
