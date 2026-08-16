@@ -130,18 +130,39 @@ export function tickHorseAnim(delta, isMoving) {
     horseMixer.update(delta);
   }
 }
+export let horseViewMode = 'first';
+
+// Listen for the 'V' key to toggle camera views
+window.addEventListener('keydown', (e) => {
+  if (e.key.toLowerCase() === 'v' && document.getElementById('world-overlay').classList.contains('open')) {
+    horseViewMode = horseViewMode === 'first' ? 'third' : 'first';
+  }
+});
+
 export function setHorsePosition(x, y, z, yaw) {
   if (!horseGroup) return;
-  // Offset the horse so the camera is in the saddle, not inside its neck
-  // Push horse forward (Z) and down (Y) relative to the camera's yaw
-  const forwardOffset = 1.2;
-  const downOffset = -1.8;
+  
+  let forwardOffset = 0;
+  let downOffset = 0;
+
+  if (horseViewMode === 'first') {
+    // 1st Person: Horse is right under you, showing the mane
+    forwardOffset = 0.8;
+    downOffset = -1.8; 
+  } else {
+    // 3rd Person: Horse is pushed forward so you can see the whole body
+    forwardOffset = 4.5;
+    downOffset = -2.5; 
+  }
+
+  // Calculate the new X/Z position relative to where the camera is looking
   horseGroup.position.set(
-    x + Math.sin(yaw) * forwardOffset, 
+    x - Math.sin(yaw) * forwardOffset, 
     y + downOffset, 
-    z + Math.cos(yaw) * forwardOffset
+    z - Math.cos(yaw) * forwardOffset
   );
-  horseGroup.rotation.y = yaw;
+  // Keep the horse facing forward
+  horseGroup.rotation.y = yaw + Math.PI; 
 }
 
 export function getHorseGroup() { return horseGroup; }
@@ -951,17 +972,7 @@ function addTreeAt(x,y,z,scale=1){
 }
 
 function addLandscaping(){
-  // Reduce palm count in Fast mode (every other position)
-  const palmStep = PERF_MODE === 'fast' ? 20 : 10;
-  for(let x=-280;x<=280;x+=28){ addPalmSprite(x,.1,206,1.3); addPalmSprite(x,.1,224,1.2); }
-  for(let z=-95;z<=95;z+=40){ addPalmSprite(-160,.1,z,1.1); addPalmSprite(160,.1,z,1.1); }
-  for(let x=-150;x<=150;x+=40){ addPalmSprite(x,.1,-102,1.1); addPalmSprite(x,.1,102,1.1); }
-  for(let x=-310;x<=310;x+=18){ addTreeAt(x,.1,-210,.8+Math.random()*.5); }
-  for(let x=-300;x<=300;x+=35){ addPalmSprite(x,.1,-225,.9+Math.random()*.3); addPalmSprite(x,.1,215,.9+Math.random()*.3); }
-  for(let z=-220;z<=215;z+=35){ addPalmSprite(-310,.1,z,.9+Math.random()*.25); addPalmSprite(310,.1,z,.9+Math.random()*.25); }
-  for(const pz of[95,103,111,119]){ addPalmSprite(-16,.1,pz,1.2); addPalmSprite(16,.1,pz,1.2); }
-  for(let tx=240;tx<=290;tx+=7) for(let tz=-80;tz<=-20;tz+=7) addTreeAt(tx,.1,tz,.7+Math.random()*.6);
-  [[-400,78],[-400,100],[-340,78],[-340,100]].forEach(([x,z])=>addPalmSprite(x,.1,z,1.1));
+  return; // TEMPORARILY DISABLED TO FOCUS ON MOVEMENT PERFORMANCE
 }
 
 //        TICK
