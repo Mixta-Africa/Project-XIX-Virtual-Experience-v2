@@ -492,7 +492,7 @@ function loadOneGLB(path, scale, yOff, onDone, onFail) {
       gltf.scene.scale.setScalar(scale);
       gltf.scene.traverse(child => {
         if (child.isMesh) {
-          child.castShadow = true;
+          child.castShadow = false; // Optimization: Static buildings do not cast dynamic shadows
           child.receiveShadow = true;
           child.frustumCulled = true;
         }
@@ -538,7 +538,7 @@ function loadVillaGLB(){
       gltf.scene.scale.setScalar(VILLA_SCALE);
       gltf.scene.traverse(c=>{
         if(c.isMesh){
-          c.castShadow=true; c.receiveShadow=true;
+          c.castShadow=false; c.receiveShadow=true;
           if(c.material){ c.material.envMapIntensity=0.4; c.material.needsUpdate=true; }
         }
       });
@@ -566,7 +566,7 @@ function loadApartmentGLB(){
     gltf=>{
       gltf.scene.scale.setScalar(APT_SCALE);
       gltf.scene.traverse(c=>{
-        if(c.isMesh){ c.castShadow=true; c.receiveShadow=true;
+        if(c.isMesh){ c.castShadow=false; c.receiveShadow=true;
           if(c.material){ c.material.envMapIntensity=0.3; c.material.needsUpdate=true; }
         }
       });
@@ -653,7 +653,7 @@ function loadLoftGLB(){
       gltf.scene.scale.setScalar(LOFT_SCALE);
       gltf.scene.traverse(child=>{
         if(child.isMesh){
-          child.castShadow=true; child.receiveShadow=true;
+          child.castShadow=false; child.receiveShadow=true;
           if(child.material){ child.material.envMapIntensity=0.3; child.material.needsUpdate=true; }
         }
       });
