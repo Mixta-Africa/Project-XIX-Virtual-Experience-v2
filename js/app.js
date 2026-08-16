@@ -111,53 +111,12 @@ window.rotateVillaGLB = function(degrees) {
 window.applyWeather = applyWeather;
 
 //           PERFORMANCE MODE TOGGLE
-// Injects the corner toggle into #world-overlay on first use
-function injectPerfToggle() {
-  if (document.getElementById('perf-toggle-bar')) return;
-  const bar = document.createElement('div');
-  bar.id = 'perf-toggle-bar';
-  bar.innerHTML = `
-    <span class="perf-label">Quality</span>
-    <button class="perf-btn active" data-mode="fast"     onclick="window.switchPerfMode('fast')">Fast</button>
-    <button class="perf-btn"        data-mode="balanced" onclick="window.switchPerfMode('balanced')">Balanced</button>
-    <button class="perf-btn"        data-mode="rich"     onclick="window.switchPerfMode('rich')">Rich</button>
-  `;
-  bar.style.cssText = `
-    position:absolute; top:14px; right:14px; z-index:200;
-    display:flex; align-items:center; gap:4px;
-    background:rgba(10,20,12,0.72); backdrop-filter:blur(8px);
-    border:1px solid rgba(201,168,76,0.35); border-radius:8px;
-    padding:5px 10px; font-family:Inter,sans-serif; font-size:11px;
-    pointer-events:all;
-  `;
-  const style = document.createElement('style');
-  style.textContent = `
-    #perf-toggle-bar .perf-label { color:rgba(255,255,255,0.5); margin-right:4px; }
-    #perf-toggle-bar .perf-btn {
-      background:rgba(255,255,255,0.08); color:rgba(255,255,255,0.7);
-      border:1px solid rgba(255,255,255,0.15); border-radius:5px;
-      padding:3px 10px; cursor:pointer; font-size:11px; transition:all .15s;
-    }
-    #perf-toggle-bar .perf-btn.active {
-      background:rgba(201,168,76,0.85); color:#0a1008; border-color:transparent;
-      font-weight:600;
-    }
-    #perf-toggle-bar .perf-btn:hover:not(.active) {
-      background:rgba(255,255,255,0.16);
-    }
-  `;
-  document.head.appendChild(style);
-  document.getElementById('world-overlay')?.appendChild(bar);
-}
-
 window.switchPerfMode = function(mode) {
-  setPerfMode(mode);
+  window.PERF_MODE = mode;    // global state for the render loop
+  setPerfMode(mode);          // updates scene (shadow map, pixel ratio, fog)
+  setPerfModeGraphics(mode);  // updates graphics pipeline (bloom, SMAA, direct render)
   document.querySelectorAll('.perf-btn').forEach(b =>
     b.classList.toggle('active', b.dataset.mode === mode));
-  // Adjust postfx: disable SSAO in Fast mode
-  if (composer && composer._xixFastMode !== undefined) {
-    composer._xixFastMode = (mode === 'fast');
-  }
 };
 
 //           PINNED JOYSTICK CSS INJECTION
