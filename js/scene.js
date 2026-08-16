@@ -63,7 +63,7 @@ window.addEventListener('keydown', (e) => {
 
 export function loadHorseGLB() {
   const loader = makeDracoLoader();
-  loader.load("assets/horse.glb", gltf => {
+  loader.load("./assets/horse.glb", gltf => {
     const model = gltf.scene;
     model.scale.setScalar(0.022);
     model.traverse(c => {
