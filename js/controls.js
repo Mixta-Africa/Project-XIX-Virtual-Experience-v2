@@ -99,14 +99,8 @@ function buildJoystickUI() {
   joystickDotEl.style.pointerEvents = 'none';
   joystickEl.appendChild(joystickDotEl);
 
-  const sprintBtn = document.createElement('button');
-  sprintBtn.id = 'touch-sprint-btn';
-  sprintBtn.className = 'touch-sprint-btn';
-  sprintBtn.textContent = 'SPRINT';
-  sprintBtn.style.pointerEvents = 'auto';
-  sprintBtn.addEventListener('touchstart', e => { e.preventDefault(); touchSprint = true; sprintBtn.classList.add('active'); }, { passive: false });
-  sprintBtn.addEventListener('touchend', e => { e.preventDefault(); touchSprint = false; sprintBtn.classList.remove('active'); }, { passive: false });
-  overlay.appendChild(sprintBtn);
+  // Sprint button is now part of the joystick overlay HTML, not injected here.
+  // See ui.js / index.html for the sprint button layout.
 }
 
 function updateJoystickDot() {
@@ -120,29 +114,37 @@ function updateJoystickDot() {
 function onTouchStart(e) {
   if (!active) return;
   
-  // Identify what the user touched
-  const isCanvas = e.target.tagName.toLowerCase() === 'canvas';
-  const isJoystick = e.target.closest('.vj-base');
+  const isCanvas   = e.target.tagName.toLowerCase() === 'canvas';
+  const isJoystick = !!e.target.closest('.vj-base');
 
-  // ONLY prevent default if they touched the game world or joystick
-  // This allows native UI buttons and dropdowns to continue working normally
   if (isCanvas || isJoystick) {
     e.preventDefault();
   } else {
     return; 
   }
 
+  const screenW = window.innerWidth;
+
   for (const t of e.changedTouches) {
-    // 1. Did they touch the explicit joystick element?
-    if (e.target.closest('.vj-base') && !joyOrigin) {
+    // Explicit joystick element touched — always joystick
+    if (isJoystick && !joyOrigin) {
       joyOrigin = { x: t.clientX, y: t.clientY, id: t.identifier };
       joyDelta  = { x: 0, y: 0 };
       if (joystickEl) joystickEl.style.opacity = '1';
-    } 
-    // 2. Otherwise, if they touched the canvas, it's ALWAYS camera look
-    else if (isCanvas && !lookTouch) {
-      lookTouch = { id: t.identifier };
-      lookLast  = { x: t.clientX, y: t.clientY };
+    }
+    // Canvas touched — zone split: left 45% = joystick, right 55% = camera look
+    // This catches thumb touches that narrowly miss the joystick element
+    else if (isCanvas) {
+      const inLeftZone = t.clientX < screenW * 0.45;
+      if (inLeftZone && !joyOrigin) {
+        // Treat as joystick from wherever the thumb landed
+        joyOrigin = { x: t.clientX, y: t.clientY, id: t.identifier };
+        joyDelta  = { x: 0, y: 0 };
+        if (joystickEl) joystickEl.style.opacity = '1';
+      } else if (!inLeftZone && !lookTouch) {
+        lookTouch = { id: t.identifier };
+        lookLast  = { x: t.clientX, y: t.clientY };
+      }
     }
   }
 }
@@ -204,7 +206,7 @@ function onGyro(e) {
 export function updateControls(delta) {
   if (!active || !camera) return;
 
-  const speed   = (keys.has('shift') || touchSprint) ? SPRINT : WALK;
+  const speed   = (keys.has('shift') || touchSprint || window.__touchSprint) ? SPRINT : WALK;
   const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
   const right   = new THREE.Vector3( Math.cos(yaw), 0, -Math.sin(yaw));
   const move    = new THREE.Vector3();
