@@ -41,6 +41,10 @@ export function setPerfMode(mode) {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, s.pixelRatio));
   if (sunLight) {
     sunLight.shadow.mapSize.set(s.shadowMapSize, s.shadowMapSize);
+    
+    // KILL THE LAG: Completely disable shadow casting in Fast mode
+    sunLight.castShadow = (mode !== 'fast'); 
+    
     sunLight.shadow.map && sunLight.shadow.map.dispose();
     sunLight.shadow.map = null; // force regeneration
   }
@@ -871,10 +875,7 @@ function addPalmSprite(x,y,z,scale=1){
 }
 
 function addCypressAt(x,z){
-  if(isInNoBuildZone(x,z)) return;
-  cyl(.25,.38,5,6,MATS.stableRoof(),[x,2.5,z]); // reduced segments 8->6
-  const cone=new THREE.Mesh(new THREE.ConeGeometry(.7,4.5,6),MATS.hedgeGreen()); // 8->6
-  cone.position.set(x,5.5,z); cone.castShadow=true; scene.add(cone);
+  return; // TEMPORARILY DISABLED TO FIX GREEN CONES
 }
 
 // ─── NO-BUILD ZONE REGISTRY ───────────────────────────────────────────────────
