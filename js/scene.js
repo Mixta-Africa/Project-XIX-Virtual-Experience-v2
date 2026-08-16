@@ -169,40 +169,27 @@ export function getThirdPersonCameraOffset() {
 // Paths use only dry-land waypoints.
 const npcHorses = [];
 
+// NPC horse paths — all strictly within open ground.
+// Polo field: x in [-137,137], z in [-73,73]
+// Paddock:    x in [202,234],  z in [-10,28]
+// Safety zone inner edge is at x=±142, z=±85 — horses stay inside that.
+// Lake at z=-95 to -135 — paths stop at z=-70 max (15m clear margin).
+// Villas at x=±162 — paths stop at x=±130 max (30m clear of hedge at ±172).
 const NPC_PATHS = [
-  // 0: Paddock tight loop (east compound, no water near)
-  [new THREE.Vector3(202,0,-10),new THREE.Vector3(234,0,-10),new THREE.Vector3(234,0,28),new THREE.Vector3(202,0,28)],
+  // 0: Paddock loop — tight and self-contained
+  [new THREE.Vector3(204,0,-5),new THREE.Vector3(232,0,-5),new THREE.Vector3(232,0,25),new THREE.Vector3(204,0,25)],
 
-  // 1: Main polo field — full length gallop (z=+60 to z=-60, well above lake at z=-95)
-  [new THREE.Vector3(-100,0,60),new THREE.Vector3(0,0,55),new THREE.Vector3(100,0,60),
-   new THREE.Vector3(100,0,-60),new THREE.Vector3(0,0,-55),new THREE.Vector3(-100,0,-60)],
+  // 1: Polo field long gallop — full FIP field, well inside touch lines
+  [new THREE.Vector3(-120,0,65),new THREE.Vector3(0,0,60),new THREE.Vector3(120,0,65),
+   new THREE.Vector3(120,0,-65),new THREE.Vector3(0,0,-60),new THREE.Vector3(-120,0,-65)],
 
-  // 2: North perimeter — above the lake (z stays above -90)
-  [new THREE.Vector3(-140,0,-82),new THREE.Vector3(-60,0,-80),new THREE.Vector3(0,0,-82),
-   new THREE.Vector3(60,0,-80),new THREE.Vector3(130,0,-82),new THREE.Vector3(60,0,-80),new THREE.Vector3(-60,0,-82)],
+  // 2: Polo field short diagonal — crosses the centre circle
+  [new THREE.Vector3(-100,0,0),new THREE.Vector3(0,0,55),new THREE.Vector3(100,0,0),
+   new THREE.Vector3(0,0,-55)],
 
-  // 3: West side road (x=-155 corridor, z well away from lake)
-  [new THREE.Vector3(-155,0,80),new THREE.Vector3(-155,0,40),new THREE.Vector3(-155,0,0),
-   new THREE.Vector3(-155,0,-40),new THREE.Vector3(-155,0,-70),new THREE.Vector3(-155,0,-40),
-   new THREE.Vector3(-155,0,0),new THREE.Vector3(-155,0,40)],
-
-  // 4: East side road (x=+155, mirror of west)
-  [new THREE.Vector3(155,0,-70),new THREE.Vector3(155,0,-40),new THREE.Vector3(155,0,0),
-   new THREE.Vector3(155,0,40),new THREE.Vector3(155,0,80),new THREE.Vector3(155,0,40),
-   new THREE.Vector3(155,0,0),new THREE.Vector3(155,0,-40)],
-
-  // 5: South precinct promenade (z=+150 to +210, stays south of clubhouse)
-  [new THREE.Vector3(-120,0,160),new THREE.Vector3(-60,0,155),new THREE.Vector3(0,0,160),
-   new THREE.Vector3(60,0,155),new THREE.Vector3(120,0,160),new THREE.Vector3(60,0,158),
-   new THREE.Vector3(0,0,163),new THREE.Vector3(-60,0,158)],
-
-  // 6: Stables yard loop (south-west, no water)
-  [new THREE.Vector3(-360,0,75),new THREE.Vector3(-360,0,105),new THREE.Vector3(-390,0,110),
-   new THREE.Vector3(-390,0,75),new THREE.Vector3(-375,0,70)],
-
-  // 7: Training field diagonal (south-west field, far from any water)
-  [new THREE.Vector3(-310,0,-55),new THREE.Vector3(-370,0,-10),new THREE.Vector3(-310,0,35),
-   new THREE.Vector3(-250,0,-10)],
+  // 3: Secondary polo field sweep — parallel path
+  [new THREE.Vector3(-110,0,40),new THREE.Vector3(0,0,35),new THREE.Vector3(110,0,40),
+   new THREE.Vector3(110,0,-40),new THREE.Vector3(0,0,-35),new THREE.Vector3(-110,0,-40)],
 ];
 
 function spawnNPCHorse(pathIndex) {
@@ -827,7 +814,17 @@ export function getHotspotAtRay(raycaster) {
 // Each villa gets 4 hedge segments: front, back, left, right — gaps at driveway entrance.
 const _hedgeInstData = []; // collected during addVillaRing, built once after
 
+// Water body zones — hedges must not be placed here
+const WATER_ZONES = [
+  { xMin:-85,xMax:140, zMin:-135,zMax:-95 }, // main crescent lake
+  { xMin:212,xMax:232, zMin:-60, zMax:-35  }, // east lake
+];
+function isInWater(x,z){
+  return WATER_ZONES.some(w=>x>=w.xMin&&x<=w.xMax&&z>=w.zMin&&z<=w.zMax);
+}
 function collectVillaHedge(x, z, ry) {
+  // Don't place hedges on or near water — villas near north lake would clip
+  if (isInWater(x,z) || isInWater(x,z-12) || isInWater(x,z+12)) return;
   _hedgeInstData.push({ x, z, ry });
 }
 
