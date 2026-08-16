@@ -17,8 +17,8 @@ import {
   tickScene, updateSky, plotRegistry, reservePlot, getPlotAtRay,
   highlightPlot, setPerfMode, PERF_MODE,
   RIDER_EYE_HEIGHT, FOOT_EYE_HEIGHT, tickHorse, tickHorseAnim,
-  setHorsePosition, getThirdPersonCameraOffset,
-} from "./scene.js?v=31";
+  setHorsePosition, getThirdPersonCameraOffset, setAerialMode,
+} from "./scene.js?v=33";
 import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics } from "./graphics.js";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
@@ -625,17 +625,9 @@ function toggleAerial(btn){
     // Disable fog — exponential fog hides buildings at orbital distance
     const _sc = getScene();
     if (_sc && _sc.fog) _sc.fog.density = 0.000001;
-    // Force all LOD objects to show highest detail level regardless of distance.
-    // In aerial every villa is >180m away which triggers the impostor — override that.
-    if (_sc) {
-      _sc.traverse(o => {
-        if (o.isLOD && o.levels && o.levels.length > 0) {
-          // Temporarily set all level distances to 999999 (always show level 0 = full GLB)
-          o.levels.forEach((lv, i) => { lv._origDist = lv.distance; lv.distance = i===0 ? 0 : 999999; });
-          o.userData._lodOverridden = true;
-        }
-      });
-    }
+    // Freeze LOD on all villas → force full-detail level visible
+    // O(n) once here, zero per-frame cost during orbit
+    if (typeof setAerialMode === 'function') setAerialMode(true);
     setCaption("Aerial view — drag to steer");
     bindAerialPointer();
     // Mark aerial button active in mode toggle
@@ -652,15 +644,8 @@ function toggleAerial(btn){
     // Restore fog
     const _scR = getScene();
     if (_scR && _scR.fog) _scR.fog.density = 0.0012;
-    // Restore LOD distances
-    if (_scR) {
-      _scR.traverse(o => {
-        if (o.isLOD && o.userData._lodOverridden) {
-          o.levels.forEach(lv => { if (lv._origDist !== undefined) lv.distance = lv._origDist; });
-          delete o.userData._lodOverridden;
-        }
-      });
-    }
+    // Re-enable LOD auto-update — renderer resumes distance-based switching
+    if (typeof setAerialMode === 'function') setAerialMode(false);
     const walkH = (typeof FOOT_EYE_HEIGHT  !== 'undefined') ? FOOT_EYE_HEIGHT  : 1.72;
     const rideH = (typeof RIDER_EYE_HEIGHT !== 'undefined') ? RIDER_EYE_HEIGHT : 3.10;
     const targetY = (moveMode === 'ride') ? rideH : walkH;
