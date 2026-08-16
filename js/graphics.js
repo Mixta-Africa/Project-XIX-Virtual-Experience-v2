@@ -39,16 +39,32 @@ export function setPerfModeGraphics(mode) {
 
 export function initPostProcessing(renderer, scene, camera) {
   _renderer = renderer; _scene = scene; _camera = camera;
-  const w = renderer.domElement.clientWidth  || window.innerWidth;
-  const h = renderer.domElement.clientHeight || window.innerHeight;
+  // Use renderer's actual pixel dimensions — clientWidth can be 0 before first paint.
+  // renderer.setSize() must have been called before this.
+  const w = Math.max(renderer.domElement.width  || window.innerWidth,  1);
+  const h = Math.max(renderer.domElement.height || window.innerHeight, 1);
+
   composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
-  bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.18, 0.5, 0.88);
-  bloomPass.enabled = false;
-  composer.addPass(bloomPass);
-  smaaPass = new SMAAPass(w, h);
-  smaaPass.enabled = false;
-  composer.addPass(smaaPass);
+
+  try {
+    bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.18, 0.5, 0.88);
+    bloomPass.enabled = false;
+    composer.addPass(bloomPass);
+  } catch(e) {
+    console.warn('[XIX] BloomPass init failed:', e.message);
+    bloomPass = null;
+  }
+
+  try {
+    smaaPass = new SMAAPass(w, h);
+    smaaPass.enabled = false;
+    composer.addPass(smaaPass);
+  } catch(e) {
+    console.warn('[XIX] SMAAPass init failed:', e.message);
+    smaaPass = null;
+  }
+
   composer.addPass(new OutputPass());
   return composer;
 }
