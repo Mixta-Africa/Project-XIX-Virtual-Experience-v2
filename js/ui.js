@@ -309,9 +309,7 @@ export async function enableAudio() {
   if (audioCtx) return;
   try {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    // Ambient wind / birds     synthesised
-    addAmbientLoop(220, 0.018, "wind");
-    addAmbientLoop(880, 0.005, "birds", true);
+    // Oscillators completely disabled to kill the high-pitched ringing sound
   } catch (_) {}
 }
 
