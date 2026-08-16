@@ -20,6 +20,11 @@ let yaw = Math.PI, pitch = 0;
 let active = false, locked = false;
 const keys = new Set();
 
+// When true, app.js owns camera.position.y — controls.js must NOT touch it.
+// Call setYOwner('controls') for walk mode, setYOwner('app') for ride mode.
+let _appOwnsY = true;   // ride mode by default
+export function setYOwner(owner) { _appOwnsY = (owner === 'app'); }
+
 // Touch state
 let joyOrigin = null;  
 let joyDelta  = { x: 0, y: 0 };
@@ -225,7 +230,9 @@ export function updateControls(delta) {
   // Clamp to world bounds
   camera.position.x = clamp(camera.position.x, WORLD.xMin || -320, WORLD.xMax || 320);
   camera.position.z = clamp(camera.position.z, WORLD.zMin || -260, WORLD.zMax || 235);
-  camera.position.y = EYE_H;
+  // Only set Y when controls.js owns it (walk mode).
+  // In ride mode app.js calls camera.position.y = _currentEyeY — we must not fight it.
+  if (!_appOwnsY) camera.position.y = EYE_H;
 
   // Apply rotation
   camera.rotation.order = 'YXZ';
