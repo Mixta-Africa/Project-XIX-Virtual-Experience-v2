@@ -18,7 +18,7 @@ import {
   highlightPlot, setPerfMode, PERF_MODE,
   RIDER_EYE_HEIGHT, FOOT_EYE_HEIGHT, tickHorse, tickHorseAnim,
   setHorsePosition, getThirdPersonCameraOffset,
-} from "./scene.js?v=27";
+} from "./scene.js?v=30";
 import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics } from "./graphics.js";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
@@ -236,9 +236,11 @@ function injectModeToggle() {
       transition: opacity 1s;
     }
 
-    /* Quality toggle — hide on mobile to reduce clutter */
+    /* Quality toggle — always visible, slightly smaller on mobile */
     @media (max-width: 640px) {
-      #perf-toggle-bar { display: none; }
+      #perf-toggle-bar { top: 6px; right: 6px; padding: 3px 6px; }
+      #perf-toggle-bar .perf-btn { padding: 2px 7px; font-size: 10px; }
+      #perf-toggle-bar .perf-label { display: none; }
     }
   `;
   document.head.appendChild(style);
@@ -517,18 +519,18 @@ async function openWorldAt(viewKey) {
   resizeWorld();
   window.addEventListener("resize",resizeWorld);
 
-  // Set viewpoint AFTER overlay is open so camera aspect is correct
-  setView(vp.pos, vp.yaw, vp.pitch || 0);
-  setCaption(vp.caption);
-  // Seed eye height correctly for current move mode (walk default)
+  // Always open at field_centre — walk mode, ground level, facing north
+  const _fieldVp = VIEWPOINTS['field_centre'];
+  setView(_fieldVp.pos, _fieldVp.yaw, 0);
+  setCaption(_fieldVp.caption);
   const cam = getCamera();
-  const startY = (moveMode === 'ride') ? RIDER_EYE_HEIGHT : FOOT_EYE_HEIGHT;
+  const _walkH = 1.72; // matches controls.js EYE_H constant
+  const _rideH = 3.10;
+  const startY = (moveMode === 'ride') ? _rideH : _walkH;
   cam.position.y = startY;
   _currentEyeY = startY;
   _targetEyeY  = startY;
-
-  // Sync Y ownership with current move mode (walk = controls.js owns Y)
-  setYOwner(moveMode === 'ride' ? 'app' : 'controls');
+  if (typeof setYOwner === 'function') setYOwner(moveMode === 'ride' ? 'app' : 'controls');
   activate();
   if(isMobile()){
     showJoystick();
@@ -617,6 +619,10 @@ function toggleAerial(btn){
     btn&&btn.classList.add("active");
     deactivate();
     aerialAngle=0; aerialYawOffset=0; aerialPitch=-0.685;
+    // Widen FOV so full estate fits in portrait mobile frame
+    getCamera().fov = 90; getCamera().updateProjectionMatrix();
+    // Disable fog during aerial — exponential fog hides buildings at orbital distance
+    const _sc = getScene(); if (_sc && _sc.fog) _sc.fog.density = 0.00001;
     setCaption("Aerial view — drag to steer");
     bindAerialPointer();
     // Mark aerial button active in mode toggle
@@ -628,7 +634,14 @@ function toggleAerial(btn){
     unbindAerialPointer();
     activate();
     const cam = getCamera();
-    const targetY = (moveMode === 'ride') ? RIDER_EYE_HEIGHT : FOOT_EYE_HEIGHT;
+    // Restore normal FOV
+    cam.fov = 65; cam.updateProjectionMatrix();
+    // Restore fog
+    const _scR = getScene();
+    if (_scR && _scR.fog) _scR.fog.density = 0.0012;
+    const walkH = (typeof FOOT_EYE_HEIGHT  !== 'undefined') ? FOOT_EYE_HEIGHT  : 1.72;
+    const rideH = (typeof RIDER_EYE_HEIGHT !== 'undefined') ? RIDER_EYE_HEIGHT : 3.10;
+    const targetY = (moveMode === 'ride') ? rideH : walkH;
     cam.position.y = targetY;
     _currentEyeY = targetY;
     _targetEyeY  = targetY;
@@ -676,15 +689,27 @@ function aerialTouchMove(e){
 window.toggleAerial=toggleAerial;
 
 function teleportTo(key, vp){
-  // Guard: vp may be a subView object that lacks pos/yaw — check VIEWPOINTS too
-  const resolved = vp || VIEWPOINTS[key];
-  if (!resolved || !resolved.pos) {
-    console.warn('[XIX] teleportTo: no viewpoint for key', key);
-    return;
+  try {
+    // vp may be a subView (has pos) or just a key reference (look up in VIEWPOINTS)
+    const resolved = (vp && vp.pos) ? vp : (VIEWPOINTS[key] || null);
+    if (!resolved || !Array.isArray(resolved.pos) || resolved.pos.length < 3) {
+      console.warn('[XIX] teleportTo: bad viewpoint for key', key, resolved);
+      return;
+    }
+    setView(resolved.pos, resolved.yaw || 0, resolved.pitch || 0);
+    setCaption(resolved.caption || key);
+    // Restore Y for current ground mode after teleport
+    const cam = getCamera();
+    if (moveMode !== 'aerial') {
+      const eyeY = (moveMode === 'ride') ? 3.10 : 1.72;
+      cam.position.y = eyeY;
+      _currentEyeY = eyeY;
+      _targetEyeY  = eyeY;
+    }
+    if (resolved.zoneKey) showZonePanel(resolved.zoneKey); else hideZonePanel();
+  } catch(err) {
+    console.error('[XIX] teleportTo error:', err);
   }
-  setView(resolved.pos, resolved.yaw || 0, resolved.pitch || 0);
-  setCaption(resolved.caption || '');
-  if (resolved.zoneKey) showZonePanel(resolved.zoneKey); else hideZonePanel();
 }
 
 //           EXIT
@@ -722,16 +747,20 @@ function startRenderLoop(){
     if(aerialOrbit){
       aerialAngle += AERIAL_SPEED * delta;
       const totalAngle = aerialAngle + aerialYawOffset;
-      // Orbit around estate centre [0, 0, 0].
-      // AERIAL_RADIUS=340, AERIAL_HEIGHT=280 → depression = atan(280/340) = 0.685 rad
-      camera.position.x = Math.sin(totalAngle) * AERIAL_RADIUS;
-      camera.position.z = Math.cos(totalAngle) * AERIAL_RADIUS;
-      camera.position.y = AERIAL_HEIGHT;
-      // Stable rotation: set directly without lookAt to avoid gimbal conflicts
+      // Orbit tightly around estate centre. Radius 180, height 160.
+      // depression = atan(160/180) = 0.727 rad = 41.6° below horizontal.
+      // At 90° FOV this shows ~320m of estate width. Estate is ~500m; orbit reveals all.
+      const R = 180, H = 160;
+      camera.position.x = Math.sin(totalAngle) * R;
+      camera.position.z = Math.cos(totalAngle) * R;
+      camera.position.y = H;
+      // lookAt is correct and reliable for non-nadir aerial views
       camera.rotation.order = 'YXZ';
-      camera.rotation.y = totalAngle + Math.PI; // face centre
-      camera.rotation.x = aerialPitch;          // tilt down
-      camera.rotation.z = 0;
+      camera.lookAt(0, 0, 0);
+      // Apply user pitch offset on top of lookAt
+      if (aerialPitch !== 0 && aerialPitch !== -0.685) {
+        camera.rotation.x += (aerialPitch + 0.685);
+      }
     } else {
       updateControls(delta);
 
@@ -749,34 +778,19 @@ function startRenderLoop(){
       _prevCamX = camera.position.x;
       _prevCamZ = camera.position.z;
 
-      if (moveMode === 'ride') {
-        if (window.horseViewMode === 'first') {
-          // First-person ride: horse in front of camera
-          setHorsePosition(camera.position.x, camera.position.z, camera.rotation.y);
-        } else {
-          // Third-person: camera orbits 5.5m behind, 2.4m above horse
-          const { back, up } = getThirdPersonCameraOffset();
-          const yaw = camera.rotation.y;
-          // Horse stays at its own ground position; camera follows
-          setHorsePosition(camera.position.x, camera.position.z, yaw);
-          camera.position.x += Math.sin(yaw) * back;
-          camera.position.z += Math.cos(yaw) * back;
-          camera.position.y = _currentEyeY + up;
-        }
-        tickHorseAnim(delta, moved);
-      } else {
-        // Walk mode: hide horse visually but keep it at current position
-        // so switching back to ride spawns it at camera location instantly.
-        const sc = getScene();
-        if (sc) {
-          sc.traverse(o => { if (o.name === 'horseRider') o.visible = false; });
-        }
-      }
+      // Horse: use getObjectByName (O(1)) not traverse (O(n))
+      const _horseRoot = getScene()?.getObjectByName('horseRider');
 
-      // Ensure horse is visible when in ride mode
       if (moveMode === 'ride') {
-        const sc = getScene();
-        if (sc) sc.traverse(o => { if (o.name === 'horseRider') o.visible = true; });
+        if (_horseRoot) _horseRoot.visible = true;
+        // Place horse at camera XZ on true ground. Camera sits at rider eye height.
+        // Horse faces the direction of travel (same as camera yaw).
+        if (typeof setHorsePosition === 'function') {
+          setHorsePosition(camera.position.x, camera.position.z, camera.rotation.y);
+        }
+        if (typeof tickHorseAnim === 'function') tickHorseAnim(delta, moved);
+      } else {
+        if (_horseRoot) _horseRoot.visible = false;
       }
     }
 
