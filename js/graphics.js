@@ -17,6 +17,7 @@ import { UnrealBloomPass } from "https://cdn.jsdelivr.net/npm/three@0.165.0/exam
 import { OutputPass }      from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/postprocessing/OutputPass.js";
 import { SMAAPass }        from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/postprocessing/SMAAPass.js";
 import { Sky }             from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/objects/Sky.js";
+import { RoomEnvironment } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/environments/RoomEnvironment.js";
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
 let composer, bloomPass, smaaPass;
@@ -134,7 +135,7 @@ export function buildEnvMapFromSky(renderer, scene, skyObj) {
   try {
     const pmrem=new THREE.PMREMGenerator(renderer);
     pmrem.compileEquirectangularShader();
-    const env=pmrem.fromScene(new THREE.RoomEnvironment(),0.04).texture;
+    const env=pmrem.fromScene(new RoomEnvironment(),0.04).texture;
     pmrem.dispose();
     _envMap=env; scene.environment=_envMap;
     console.log('[XIX] IBL env map active');
@@ -215,7 +216,8 @@ export function pbrMat({color,normal,rough,repeat=4,roughVal=0.8,metalVal=0,norm
     map:loadTex(color+"-color.png",repeat), normalMap:loadTex(normal+"-normal.png",repeat,false),
     roughnessMap:loadTex(rough+"-roughness.png",repeat,false),
     normalScale:new THREE.Vector2(normalScale,normalScale),
-    roughness:roughVal,metalness:metalVal,envMapIntensity:1.2,envMap:_envMap||undefined,
+    roughness:roughVal,metalness:metalVal,envMapIntensity:1.2,
+    ...(_envMap ? {envMap:_envMap} : {}),
   });
 }
 export const PBR={
@@ -234,7 +236,8 @@ export function createWaterMat() {
   const n1=loadTex("stone-normal.png",6,false), n2=loadTex("stone-normal.png",9,false);
   const mat=new THREE.MeshStandardMaterial({
     color:0x1a6a98,roughness:0.02,metalness:0.65,transparent:true,opacity:0.90,
-    normalMap:n1,normalScale:new THREE.Vector2(0.35,0.35),envMapIntensity:3.5,envMap:_envMap||undefined,
+    normalMap:n1,normalScale:new THREE.Vector2(0.35,0.35),envMapIntensity:3.5,
+    ...(_envMap ? {envMap:_envMap} : {}),
   });
   mat.userData.normalMap2=n2; mat.userData.isWater=true; return mat;
 }
@@ -322,10 +325,8 @@ export function tickGrass(camera) {
       _dummy.updateMatrix(); _grassMesh.setMatrixAt(i,_dummy.matrix);
       needsUpdate=true;
     } else {
-      // Fast atan2 approximation (Bhaskara I) — avoids trig per card
-      const ay=Math.abs(dy=dz), ax=Math.abs(dx);
-      const atan=ax>ay ? (Math.PI/4)*(dy=dx,dx=dy,dy,dz)/(ax+0.2818*ay) : (Math.PI/4)*(ax)/(ay+0.2818*ax)*(dx<0?-1:1);
-      const rot=dz>=0 ? atan : atan+Math.sign(dx)*Math.PI;
+      // Billboard: face camera by rotating around Y toward camera position
+      const rot=Math.atan2(dx,dz);
       _dummy.position.set(px,py,pz);
       _dummy.rotation.set(0,rot,0);
       const op=dist2<FADE_START2 ? 1 : 1-(dist2-FADE_START2)/RANGE;
