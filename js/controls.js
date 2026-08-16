@@ -153,17 +153,16 @@ function onTouchStart(e) {
   const halfW = renderer.domElement.clientWidth / 2;
   for (const t of e.changedTouches) {
     if (t.clientX < halfW && !joyOrigin) {
-      // Left half     joystick
+      // Left half - activate joystick, but DO NOT move the visual base ring
       joyOrigin = { x: t.clientX, y: t.clientY, id: t.identifier };
       joyDelta  = { x: 0, y: 0 };
-      // Position joystick ring at touch point
+      
       if (joystickEl) {
-        joystickEl.style.left = t.clientX + 'px';
-        joystickEl.style.top  = t.clientY + 'px';
-        joystickEl.style.opacity = '1';
+        // Remove the inline style injections that move the base
+        joystickEl.style.opacity = '1'; 
       }
     } else if (t.clientX >= halfW && !lookTouch) {
-      // Right half     look
+      // Right half - look
       lookTouch = { id: t.identifier };
       lookLast  = { x: t.clientX, y: t.clientY };
     }
