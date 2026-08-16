@@ -99,19 +99,34 @@ let _currentEyeY = FOOT_EYE_HEIGHT;
 // Expose toggle for the mode button
 window.setMoveMode = function(mode) {
   if (mode === 'aerial') {
-    // Aerial is a toggle — if already aerial, deactivate it; otherwise activate
-    toggleAerial(null);
+    // Only enter aerial if not already in it
+    if (!aerialOrbit) toggleAerial(null);
     return;
   }
+
+  // CRITICAL: If we're in aerial, fully tear it down first before switching to ground mode.
+  // Without this, aerialOrbit stays true and the aerial render branch keeps running.
+  if (aerialOrbit) {
+    aerialOrbit = false;         // flip state first so toggleAerial exit branch runs
+    unbindAerialPointer();       // remove aerial touch/mouse listeners
+    const cam = getCamera();
+    if (cam) { cam.fov = 65; cam.far = 1200; cam.updateProjectionMatrix(); }
+    const sc = getScene();
+    if (sc && sc.fog) sc.fog.density = _fogEnabled ? _currentFogD : 0.000001;
+    if (typeof setAerialMode === 'function') setAerialMode(false);
+    document.querySelectorAll('.move-mode-btn').forEach(b => b.classList.remove('active'));
+  }
+
   moveMode = mode;
-  // Tell controls.js who owns camera.position.y to prevent the Y-fight.
-  // ride: app.js owns Y (sets _currentEyeY = RIDER_EYE_HEIGHT each frame)
-  // walk: controls.js owns Y (sets EYE_H = 1.72 each frame)
   setYOwner(mode === 'ride' ? 'app' : 'controls');
-  // Only change eye height — never reposition X/Z. Horse spawns at wherever camera is.
-  _targetEyeY = (mode === 'ride') ? RIDER_EYE_HEIGHT : FOOT_EYE_HEIGHT;
-  // If switching into walk mode, seed _currentEyeY immediately to avoid a slow drift
-  if (mode === 'walk') _currentEyeY = FOOT_EYE_HEIGHT;
+  _targetEyeY = (mode === 'ride')
+    ? (typeof RIDER_EYE_HEIGHT !== 'undefined' ? RIDER_EYE_HEIGHT : 3.1)
+    : (typeof FOOT_EYE_HEIGHT  !== 'undefined' ? FOOT_EYE_HEIGHT  : 1.72);
+  if (mode === 'walk') _currentEyeY = _targetEyeY;
+
+  // Always re-engage controls after a mode switch — recovers from lost pointer lock
+  activate();
+
   document.querySelectorAll('.move-mode-btn').forEach(b =>
     b.classList.toggle('active', b.dataset.mode === mode)
   );
@@ -545,7 +560,14 @@ document.addEventListener("DOMContentLoaded", () => {
   window.__moduleReady = Object.assign(window.__moduleReady || {}, {
     applyTimePreset, applyWeather, toggleAerial, rotateVillaGLB: window.rotateVillaGLB,
     switchPerfMode: window.switchPerfMode,
+    // showProductPanel: wired below once product-panel module loads
   });
+  // Wire our in-world property panel as the showProductPanel handler
+  // This is called by ui.js buildViewpointStrip when a bottom button is clicked
+  window.__moduleReady.showProductPanel = (key) => {
+    try { openPropertyPanel(key); } catch(e) { console.error('[XIX] property panel:', e); }
+  };
+  window.showProductPanel = window.__moduleReady.showProductPanel;
   (window._pendingCalls || []).forEach(({fn,args}) => {
     if(window.__moduleReady[fn]) window.__moduleReady[fn](...args);
   });
@@ -845,7 +867,21 @@ async function openWorldAt(viewKey) {
     }
     // Don't show enter prompt on mobile — joystick is self-evident
   } else {
+    // Desktop: show prompt for 10s, then auto-hide
     showEnterPrompt("Click to lock cursor  •  WASD to walk  •  Shift to sprint");
+    setTimeout(hideEnterPrompt, 10000);
+    // Brief re-show (2s) when user first presses a movement key
+    let _promptShown = false;
+    function _onFirstMove(e) {
+      const mvKeys = new Set(['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright']);
+      if (mvKeys.has((e.key||'').toLowerCase()) && !_promptShown) {
+        _promptShown = true;
+        showEnterPrompt("Click to lock cursor  •  WASD to walk");
+        setTimeout(hideEnterPrompt, 2000);
+        document.removeEventListener('keydown', _onFirstMove);
+      }
+    }
+    document.addEventListener('keydown', _onFirstMove, { passive:true, once:false });
   }
   enableAudio();
   startRenderLoop();
@@ -959,6 +995,268 @@ function aerialTouchMove(e){
   aerialLastX=t.clientX; aerialLastY=t.clientY;
 }
 window.toggleAerial=toggleAerial;
+
+// Property detail panel — opens over the 3D world for any viewpoint with a productKey
+// Contains: zone description, interior viewpoints, reservation option
+function openPropertyPanel(key) {
+  const PROPERTY_DATA = {
+    villas: {
+      title: 'Premium Villa — 3 Bedroom',
+      type: 'Residential',
+      area: '330 m²',
+      price: 'Available on application',
+      description: 'Three-storey polo-facing villa with two-car undercroft, full-height glazing on all floors, private landscaped garden, and direct views over the main polo field. Designed by ECAD Architecture.',
+      features: ['Full-height glazing — polo field view','2-car undercroft parking','Private landscaped garden with hedges','Terrace on each floor','Residents polo membership included'],
+      canReserve: true,
+      interior: [
+        { label:'Ground Floor — Living', pos:[-162,2,0],   yaw:Math.PI/2,  pitch:0,    caption:'Ground floor living — polo field ahead' },
+        { label:'First Floor — Master',  pos:[-162,5.5,0], yaw:Math.PI/2,  pitch:-0.1, caption:'Master bedroom — elevated polo view' },
+        { label:'Roof Terrace',          pos:[-162,9,0],   yaw:Math.PI/2,  pitch:-0.15,caption:'Roof terrace — panoramic estate view' },
+        { label:'Garden — Approach',     pos:[-148,1.72,0],yaw:-Math.PI/2, pitch:0,    caption:'Private garden — looking back at your villa' },
+      ],
+    },
+    clubhouse: {
+      title: 'Club House',
+      type: 'Social Anchor',
+      area: '3,419 m²',
+      price: 'Members only',
+      description: 'Three-storey Clubhouse on the south edge of the polo field. VIP skyboxes on the upper levels, restaurant and bar at ground level, open terraces for match-day viewing.',
+      features: ['8 VIP skyboxes','Full-service restaurant & bar','Terraced polo viewing','Members lounge','Event hosting capacity 500+'],
+      canReserve: false,
+      interior: [
+        { label:'Ground Terrace',   pos:[0,4,148],  yaw:Math.PI,     pitch:-0.08, caption:'Clubhouse terrace — north toward the polo field' },
+        { label:'Upper Skybox',     pos:[0,10,135], yaw:Math.PI,     pitch:-0.18, caption:'VIP skybox level — tournament day view' },
+        { label:'Polo View — Full', pos:[0,4,80],   yaw:Math.PI,     pitch:0,     caption:'From mid-field looking south to the Clubhouse' },
+      ],
+    },
+    stables: {
+      title: 'Equestrian Stables',
+      type: 'Equestrian Facility',
+      area: '4 blocks · 56 stalls',
+      price: 'Stall leases available',
+      description: 'Four stable blocks with 14 stalls each, a veterinary facility, quarantine paddock, and cobblestone courtyard. The beating heart of polo operations at Project XIX.',
+      features: ['56 individual stalls','On-site veterinary clinic','Cobblestone farrier yard','Groom quarters','Secure truck parking'],
+      canReserve: true,
+      interior: [
+        { label:'Stable Approach',   pos:[-220,1.72,80], yaw:Math.PI/2, pitch:0,    caption:'Equestrian compound — stable blocks ahead' },
+        { label:'Courtyard View',    pos:[-350,1.72,90], yaw:0,         pitch:0,    caption:'Cobblestone courtyard — between stable blocks' },
+        { label:'From The Field',    pos:[-175,1.72,0],  yaw:-Math.PI/2,pitch:0,    caption:'Looking west toward the stables' },
+      ],
+    },
+    training: {
+      title: 'Training Field',
+      type: 'Sporting Facility',
+      area: '5,000 m²',
+      price: 'Academy enrolment',
+      description: 'Full-size practice polo field perpendicular to the main arena. Used by the Project XIX polo academy and for warm-up sessions on match days.',
+      features: ['FIP yard markings','Polo academy coaching','North–south orientation','Separate from main field','Floodlight-ready'],
+      canReserve: false,
+      interior: [
+        { label:'Training Field',    pos:[-175,1.72,0],  yaw:Math.PI/2, pitch:0, caption:'Training field — coaching sessions daily' },
+        { label:'From Touch Line',   pos:[-260,1.72,-40],yaw:Math.PI/2, pitch:0, caption:'Touch line — full field view' },
+      ],
+    },
+    lofts: {
+      title: 'Loft Terrace Apartments',
+      type: '2-Bedroom Loft',
+      area: '125 m² per unit',
+      price: 'Available on application',
+      description: 'Ninety-six loft terrace apartments in two rows along the south precinct. Ground floor in natural gabion stone, upper floor in vertical timber slats and full-width glazing — tropical terrace living.',
+      features: ['Full-width terrace per unit','Vertical timber facade','Gabion stone ground floor','Polo estate address','Strong rental yield potential'],
+      canReserve: true,
+      interior: [
+        { label:'Loft Terrace — West',  pos:[-218,1.72,-5], yaw:-Math.PI/2, pitch:0, caption:'West compound loft terraces' },
+        { label:'Looking South',        pos:[-155,1.72,-40],yaw:0,           pitch:0, caption:'South precinct — loft row ahead' },
+      ],
+    },
+    paddock: {
+      title: 'Paddock & Recreation',
+      type: 'Family Amenity',
+      area: '1,645 m²',
+      price: 'Residents access',
+      description: 'The east paddock with post-and-rail fencing for horse exercise, a game park, and a playground — the recreational heart of the east precinct.',
+      features: ['Post-and-rail horse paddock','Game park','Playground area','Lakeside position','Residents-only access'],
+      canReserve: false,
+      interior: [
+        { label:'Paddock View',    pos:[155,1.72,-60], yaw:-Math.PI/2, pitch:0, caption:'Northeast paddock — horses at exercise' },
+        { label:'From East Road',  pos:[200,1.72,0],   yaw:-Math.PI/2, pitch:0, caption:'Looking west — paddock and polo field' },
+      ],
+    },
+    lake_north: {
+      title: 'Crescent Lake',
+      type: 'Lifestyle Feature',
+      area: '200m crescent',
+      price: 'All north-arc villas',
+      description: 'The crescent lake runs the full length of the north safety zone boundary, directly fronted by the north-arc premium villas. A natural centrepiece visible from the Clubhouse, the polo field, and every north-arc residence.',
+      features: ['200m crescent water feature','Waterfront villa frontage','Polo field reflection','Private lake promenade','Resident exclusivity'],
+      canReserve: false,
+      interior: [
+        { label:'Lake North Shore',  pos:[0,1.72,-108],    yaw:0,       pitch:-0.05, caption:'Crescent lake — north shore walk' },
+        { label:'From Polo Field',   pos:[0,1.72,-50],     yaw:0,       pitch:-0.08, caption:'Looking north — lake and villas beyond' },
+        { label:'West Lake End',     pos:[-80,1.72,-108],  yaw:Math.PI/2, pitch:0,  caption:'West end of the crescent lake' },
+      ],
+    },
+    field_centre: {
+      title: 'Main Polo Field',
+      type: 'FIP International Standard',
+      area: '274m × 146m',
+      price: 'Match-day access',
+      description: 'The central polo field is the gravitational core of Project XIX. FIP international standard, 30/40/60-yard markings, with the Clubhouse at the south end and the crescent lake to the north.',
+      features: ['FIP international standard','274m × 146m','30/40/60 yard markings','Clubhouse south end','Match-day events'],
+      canReserve: false,
+      interior: [
+        { label:'Centre Field',      pos:[0,1.72,0],       yaw:0,       pitch:0,     caption:'Halfway line — facing north toward the lake' },
+        { label:'South Goal',        pos:[0,1.72,100],     yaw:Math.PI, pitch:0,     caption:'South goal line — Clubhouse behind you' },
+        { label:'North Goal',        pos:[0,1.72,-100],    yaw:0,       pitch:0,     caption:'North goal — lake directly ahead' },
+        { label:'Touch Line East',   pos:[130,1.72,0],     yaw:-Math.PI/2,pitch:0,   caption:'East touch line — full field view' },
+      ],
+    },
+  };
+
+  // Map bottom strip keys to property data keys
+  const KEY_MAP = {
+    'field_centre':'field_centre','field_south':'field_centre',
+    'clubhouse':'clubhouse','lake_north':'lake_north',
+    'villas':'villas','villa_west':'villas','villa_east':'villas','villa_north':'villas','villa_south':'villas',
+    'stables':'stables','training':'training','lofts':'lofts','paddock':'paddock',
+  };
+  const propKey = KEY_MAP[key] || key;
+  const data = PROPERTY_DATA[propKey];
+  if (!data) { console.warn('[XIX] No property data for', key); return; }
+  _showPropertyPanel(data, propKey);
+}
+
+function _showPropertyPanel(data, propKey) {
+  // Remove any existing panel
+  document.getElementById('xix-prop-panel')?.remove();
+
+  const panel = document.createElement('div');
+  panel.id = 'xix-prop-panel';
+  panel.style.cssText = `
+    position:fixed; top:0; right:0; bottom:0; width:min(480px,100vw);
+    background:rgba(6,14,8,0.97); backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
+    border-left:1px solid rgba(201,168,76,0.3); z-index:2000;
+    display:flex; flex-direction:column; overflow:hidden;
+    transform:translateX(100%); transition:transform .32s cubic-bezier(.22,.61,.36,1);
+    font-family:Inter,sans-serif;
+  `;
+
+  // Interior viewpoint index
+  let _intIdx = 0;
+  const interior = data.interior || [];
+
+  panel.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 20px 14px;border-bottom:1px solid rgba(201,168,76,0.15);flex-shrink:0;">
+      <div>
+        <div style="font-size:10px;color:rgba(201,168,76,0.7);letter-spacing:.12em;text-transform:uppercase;margin-bottom:4px;">${data.type}</div>
+        <div style="font-size:1.25rem;font-weight:500;color:#f0ece0;font-family:'Cormorant Garamond',serif;">${data.title}</div>
+      </div>
+      <button id="pp-close-btn" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:50%;width:36px;height:36px;color:rgba(255,255,255,0.6);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">✕</button>
+    </div>
+    <div style="overflow-y:auto;-webkit-overflow-scrolling:touch;flex:1;padding:0 0 40px;">
+      <!-- Interior walkthrough section -->
+      ${interior.length > 0 ? `
+      <div style="background:rgba(201,168,76,0.06);border-bottom:1px solid rgba(201,168,76,0.12);padding:14px 20px;">
+        <div style="font-size:10px;color:rgba(201,168,76,0.6);letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px;">Immersive Walkthrough</div>
+        <div style="font-size:13px;color:rgba(240,236,224,0.75);margin-bottom:10px;">Experience each viewpoint in the 3D world</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;">
+          ${interior.map((vp,i)=>`
+            <button data-vpidx="${i}" class="pp-vp-btn" style="
+              background:rgba(255,255,255,0.05);border:1px solid rgba(201,168,76,0.25);
+              border-radius:5px;padding:7px 12px;color:rgba(240,236,224,0.85);
+              cursor:pointer;font-size:11px;font-family:Inter,sans-serif;
+              transition:all .12s;-webkit-tap-highlight-color:transparent;min-height:36px;">
+              ${vp.label}
+            </button>
+          `).join('')}
+        </div>
+      </div>` : ''}
+      <!-- Specs -->
+      <div style="padding:16px 20px;border-bottom:1px solid rgba(255,255,255,0.05);">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
+          <div><div style="font-size:10px;color:rgba(201,168,76,0.6);text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px;">Area</div><div style="font-size:15px;color:#f0ece0;font-weight:500;">${data.area}</div></div>
+          <div><div style="font-size:10px;color:rgba(201,168,76,0.6);text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px;">Pricing</div><div style="font-size:13px;color:#f0ece0;">${data.price}</div></div>
+        </div>
+        <p style="font-size:13px;color:rgba(240,236,224,0.7);line-height:1.7;margin:0;">${data.description}</p>
+      </div>
+      <!-- Features -->
+      <div style="padding:14px 20px;border-bottom:1px solid rgba(255,255,255,0.05);">
+        <div style="font-size:10px;color:rgba(201,168,76,0.6);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px;">Key Features</div>
+        ${data.features.map(f=>`
+          <div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:7px;">
+            <span style="color:#c9a84c;font-size:12px;margin-top:2px;flex-shrink:0;">◆</span>
+            <span style="font-size:13px;color:rgba(240,236,224,0.75);">${f}</span>
+          </div>
+        `).join('')}
+      </div>
+      <!-- CTA -->
+      ${data.canReserve ? `
+      <div style="padding:16px 20px;">
+        <div style="font-size:10px;color:rgba(201,168,76,0.6);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px;">Reserve Your Plot</div>
+        <button id="pp-reserve-btn" style="
+          width:100%;background:rgba(201,168,76,0.88);color:#061208;border:none;
+          border-radius:6px;padding:14px;font-size:14px;font-weight:600;cursor:pointer;
+          font-family:Inter,sans-serif;letter-spacing:.04em;transition:background .15s;margin-bottom:10px;">
+          Register Interest
+        </button>
+        <a href="mailto:o.olasunkanmi@mixtafrica.com?subject=Project XIX — ${encodeURIComponent(data.title)} Enquiry" style="
+          display:block;text-align:center;padding:12px;border:1px solid rgba(201,168,76,0.3);
+          border-radius:6px;color:rgba(201,168,76,0.8);font-size:13px;letter-spacing:.04em;text-decoration:none;">
+          Email the Project Team
+        </a>
+      </div>` : `
+      <div style="padding:16px 20px;">
+        <a href="mailto:o.olasunkanmi@mixtafrica.com?subject=Project XIX — ${encodeURIComponent(data.title)} Enquiry" style="
+          display:block;text-align:center;padding:14px;background:rgba(201,168,76,0.88);
+          border-radius:6px;color:#061208;font-size:14px;font-weight:600;letter-spacing:.04em;text-decoration:none;">
+          Make an Enquiry
+        </a>
+      </div>`}
+    </div>
+  `;
+
+  document.getElementById('world-overlay')?.appendChild(panel);
+  // Animate in
+  requestAnimationFrame(() => panel.style.transform = 'translateX(0)');
+
+  // Close
+  panel.querySelector('#pp-close-btn')?.addEventListener('click', () => {
+    panel.style.transform = 'translateX(100%)';
+    setTimeout(() => panel.remove(), 340);
+    _stopPlotHighlightPulse?.();
+  });
+
+  // Interior viewpoint buttons — teleport camera to each position
+  panel.querySelectorAll('.pp-vp-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.dataset.vpidx, 10);
+      const vp = interior[idx];
+      if (!vp) return;
+      // Highlight active
+      panel.querySelectorAll('.pp-vp-btn').forEach(b => b.style.borderColor = 'rgba(201,168,76,0.25)');
+      btn.style.borderColor = '#c9a84c';
+      btn.style.color = '#c9a84c';
+      // Teleport to interior position
+      try {
+        setView(vp.pos, vp.yaw || 0, vp.pitch || 0);
+        setCaption(vp.caption || vp.label);
+        // Ensure walk mode for interior exploration
+        if (moveMode === 'ride' || aerialOrbit) window.setMoveMode('walk');
+      } catch(e) { console.warn('[XIX] Interior teleport:', e); }
+    });
+  });
+
+  // Reserve button
+  panel.querySelector('#pp-reserve-btn')?.addEventListener('click', () => {
+    const reserveSection = panel.querySelector('#pp-reserve-btn').parentNode;
+    reserveSection.innerHTML = `
+      <div style="background:rgba(30,80,30,0.25);border:1px solid rgba(100,200,80,0.3);border-radius:6px;padding:16px;text-align:center;">
+        <div style="color:#8cde6a;font-size:20px;margin-bottom:8px;">✓</div>
+        <div style="color:#f0ece0;font-weight:600;margin-bottom:4px;">Interest Registered</div>
+        <div style="color:rgba(240,236,224,0.6);font-size:12px;">Our team will contact you within 24 hours.</div>
+      </div>`;
+  });
+}
 
 function teleportTo(key, vp){
   try {
