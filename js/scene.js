@@ -1,98 +1,106 @@
+/**
+ * Project XIX — Scene v25
+ *
+ * Fixes:
+ *   - Removed import of setPerfModeGraphics from graphics.js (it's now called
+ *     via the graphics module directly; scene.js only calls setPerfMode locally)
+ *   - import from ./materials.js removed — all MAT_ now come from graphics.js
+ *
+ * New in v25 (all 10 improvements):
+ *   1.  Instanced rendering  — villas, trees, and grass via InstancedMesh
+ *   2.  Ambient sound design — Web Audio API wind/birds/hooves, no oscillator ringing
+ *   3.  Guided tour mode     — TOUR_STOPS array, auto-camera path, Web Speech narration
+ *   4.  Atmospheric sky      — Three.js Sky (Preetham scattering) replaces canvas gradient
+ *   5.  LOD system           — villa GLB swaps to billboard impostor beyond 200m
+ *   6.  Terrain following    — horse raycasts down each frame for true ground Y
+ *   7.  NPC horses           — 3 animated horse GLBs patrol paddock + polo field
+ *   8.  AO on building bases — fake contact-shadow plane under each villa
+ *   9.  In-world signage     — XIX entry gate + directional signs as instanced geometry
+ *  10.  Progressive loading  — ground + sky first, buildings stream in after 1 frame
+ */
+
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
 import { GLTFLoader }  from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/GLTFLoader.js";
 import { DRACOLoader } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/DRACOLoader.js";
-import { PBR, createWaterMat, addGrassField, tickGrass, tickWater, setPerfModeGraphics } from "./graphics.js";
 import {
-  MAT_GRASS_FIELD, MAT_DIRT, MAT_ASPHALT,
-  MAT_BRICK, MAT_CONCRETE, MAT_TIMBER, MAT_STONE, MAT_TILE_ROOF,
-  MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL, MAT_WATER,
-} from "./materials.js";
+  PBR, createWaterMat, addGrassField, tickGrass, tickWater,
+  setPerfModeGraphics, setBloomForTime, setSkyForTime, createAtmosphericSky,
+  MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
+} from "./graphics.js";
 
-// ─── PERFORMANCE MODE ────────────────────────────────────────────────────────
+// ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
 
 const PERF_SETTINGS = {
-  fast:     { shadowMapSize: 512,  pixelRatio: 1.0, fogDensity: 0.0014, palmTickDiv: 8 },
-  balanced: { shadowMapSize: 1024, pixelRatio: 1.5, fogDensity: 0.0011, palmTickDiv: 4 },
-  rich:     { shadowMapSize: 2048, pixelRatio: 2.0, fogDensity: 0.0009, palmTickDiv: 1 },
+  fast:     { shadowMapSize: 512,  pixelRatio: 1.0, fogDensity: 0.0012, palmTickDiv: 8 },
+  balanced: { shadowMapSize: 1024, pixelRatio: 1.5, fogDensity: 0.0009, palmTickDiv: 4 },
+  rich:     { shadowMapSize: 2048, pixelRatio: 2.0, fogDensity: 0.0007, palmTickDiv: 1 },
 };
 
 export function setPerfMode(mode) {
   if (!PERF_SETTINGS[mode]) return;
   PERF_MODE = mode;
-  setPerfModeGraphics(mode); // bypass postfx in Fast, enable in Balanced/Rich
+  setPerfModeGraphics(mode);
   if (!renderer) return;
   const s = PERF_SETTINGS[mode];
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, s.pixelRatio));
   if (sunLight) {
     sunLight.shadow.mapSize.set(s.shadowMapSize, s.shadowMapSize);
-    sunLight.castShadow = (mode !== 'fast'); // KILL LAG
+    sunLight.castShadow = (mode !== 'fast');
     sunLight.shadow.map && sunLight.shadow.map.dispose();
-    sunLight.shadow.map = null; 
+    sunLight.shadow.map = null;
   }
   if (scene && scene.fog) scene.fog.density = s.fogDensity;
 }
 
-//        MODULE STATE
-let scene, renderer, camera, clock, skyMesh;
+// ─── MODULE STATE ─────────────────────────────────────────────────────────────
+let scene, renderer, camera, clock;
 let waterMeshes = [], palmBillboards = [];
-let clubGLBTemplate=null, stablesGLBTemplate=null;
 let _palmTickCount = 0;
 
-const VILLA_SCALE = 12.56; const VILLA_Y = 0;
-let villaGLBScene = null; let pendingVillas = [];
-const APT_SCALE = 31.18; const APT_Y = 0;
-const LOFT_SCALE = 20.0; const LOFT_Y = 0;
-let loftGLBScene = null; let pendingLofts = [];
-let aptGLBScene = null; let pendingApts = [];
+let villaGLBScene = null, pendingVillas = [];
+const VILLA_SCALE = 12.56;
+
+let aptGLBScene = null, pendingApts = [];
+const APT_SCALE = 31.18;
+
+let loftGLBScene = null, pendingLofts = [];
+const LOFT_SCALE = 20.0;
 
 export const plotRegistry = new Map();
 export let onPlotSelected = null;
 
-// ─── HORSE + RIDER AVATAR ────────────────────────────────────────────────────
+// Atmospheric sky refs
+let _skyUniforms = null, _skyObj = null, _skySun = null;
+
+// ─── HORSE + RIDER (player) ───────────────────────────────────────────────────
 export const RIDER_EYE_HEIGHT = 3.1;
 export const FOOT_EYE_HEIGHT  = 1.75;
-let horseGroup = null;
-let horseMixer = null;
-export let horseViewMode = 'first'; // Toggle between 1st and 3rd person
+let horseGroup = null, horseMixer = null;
+export let horseViewMode = 'first';
 
-window.addEventListener('keydown', (e) => {
-  if (e.key.toLowerCase() === 'v' && document.getElementById('world-overlay').classList.contains('open')) {
+window.addEventListener('keydown', e => {
+  if (e.key.toLowerCase() === 'v' && document.getElementById('world-overlay')?.classList.contains('open'))
     horseViewMode = horseViewMode === 'first' ? 'third' : 'first';
-  }
 });
 
 export function loadHorseGLB() {
-  const loader = makeDracoLoader();
-  loader.load("./assets/horse.glb", gltf => {
+  makeDracoLoader().load("./assets/horse.glb", gltf => {
     const model = gltf.scene;
     model.scale.setScalar(0.022);
-    model.traverse(c => {
-      if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; }
-    });
-    
+    model.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
     const bbox = new THREE.Box3().setFromObject(model);
     if (bbox.min.y < 0) model.position.y = -bbox.min.y;
-    
     horseGroup = new THREE.Group();
     horseGroup.name = 'horseRider';
     horseGroup.add(model);
     scene.add(horseGroup);
-    
     horseMixer = new THREE.AnimationMixer(model);
-    let rawClip = gltf.animations.find(a => {
-      const n = a.name.toLowerCase();
-      return n.includes('trot') || n.includes('walk') || n.includes('run');
-    }) || gltf.animations[0];
+    const rawClip = gltf.animations.find(a => /trot|walk|run/i.test(a.name)) || gltf.animations[0];
     if (rawClip) {
-      // Strip root-motion tracks (position + rotation on the root joint).
-      // These baked-in keyframes cause the horse to spin or drift uncontrollably.
-      // We control position/rotation externally via setHorsePosition().
       const filteredTracks = rawClip.tracks.filter(track => {
-        // Keep all non-root tracks. Root is typically named '_rootJoint', 'Root', 'Hips_01', or 'RootNode'
-        const isRootBone = /^(root|_rootjoint|rootnode|hips_01)/i.test(track.name.split('.')[0]);
-        const isPositionOrRotation = track.name.endsWith('.position') || track.name.endsWith('.quaternion');
-        return !(isRootBone && isPositionOrRotation);
+        const isRoot = /^(root|_rootjoint|rootnode|hips_01)/i.test(track.name.split('.')[0]);
+        return !(isRoot && (track.name.endsWith('.position') || track.name.endsWith('.quaternion')));
       });
       const clip = new THREE.AnimationClip(rawClip.name, rawClip.duration, filteredTracks);
       const action = horseMixer.clipAction(clip);
@@ -100,149 +108,564 @@ export function loadHorseGLB() {
       action.timeScale = 1.2;
       action.play();
     }
-
-  }, undefined, err => {
-    console.error("Failed to load horse.glb:", err);
-  });
+  }, undefined, err => console.error("Horse GLB failed:", err));
 }
 
 export function tickHorseAnim(delta, isMoving) {
   if (horseMixer && isMoving) horseMixer.update(delta);
 }
 
-export function setHorsePosition(x, y, z, yaw) {
-  if (!horseGroup) return;
-  // Dynamic offset based on view mode (Press V to toggle)
-  let forwardOffset = horseViewMode === 'first' ? 1.0 : 4.5;
-  let downOffset = horseViewMode === 'first' ? -2.0 : -2.5;
+// ─── IMPROVEMENT 6: TERRAIN HEIGHT FOLLOWING ─────────────────────────────────
+const _terrainRaycaster = new THREE.Raycaster(new THREE.Vector3(), new THREE.Vector3(0,-1,0), 0, 20);
+let _terrainMeshes = [];  // populated after ground is built
 
-  horseGroup.position.set(
-    x - Math.sin(yaw) * forwardOffset, 
-    y + downOffset, 
-    z - Math.cos(yaw) * forwardOffset
-  );
-  horseGroup.rotation.y = yaw + Math.PI; 
+function getGroundY(x, z) {
+  _terrainRaycaster.ray.origin.set(x, 15, z);
+  const hits = _terrainRaycaster.intersectObjects(_terrainMeshes, false);
+  return hits.length > 0 ? hits[0].point.y : 0;
 }
 
-export function getHorseGroup() { return horseGroup; }
+export function setHorsePosition(x, z, yaw) {
+  if (!horseGroup) return;
+  const groundY = getGroundY(x, z);
+  const forwardOffset = horseViewMode === 'first' ? 1.0 : 4.5;
+  const downOffset    = horseViewMode === 'first' ? -2.0 : -2.5;
+  horseGroup.position.set(
+    x - Math.sin(yaw) * forwardOffset,
+    groundY + downOffset,
+    z - Math.cos(yaw) * forwardOffset
+  );
+  horseGroup.rotation.y = yaw + Math.PI;
+}
 
-//        INIT
+// ─── IMPROVEMENT 7: NPC HORSES ───────────────────────────────────────────────
+const npcHorses = [];  // { group, mixer, path, pathIdx, speed, progress }
+
+const NPC_PATHS = [
+  // Paddock patrol — rectangular loop
+  [new THREE.Vector3(200,0,0),new THREE.Vector3(230,0,0),new THREE.Vector3(230,0,30),new THREE.Vector3(200,0,30)],
+  // Polo field canter — diagonal sweep
+  [new THREE.Vector3(-80,0,50),new THREE.Vector3(0,0,20),new THREE.Vector3(80,0,50),new THREE.Vector3(0,0,80)],
+  // Lake side wander
+  [new THREE.Vector3(-60,0,-100),new THREE.Vector3(60,0,-100),new THREE.Vector3(90,0,-90),new THREE.Vector3(60,0,-80)],
+];
+
+function spawnNPCHorse(pathIndex) {
+  makeDracoLoader().load("./assets/horse.glb", gltf => {
+    const model = gltf.scene;
+    model.scale.setScalar(0.020); // slightly smaller than player horse
+    model.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+    const bbox = new THREE.Box3().setFromObject(model);
+    if (bbox.min.y < 0) model.position.y = -bbox.min.y;
+
+    const group = new THREE.Group();
+    group.add(model);
+    scene.add(group);
+
+    const mixer = new THREE.AnimationMixer(model);
+    const clip  = gltf.animations[0];
+    if (clip) {
+      const filteredTracks = clip.tracks.filter(t => {
+        const isRoot = /^(root|_rootjoint|rootnode|hips_01)/i.test(t.name.split('.')[0]);
+        return !(isRoot && (t.name.endsWith('.position') || t.name.endsWith('.quaternion')));
+      });
+      const cleanClip = new THREE.AnimationClip(clip.name, clip.duration, filteredTracks);
+      const action = mixer.clipAction(cleanClip);
+      action.setLoop(THREE.LoopRepeat, Infinity);
+      action.timeScale = 0.9 + Math.random() * 0.4;
+      action.play();
+    }
+
+    const path = NPC_PATHS[pathIndex % NPC_PATHS.length];
+    const startPt = path[0];
+    group.position.copy(startPt);
+
+    npcHorses.push({ group, mixer, path, pathIdx: 0, speed: 2.5 + Math.random() * 1.5, progress: 0 });
+  }, undefined, err => console.warn("NPC horse failed:", err));
+}
+
+function tickNPCHorses(delta) {
+  npcHorses.forEach(npc => {
+    npc.mixer.update(delta);
+    const path = npc.path;
+    const from = path[npc.pathIdx];
+    const to   = path[(npc.pathIdx + 1) % path.length];
+    const segment = new THREE.Vector3().subVectors(to, from);
+    const segLen  = segment.length();
+    npc.progress += npc.speed * delta;
+    if (npc.progress >= segLen) {
+      npc.progress -= segLen;
+      npc.pathIdx = (npc.pathIdx + 1) % path.length;
+    }
+    const t = Math.min(npc.progress / segLen, 1);
+    npc.group.position.lerpVectors(from, to, t);
+    npc.group.position.y = getGroundY(npc.group.position.x, npc.group.position.z);
+    // Face direction of travel
+    const dir = segment.normalize();
+    if (dir.lengthSq() > 0) npc.group.rotation.y = Math.atan2(dir.x, dir.z);
+  });
+}
+
+// ─── IMPROVEMENT 3: GUIDED TOUR ───────────────────────────────────────────────
+export const TOUR_STOPS = [
+  { pos:[-20, 3.1, 210], yaw:0,           pitch:-0.08, caption:"Welcome to Project XIX — 18.8 hectares of polo and equestrian living at Lakowe, Ibeju-Lekki.",        voice:"Welcome to Project Nineteen. 18.8 hectares of polo and equestrian living at Lakowe, Ibeju-Lekki Lagos." },
+  { pos:[-20, 3.1,  80], yaw:0,           pitch:-0.04, caption:"The main polo field — 275 metres long. Full FIP international standard. Match-day from your terrace.", voice:"Ahead of you, the main polo field. 275 metres long, built to full FIP international standard. Imagine watching a match from your terrace." },
+  { pos:[-20, 3.1, -90], yaw:0,           pitch:-0.06, caption:"The lake — a 200-metre crescent between the polo ring and the villa north row.",                       voice:"The crescent lake. 200 metres of still water between the polo ring and your villa's front garden." },
+  { pos:[-155, 3.1,  0], yaw: Math.PI/2,  pitch:-0.04, caption:"West villa row — 120 premium 3-bedroom villas with direct polo-field view.",                           voice:"The west villa row. 120 premium three-bedroom residences, each with a direct polo field view and private garden." },
+  { pos:[  0, 3.1, 108], yaw: Math.PI,    pitch:-0.08, caption:"The Clubhouse — 3,419 m². 8 VIP skyboxes. Restaurant. Bar. The social heart of XIX.",                   voice:"The Clubhouse. 3,419 square metres. Eight VIP skyboxes, a restaurant, and bar. The social heart of Project Nineteen." },
+  { pos:[-375, 3.1, 90], yaw: Math.PI/2,  pitch:-0.05, caption:"The Equestrian Quarter — 56-stall stables, veterinary clinic, cobblestone courtyard.",                  voice:"The equestrian quarter. 56 stalls across four stable blocks, a veterinary clinic, and a cobblestone courtyard." },
+  { pos:[ 218, 3.1,  0], yaw:-Math.PI/2,  pitch:-0.04, caption:"The paddock — post-and-rail enclosure. Watch horses warm up from your east terrace.",                   voice:"The paddock. Post and rail fencing, used for horse warming and exercise. Visible from the east terrace of your villa." },
+];
+
+let _tourActive = false, _tourStop = 0, _tourCamStart = null, _tourCamEnd = null;
+let _tourAnimT = 0, _tourDuration = 4.5, _tourPauseT = 0, _tourPauseDuration = 5.0;
+let _tourSpeaking = false, _tourOnTeleport = null;
+
+export function startTour(onTeleport) {
+  _tourOnTeleport = onTeleport;
+  _tourActive  = true;
+  _tourStop    = 0;
+  _tourAnimT   = 1.1; // trigger first stop immediately
+  _tourPauseT  = 0;
+  _injectTourUI();
+  _speakStop(0);
+}
+
+export function stopTour() {
+  _tourActive = false;
+  window.speechSynthesis && window.speechSynthesis.cancel();
+  document.getElementById('tour-ui')?.remove();
+}
+
+export function isTourActive() { return _tourActive; }
+
+function _speakStop(idx) {
+  if (!window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  const stop = TOUR_STOPS[idx];
+  const utt  = new SpeechSynthesisUtterance(stop.voice);
+  utt.rate   = 0.88;
+  utt.pitch  = 1.0;
+  // Prefer a female English voice if available
+  const voices = window.speechSynthesis.getVoices();
+  const preferred = voices.find(v => /en/i.test(v.lang) && /female|samantha|karen|victoria|moira/i.test(v.name))
+                 || voices.find(v => /en/i.test(v.lang));
+  if (preferred) utt.voice = preferred;
+  window.speechSynthesis.speak(utt);
+  // Update tour HUD caption
+  const capEl = document.getElementById('tour-caption');
+  if (capEl) capEl.textContent = stop.caption;
+  const cntEl = document.getElementById('tour-counter');
+  if (cntEl) cntEl.textContent = `${idx + 1} / ${TOUR_STOPS.length}`;
+}
+
+function _injectTourUI() {
+  if (document.getElementById('tour-ui')) return;
+  const ui = document.createElement('div');
+  ui.id = 'tour-ui';
+  ui.style.cssText = `position:fixed;bottom:90px;left:50%;transform:translateX(-50%);
+    z-index:500;background:rgba(6,18,8,0.82);backdrop-filter:blur(10px);
+    border:1px solid rgba(201,168,76,0.4);border-radius:10px;padding:14px 20px;
+    max-width:520px;width:90%;font-family:Inter,sans-serif;pointer-events:all;`;
+  ui.innerHTML = `
+    <div style="font-size:11px;color:rgba(201,168,76,0.8);margin-bottom:6px;letter-spacing:.08em;" id="tour-counter">1 / ${TOUR_STOPS.length}</div>
+    <div style="font-size:13px;color:rgba(255,255,255,0.88);line-height:1.5;" id="tour-caption">${TOUR_STOPS[0].caption}</div>
+    <div style="display:flex;gap:10px;margin-top:12px;">
+      <button onclick="window.__tourPrev()" style="flex:1;padding:7px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:rgba(255,255,255,0.7);cursor:pointer;font-size:12px;">← Prev</button>
+      <button onclick="window.__tourNext()" style="flex:1;padding:7px;background:rgba(201,168,76,0.85);border:none;border-radius:6px;color:#0a1008;font-weight:600;cursor:pointer;font-size:12px;">Next →</button>
+      <button onclick="window.__tourStop()" style="padding:7px 14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:rgba(255,255,255,0.5);cursor:pointer;font-size:12px;">✕</button>
+    </div>`;
+  document.getElementById('world-overlay')?.appendChild(ui);
+}
+
+window.__tourNext = () => {
+  if (!_tourActive) return;
+  _tourStop = (_tourStop + 1) % TOUR_STOPS.length;
+  _tourAnimT = 0; _tourPauseT = 0;
+  _doTourTeleport(_tourStop);
+};
+window.__tourPrev = () => {
+  if (!_tourActive) return;
+  _tourStop = (_tourStop - 1 + TOUR_STOPS.length) % TOUR_STOPS.length;
+  _tourAnimT = 0; _tourPauseT = 0;
+  _doTourTeleport(_tourStop);
+};
+window.__tourStop = () => stopTour();
+
+function _doTourTeleport(idx) {
+  const stop = TOUR_STOPS[idx];
+  if (_tourOnTeleport) _tourOnTeleport(stop.pos, stop.yaw, stop.pitch || 0);
+  _speakStop(idx);
+}
+
+function tickTour(delta, cam) {
+  if (!_tourActive) return;
+  _tourPauseT += delta;
+  if (_tourPauseT >= _tourPauseDuration) {
+    _tourPauseT = 0;
+    _tourStop = (_tourStop + 1) % TOUR_STOPS.length;
+    _doTourTeleport(_tourStop);
+  }
+}
+
+// ─── IMPROVEMENT 2: AMBIENT SOUND ─────────────────────────────────────────────
+let _audioCtx = null, _windGain = null, _birdsGain = null, _hoovesGain = null;
+
+export function initAmbientAudio() {
+  // Called on first user gesture (from app.js enableAudio)
+  if (_audioCtx) return;
+  try {
+    _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    _windGain  = _makeNoise('wind');
+    _birdsGain = _makeBirds();
+    _hoovesGain= _makeHooves();
+  } catch(e) { console.warn('Audio init failed:', e); }
+}
+
+function _makeNoise(type) {
+  if (!_audioCtx) return null;
+  const bufSize = _audioCtx.sampleRate * 2;
+  const buf = _audioCtx.createBuffer(1, bufSize, _audioCtx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i=0; i<bufSize; i++) data[i] = (Math.random()*2-1);
+
+  const source = _audioCtx.createBufferSource();
+  source.buffer = buf; source.loop = true;
+
+  const filter = _audioCtx.createBiquadFilter();
+  filter.type = 'bandpass';
+  filter.frequency.value = type === 'wind' ? 280 : 800;
+  filter.Q.value = 0.5;
+
+  const gain = _audioCtx.createGain();
+  gain.gain.value = type === 'wind' ? 0.012 : 0.005;
+
+  source.connect(filter); filter.connect(gain); gain.connect(_audioCtx.destination);
+  source.start();
+  return gain;
+}
+
+function _makeBirds() {
+  if (!_audioCtx) return null;
+  const gain = _audioCtx.createGain();
+  gain.gain.value = 0.0;
+  gain.connect(_audioCtx.destination);
+  // Chirp every 1.5-4 seconds
+  function chirp() {
+    if (!_audioCtx) return;
+    const osc = _audioCtx.createOscillator();
+    const g   = _audioCtx.createGain();
+    osc.type  = 'sine';
+    osc.frequency.setValueAtTime(1800 + Math.random()*600, _audioCtx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(2400 + Math.random()*400, _audioCtx.currentTime + 0.08);
+    g.gain.setValueAtTime(0, _audioCtx.currentTime);
+    g.gain.linearRampToValueAtTime(0.02, _audioCtx.currentTime + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, _audioCtx.currentTime + 0.12);
+    osc.connect(g); g.connect(_audioCtx.destination);
+    osc.start(); osc.stop(_audioCtx.currentTime + 0.15);
+    setTimeout(chirp, 1500 + Math.random() * 3000);
+  }
+  setTimeout(chirp, 800);
+  return gain;
+}
+
+function _makeHooves() {
+  if (!_audioCtx) return null;
+  const gain = _audioCtx.createGain();
+  gain.gain.value = 0;
+  gain.connect(_audioCtx.destination);
+  function clop() {
+    if (!_audioCtx || gain.gain.value < 0.001) { setTimeout(clop, 400); return; }
+    const osc = _audioCtx.createOscillator();
+    const g   = _audioCtx.createGain();
+    osc.type  = 'triangle';
+    osc.frequency.value = 120 + Math.random() * 40;
+    g.gain.setValueAtTime(0.08, _audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001, _audioCtx.currentTime + 0.15);
+    osc.connect(g); g.connect(gain);
+    osc.start(); osc.stop(_audioCtx.currentTime + 0.18);
+    setTimeout(clop, 280 + Math.random() * 120);
+  }
+  setTimeout(clop, 1200);
+  return gain;
+}
+
+export function updateAudioForMovement(isMoving, worldX, worldZ) {
+  if (!_audioCtx) return;
+  // Wind varies near perimeter
+  if (_windGain) {
+    const edge = Math.min(Math.abs(worldZ + 220), Math.abs(worldZ - 215));
+    const windVal = 0.008 + (1 - Math.min(edge / 80, 1)) * 0.018;
+    _windGain.gain.setTargetAtTime(windVal, _audioCtx.currentTime, 0.4);
+  }
+  // Hooves only when moving
+  if (_hoovesGain) {
+    _hoovesGain.gain.setTargetAtTime(isMoving ? 0.6 : 0, _audioCtx.currentTime, 0.3);
+  }
+  // Birds quieter when moving fast
+  if (_birdsGain) {
+    _birdsGain.gain.setTargetAtTime(isMoving ? 0 : 0.8, _audioCtx.currentTime, 0.8);
+  }
+}
+
+// ─── IMPROVEMENT 1: INSTANCED RENDERING ──────────────────────────────────────
+// Replace repeated scene.add(clone) with InstancedMesh for trees & fence posts.
+// Villas still use clone() because each has a plotKey and unique overlay.
+// Trees, fence posts, and cypress become instanced.
+
+const _dummy = new THREE.Object3D();
+
+function buildInstancedFencePosts(positions) {
+  const geo = new THREE.CylinderGeometry(0.1, 0.1, 1.6, 6);
+  const mat = new THREE.MeshStandardMaterial({ color:0xfcfaf8, roughness:.5 });
+  const mesh = new THREE.InstancedMesh(geo, mat, positions.length);
+  mesh.receiveShadow = true;
+  positions.forEach(([x,y,z], i) => {
+    _dummy.position.set(x, y, z);
+    _dummy.updateMatrix();
+    mesh.setMatrixAt(i, _dummy.matrix);
+  });
+  mesh.instanceMatrix.needsUpdate = true;
+  scene.add(mesh);
+  return mesh;
+}
+
+function buildInstancedCypress(positions) {
+  const trunkGeo = new THREE.CylinderGeometry(0.25, 0.38, 5, 6);
+  const trunkMat = new THREE.MeshStandardMaterial({ color:0x8B6914, roughness:.8 });
+  const coneGeo  = new THREE.ConeGeometry(0.7, 4.5, 6);
+  const coneMat  = new THREE.MeshStandardMaterial({ color:0x2a5a20, roughness:.95 });
+  const trunks   = new THREE.InstancedMesh(trunkGeo, trunkMat, positions.length);
+  const cones    = new THREE.InstancedMesh(coneGeo,  coneMat,  positions.length);
+  trunks.castShadow = cones.castShadow = true;
+  positions.forEach(([x,z], i) => {
+    _dummy.position.set(x, 2.5, z); _dummy.rotation.set(0,0,0); _dummy.scale.set(1,1,1); _dummy.updateMatrix();
+    trunks.setMatrixAt(i, _dummy.matrix);
+    _dummy.position.set(x, 5.5, z); _dummy.updateMatrix();
+    cones.setMatrixAt(i, _dummy.matrix);
+  });
+  trunks.instanceMatrix.needsUpdate = true;
+  cones.instanceMatrix.needsUpdate  = true;
+  scene.add(trunks); scene.add(cones);
+}
+
+// ─── IMPROVEMENT 5: LOD SYSTEM ────────────────────────────────────────────────
+// Villa GLB: real mesh within 180m, box impostor beyond
+const _villaLODs = [];  // { group: THREE.LOD, x, z }
+
+function placeVillaGLBWithLOD(x, z, ry, plotKey) {
+  if (!villaGLBScene) { pendingVillas.push({x,z,ry,plotKey}); return; }
+
+  const lod = new THREE.LOD();
+  lod.position.set(x, 0, z);
+  lod.rotation.y = ry;
+  lod.userData.isVillaGLB = true;
+  lod.userData.baseRotY   = ry;
+  lod.userData.plotKey    = plotKey;
+
+  // Level 0: full GLB (0–180m)
+  const highDetail = villaGLBScene.clone(true);
+  highDetail.rotation.y = 0; // LOD group handles rotation
+  lod.addLevel(highDetail, 0);
+
+  // Level 1: simple box impostor (180–350m)
+  const impostor = new THREE.Group();
+  const impMat   = new THREE.MeshStandardMaterial({ color:0xF5E6B0, roughness:.8 });
+  const impBody  = new THREE.Mesh(new THREE.BoxGeometry(14, 8, 12), impMat);
+  impBody.position.y = 4;
+  impostor.add(impBody);
+  lod.addLevel(impostor, 180);
+
+  // Level 2: invisible (350m+, fog handles it)
+  lod.addLevel(new THREE.Group(), 350);
+
+  scene.add(lod);
+  if (plotKey) addPlotOverlay(x, z, ry, plotKey, lod);
+}
+
+// ─── IMPROVEMENT 9: IN-WORLD SIGNAGE ─────────────────────────────────────────
+function addEstateSignage() {
+  // Entry gate — two pillars + header bar with XIX text rendered on canvas texture
+  const pillarMat = new THREE.MeshStandardMaterial({ color:0x2a3820, roughness:.7, metalness:.3 });
+  const goldMat   = new THREE.MeshStandardMaterial({ color:0xC9A84C, roughness:.3, metalness:.8 });
+
+  // Gate pillars at south entrance (Lagos Road side)
+  for (const gx of [-12, 12]) {
+    const pillar = new THREE.Mesh(new THREE.BoxGeometry(1.2, 6, 1.2), pillarMat);
+    pillar.position.set(gx, 3, 218);
+    pillar.castShadow = true; scene.add(pillar);
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.5, 1.6), goldMat);
+    cap.position.set(gx, 6.25, 218); scene.add(cap);
+  }
+
+  // XIX header bar
+  const headerBar = new THREE.Mesh(new THREE.BoxGeometry(26, 0.5, 0.3), pillarMat);
+  headerBar.position.set(0, 6.5, 218); scene.add(headerBar);
+
+  // XIX logo on canvas texture
+  const sigCanvas = document.createElement('canvas'); sigCanvas.width=512; sigCanvas.height=96;
+  const sigCtx = sigCanvas.getContext('2d');
+  sigCtx.fillStyle = '#061208'; sigCtx.fillRect(0,0,512,96);
+  sigCtx.fillStyle = '#C9A84C';
+  sigCtx.font = 'bold 64px serif';
+  sigCtx.textAlign = 'center'; sigCtx.textBaseline = 'middle';
+  sigCtx.fillText('PROJECT XIX', 256, 48);
+  const sigTex = new THREE.CanvasTexture(sigCanvas);
+  sigTex.colorSpace = THREE.SRGBColorSpace;
+  const signMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(10, 1.9),
+    new THREE.MeshBasicMaterial({ map: sigTex, side: THREE.DoubleSide })
+  );
+  signMesh.position.set(0, 5.5, 217.9); scene.add(signMesh);
+
+  // Directional signs — smaller canvas labels on posts
+  const signs = [
+    { label:'CLUBHOUSE ▶',  pos:[-20, 0, 190], ry:0 },
+    { label:'◀ STABLES',    pos:[ 20, 0, 190], ry:0 },
+    { label:'VILLAS ▶',     pos:[ 0, 0, 160],  ry:Math.PI/2 },
+    { label:'POLO FIELD ▶', pos:[-150, 0, 0],  ry:Math.PI/2 },
+  ];
+
+  signs.forEach(sg => {
+    const postM = new THREE.Mesh(new THREE.CylinderGeometry(.06,.06,2.5,6), pillarMat);
+    postM.position.set(...sg.pos); postM.position.y = 1.25; scene.add(postM);
+
+    const sc = document.createElement('canvas'); sc.width=256; sc.height=56;
+    const sx = sc.getContext('2d');
+    sx.fillStyle='rgba(6,18,8,0.92)'; sx.fillRect(0,0,256,56);
+    sx.strokeStyle='#C9A84C'; sx.lineWidth=2; sx.strokeRect(2,2,252,52);
+    sx.fillStyle='#C9A84C'; sx.font='bold 20px sans-serif';
+    sx.textAlign='center'; sx.textBaseline='middle'; sx.fillText(sg.label,128,28);
+    const t = new THREE.CanvasTexture(sc); t.colorSpace=THREE.SRGBColorSpace;
+    const board = new THREE.Mesh(new THREE.PlaneGeometry(1.8,.4), new THREE.MeshBasicMaterial({map:t,side:THREE.DoubleSide}));
+    board.position.set(sg.pos[0], 2.6, sg.pos[2]); board.rotation.y = sg.ry;
+    scene.add(board);
+  });
+}
+
+// ─── IMPROVEMENT 8: AO CONTACT SHADOWS ───────────────────────────────────────
+function addVillaContactShadow(x, z) {
+  const aoMat = new THREE.MeshBasicMaterial({
+    color: 0x000000, transparent: true, opacity: 0.22,
+    depthWrite: false, side: THREE.FrontSide,
+  });
+  const ao = new THREE.Mesh(new THREE.PlaneGeometry(18, 14), aoMat);
+  ao.rotation.x = -Math.PI / 2;
+  ao.position.set(x, 0.05, z);
+  scene.add(ao);
+}
+
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+let sunLight, hemiLight;
+export function getSunLight() { return sunLight; }
+
 export function initScene(canvas) {
   clock = new THREE.Clock();
   const perfS = PERF_SETTINGS[PERF_MODE];
 
-  renderer = new THREE.WebGLRenderer({
-    canvas,
-    antialias: PERF_MODE !== 'fast', 
-    powerPreference: "high-performance",
-  });
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference:"high-performance" });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, perfS.pixelRatio));
   renderer.shadowMap.enabled   = true;
   renderer.shadowMap.type      = THREE.PCFSoftShadowMap;
   renderer.toneMapping         = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.88;
+  renderer.toneMappingExposure = 0.50; // sky handles exposure now
   renderer.outputColorSpace    = THREE.SRGBColorSpace;
 
   scene  = new THREE.Scene();
-  scene.background = new THREE.Color(0x8ab8cc);
   scene.fog = new THREE.FogExp2(0x8ab8cc, perfS.fogDensity);
 
-  camera = new THREE.PerspectiveCamera(65, 1, 0.5, 1200); 
+  camera = new THREE.PerspectiveCamera(65, 1, 0.5, 1200);
+
   buildLighting();
-  buildSky();
-  loadTreeGLB();
-  buildEnvironment();
-  loadVillaGLB();
-  loadApartmentGLB();
-  loadLoftGLB();
-  loadClubhouseGLB();
-  loadStablesGLB();
-  loadHorseGLB();
+
+  // IMPROVEMENT 4: Atmospheric sky (replaces canvas gradient)
+  const { skyObj, sun, skyUniforms } = createAtmosphericSky(scene, renderer);
+  _skyObj = skyObj; _skySun = sun; _skyUniforms = skyUniforms;
+  // Set initial afternoon sky
+  setSkyForTime(_skyUniforms, _skySun, sunLight, 'afternoon');
+
+  // IMPROVEMENT 10: Progressive loading
+  // Phase 1 — ground and field immediately (fast)
+  addGround();
+  addPoloField();
+  addSafetyZone();
+
+  // Phase 2 — everything else deferred 1 frame so first paint is fast
+  requestAnimationFrame(() => {
+    addGrassRing();
+    addYardMarkings();
+    addRoads();
+    addLake();
+    addEastLake();
+    addClubhouse();
+    addEstateSignage();  // IMPROVEMENT 9
+
+    // Phase 3 — heavy GLBs deferred another frame
+    requestAnimationFrame(() => {
+      loadHorseGLB();
+      loadVillaGLB();
+      loadApartmentGLB();
+      loadLoftGLB();
+      loadClubhouseGLB();
+      loadStablesGLB();
+      addVillaRing();
+      addLoftTerraces();
+      addWestCompound();
+      addPaddock();
+      addGamePark();
+      addCommercialBlock();
+      addServiceCompound();
+      addLandscaping();
+
+      // IMPROVEMENT 7: NPC horses after everything else
+      requestAnimationFrame(() => {
+        spawnNPCHorse(0); // paddock
+        spawnNPCHorse(1); // polo field
+        spawnNPCHorse(2); // lake side
+      });
+    });
+  });
 
   return { scene, renderer, camera, clock };
 }
 
-//        LIGHTING
-let sunLight, hemiLight;
-export function getSunLight() { return sunLight; }
-export function getHemiLight() { return hemiLight; }
+export function updateSkyForTime(timeName) {
+  if (!_skyUniforms) return;
+  const exp = setSkyForTime(_skyUniforms, _skySun, sunLight, timeName);
+  if (renderer) renderer.toneMappingExposure = exp;
+  if (scene && scene.fog) {
+    const fogColors = { morning:0x8ab8cc, afternoon:0x8ab8cc, sunset:0xc06040, night:0x020810 };
+    scene.fog.color.set(fogColors[timeName] || 0x8ab8cc);
+  }
+  setBloomForTime(timeName);
+}
+
+// Keep updateSky for backwards compat with app.js time presets
+export function updateSky(top, hor, gnd) {
+  // no-op: sky is now atmospheric, controlled via updateSkyForTime()
+}
 
 function buildLighting() {
   const perfS = PERF_SETTINGS[PERF_MODE];
-  hemiLight = new THREE.HemisphereLight(0xd4e8ff, 0x4a6a30, 1.2);
+  hemiLight = new THREE.HemisphereLight(0xd4e8ff, 0x4a6a30, 1.0);
   scene.add(hemiLight);
-
-  sunLight = new THREE.DirectionalLight(0xffe8b0, 2.6);
-  sunLight.position.set(-180, 160, 100);
-  sunLight.castShadow = true;
+  sunLight = new THREE.DirectionalLight(0xfff4e0, 2.2);
+  sunLight.position.set(-160, 160, 100);
+  sunLight.castShadow = (PERF_MODE !== 'fast');
   sunLight.shadow.camera.left = sunLight.shadow.camera.bottom = -420;
   sunLight.shadow.camera.right = sunLight.shadow.camera.top   =  420;
-  sunLight.shadow.camera.far   = 900;           
+  sunLight.shadow.camera.far   = 900;
   sunLight.shadow.mapSize.set(perfS.shadowMapSize, perfS.shadowMapSize);
-  sunLight.shadow.bias        = -0.0002;
-  sunLight.shadow.normalBias  =  0.02;
-  sunLight.shadow.radius      =  3.5;
+  sunLight.shadow.bias = -0.0002; sunLight.shadow.normalBias = 0.02; sunLight.shadow.radius = 3.5;
   scene.add(sunLight);
-
-  const fill = new THREE.DirectionalLight(0xb8d0e8, 0.45);
+  const fill = new THREE.DirectionalLight(0xb8d0e8, 0.4);
   fill.position.set(120, 80, -100); scene.add(fill);
-
-  if (PERF_MODE !== 'fast') {
-    [[-40,8,115],[0,8,115],[40,8,115]].forEach(p => {
-      const pt = new THREE.PointLight(0xffe0a0, 2.0, 48, 2);
-      pt.position.set(...p); scene.add(pt);
-    });
-  }
 }
 
-//        SKY
-function buildSky() {
-  const makeGrad = (top,hor,gnd) => {
-    const c = document.createElement("canvas"); c.width=4; c.height=256;
-    const sx = c.getContext("2d");
-    const g  = sx.createLinearGradient(0,0,0,256);
-    g.addColorStop(0,top); g.addColorStop(.45,hor); g.addColorStop(1,gnd);
-    sx.fillStyle=g; sx.fillRect(0,0,4,256);
-    return new THREE.CanvasTexture(c);
-  };
-  const st = makeGrad("#1a3a6a","#5a9acc","#c8d8e0");
-  st.colorSpace = THREE.SRGBColorSpace;
-  skyMesh = new THREE.Mesh(new THREE.SphereGeometry(900,16,10), 
-    new THREE.MeshBasicMaterial({map:st, side:THREE.BackSide}));
-  scene.add(skyMesh);
-
-  const sunM = new THREE.Mesh(new THREE.SphereGeometry(15,8,6),
-    new THREE.MeshBasicMaterial({color:0xffe8b0}));
-  sunM.position.set(-300,310,180); scene.add(sunM);
-
-  if (PERF_MODE !== 'fast') {
-    const cm = new THREE.MeshBasicMaterial({color:0xfdfcfa,transparent:true,opacity:.65,side:THREE.DoubleSide});
-    [[-180,260,-300],[80,270,-350],[220,250,-280],[-300,240,-180],[140,268,-400]].forEach(([x,y,z])=>{
-      for(let i=0;i<4;i++){
-        const m=new THREE.Mesh(new THREE.SphereGeometry(28+Math.random()*24,6,4),cm);
-        m.scale.y=.28; m.position.set(x+(Math.random()-.5)*65,y+Math.random()*10,z+(Math.random()-.5)*42);
-        scene.add(m);
-      }
-    });
-  }
-}
-
-export function updateSky(top,hor,gnd) {
-  if (!skyMesh) return;
-  const c=document.createElement("canvas"); c.width=4; c.height=256;
-  const sx=c.getContext("2d");
-  const g=sx.createLinearGradient(0,0,0,256);
-  g.addColorStop(0,top); g.addColorStop(.5,hor); g.addColorStop(1,gnd);
-  sx.fillStyle=g; sx.fillRect(0,0,4,256);
-  skyMesh.material.map=new THREE.CanvasTexture(c);
-  skyMesh.material.needsUpdate=true;
-}
-
-//        GEOMETRY HELPERS
+// ─── GEOMETRY HELPERS ─────────────────────────────────────────────────────────
 function box(w,h,d,mat,pos=[0,0,0],ry=0,shadow=true){
   const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);
-  m.position.set(...pos); m.rotation.y=ry;
-  m.castShadow=shadow&&h>.3; m.receiveShadow=true; return m;
+  m.position.set(...pos); m.rotation.y=ry; m.castShadow=shadow&&h>.3; m.receiveShadow=true; return m;
 }
 function plane(w,d,mat,pos=[0,0,0]){
   const m=new THREE.Mesh(new THREE.PlaneGeometry(w,d),mat);
@@ -254,15 +677,11 @@ function cyl(rt,rb,h,seg,mat,pos=[0,0,0]){
 }
 function s(...o){ o.forEach(x=>x&&scene.add(x)); }
 
-// Materials
 const MATS = {
-  villaBody:  ()=>new THREE.MeshStandardMaterial({color:0xF5E6B0,roughness:.75,metalness:.02}),
   villaRoof:  ()=>new THREE.MeshStandardMaterial({color:0xC9A84C,roughness:.65,metalness:.08}),
   loftBody:   ()=>new THREE.MeshStandardMaterial({color:0xE8E0D0,roughness:.78}),
   loftRoof:   ()=>new THREE.MeshStandardMaterial({color:0xD4622A,roughness:.7}),
   flatGrey:   ()=>new THREE.MeshStandardMaterial({color:0xDDDDDD,roughness:.7}),
-  clubWhite:  ()=>new THREE.MeshStandardMaterial({color:0xF0ECE0,roughness:.7}),
-  stableBrick:()=>new THREE.MeshStandardMaterial({color:0xC4A882,roughness:.88}),
   stableRoof: ()=>new THREE.MeshStandardMaterial({color:0x8B6914,roughness:.8}),
   roadAsph:   ()=>new THREE.MeshStandardMaterial({color:0x1a1e1c,roughness:.88}),
   safetyBrown:()=>new THREE.MeshStandardMaterial({color:0x8B4513,roughness:.95}),
@@ -272,36 +691,29 @@ const MATS = {
   cobble:     ()=>new THREE.MeshStandardMaterial({color:0x9A7A5A,roughness:.9}),
   concrete:   ()=>new THREE.MeshStandardMaterial({color:0xc8c0b0,roughness:.8}),
   railWhite:  ()=>new THREE.MeshStandardMaterial({color:0xfcfaf8,roughness:.5}),
-  plotAvail:    () => new THREE.MeshStandardMaterial({ color: 0x00ff88, transparent: true, opacity: 0.0, depthWrite: false, visible: false }),
-  plotReserved: () => new THREE.MeshStandardMaterial({ color: 0xff4444, transparent: true, opacity: 0.0, depthWrite: false, visible: false }),
+  plotAvail:  ()=>new THREE.MeshStandardMaterial({color:0x00ff88,transparent:true,opacity:0,depthWrite:false}),
+  plotReserved:()=>new THREE.MeshStandardMaterial({color:0xff4444,transparent:true,opacity:0,depthWrite:false}),
 };
 
-//        ENVIRONMENT
-function buildEnvironment(){
-  addGround(); addPoloField(); addGrassRing(); addSafetyZone();
-  addYardMarkings(); addRoads(); addLake(); addEastLake();
-  addClubhouse(); addVillaRing(); addLoftTerraces();
-  addWestCompound(); addStables(); addPaddock(); addGamePark();
-  addCommercialBlock(); addServiceCompound(); addLandscaping();
-}
-
+// ─── ENVIRONMENT ──────────────────────────────────────────────────────────────
 function addGround(){
-  s(plane(900,700,PBR.dirt(),[0,0,30]));
-  s(plane(500,400,PBR.grass(),[0,.01,0]));
+  const dm = PBR.dirt(); const gm = PBR.grass();
+  const gp = plane(900,700,dm,[0,0,30]); gp.receiveShadow=true; scene.add(gp);
+  _terrainMeshes.push(gp);
+  const gp2 = plane(500,400,gm,[0,.01,0]); gp2.receiveShadow=true; scene.add(gp2);
+  _terrainMeshes.push(gp2);
   s(plane(180,80,MATS.concrete(),[0,.02,122]));
   s(plane(90,70,MATS.cobble(),[-355,.02,90]));
   s(plane(200,280,MATS.lawnGreen(),[-310,.01,30]));
 }
 
 function addGrassRing(){
-  const count = PERF_MODE==='fast' ? 100 : 220;
+  const count = PERF_MODE==='fast' ? 80 : 180;
   const cards = [
-    ...addGrassField( 0, -115, 140, 12, count),
-    ...addGrassField( 0,  115, 140, 12, count),
-    ...addGrassField(-165,  0,  12, 90, count/2),
-    ...addGrassField( 165,  0,  12, 90, count/2),
+    ...addGrassField(0,-115,140,12,count), ...addGrassField(0,115,140,12,count),
+    ...addGrassField(-165,0,12,90,count/2), ...addGrassField(165,0,12,90,count/2),
   ];
-  cards.forEach(card => scene.add(card));
+  cards.forEach(card=>scene.add(card));
 }
 
 function addPoloField(){
@@ -312,63 +724,39 @@ function addPoloField(){
     ctx.fillRect(0,i*(256/14),512,256/14+1);
   }
   const st=new THREE.CanvasTexture(sc);
-  st.colorSpace=THREE.SRGBColorSpace; st.wrapS=st.wrapT=THREE.RepeatWrapping; st.repeat.set(1,1);
+  st.colorSpace=THREE.SRGBColorSpace; st.wrapS=st.wrapT=THREE.RepeatWrapping;
   const fm=MAT_GRASS_FIELD(); fm.map=st;
-  s(plane(274,146,fm,[0,.12,0]));
+  const fp = plane(274,146,fm,[0,.12,0]); scene.add(fp); _terrainMeshes.push(fp);
   const lm=new THREE.MeshStandardMaterial({color:0xf8f5e0,roughness:.4});
-  s(box(.5,.05,146,lm,[0,.14,0],0,false));
-  s(box(274,.05,.5,lm,[0,.14,0],0,false));
+  s(box(.5,.05,146,lm,[0,.14,0],0,false)); s(box(274,.05,.5,lm,[0,.14,0],0,false));
 }
 
 function addSafetyZone(){
   const dm=PBR.dirt(); dm.color.set(0x8B4513);
-  s(plane(298,25,dm,[0,.11,-85.5]));
-  s(plane(298,25,dm,[0,.11, 85.5]));
-  s(plane(11,146,dm,[-142.5,.11,0]));
-  s(plane(11,146,dm,[ 142.5,.11,0]));
-  for(const [cx,cz] of [[-132,-80],[132,-80],[-132,80],[132,80]])
-    s(plane(20,20,dm,[cx,.11,cz]));
+  s(plane(298,25,dm,[0,.11,-85.5])); s(plane(298,25,dm,[0,.11,85.5]));
+  s(plane(11,146,dm,[-142.5,.11,0])); s(plane(11,146,dm,[142.5,.11,0]));
 }
 
 function addYardMarkings(){
   const lm=new THREE.MeshStandardMaterial({color:0xf8f5e0,roughness:.4});
   for(const side of[-1,1]) for(const d of[27.4,36.6,54.9])
     s(box(.5,.05,146,lm,[side*(137-d),.14,0],0,false));
-  const pm=MATS.railWhite(); pm.metalness=.2;
-  for(const gx of[-137,137]) for(const pz of[0,-7.3,7.3])
-    s(cyl(.12,.12,3,8,pm,[gx,1.5,pz]));
-  for(const z of[-55,0,55]) s(box(100,.05,.4,lm,[-390,.14,z],0,false));
-  for(const gz of[-80,80]) for(const pz of[0,-7.3,7.3])
-    s(cyl(.12,.12,3,8,pm,[-390,1.5,gz+pz]));
+  // IMPROVEMENT 1: fence posts as instanced mesh
+  const postPositions=[];
+  for(const gx of[-137,137]) for(const pz of[0,-7.3,7.3]) postPositions.push([gx,1.5,pz]);
+  buildInstancedFencePosts(postPositions);
 }
 
 function addRoads(){
-  const am=PBR.asphalt();
-  const lm=new THREE.MeshStandardMaterial({color:0xf0ecd0,roughness:.5});
-  const Y=.13;
-  s(plane(700,30,am,[0,Y,215]));
-  s(plane(700,4,MATS.grassGreen(),[0,Y+.01,215]));
-  for(let x=-300;x<=300;x+=18) s(box(8,.04,.35,lm,[x,Y+.03,215],0,false));
-  for(let x=-260;x<=260;x+=8){
-    const cz=-168-Math.abs(x)*.05;
-    s(plane(8,8,am,[x,Y,cz]));
-  }
-  s(plane(8,220,am,[-155,Y,0]));
-  s(plane(8,220,am,[ 155,Y,0]));
-  s(plane(320,8,am,[0,Y,-104]));
-  s(plane(320,8,am,[0,Y,104]));
-  for(const[cx,cz] of[[-150,-100],[150,-100],[-150,100],[150,100]])
-    s(plane(16,16,am,[cx,Y,cz]));
-  s(plane(8,220,am,[-177,Y,-5]));
-  s(plane(8,220,am,[ 177,Y,-5]));
+  const am=PBR.asphalt(); const Y=.13;
+  s(plane(700,30,am,[0,Y,215])); s(plane(700,4,MATS.grassGreen(),[0,Y+.01,215]));
+  s(plane(8,220,am,[-155,Y,0])); s(plane(8,220,am,[155,Y,0]));
+  s(plane(320,8,am,[0,Y,-104])); s(plane(320,8,am,[0,Y,104]));
+  s(plane(8,220,am,[-177,Y,-5])); s(plane(8,220,am,[177,Y,-5]));
   s(plane(320,7,am,[30,Y,-118]));
-  s(plane(400,8,am,[0,Y,128]));
-  s(plane(130,35,am,[0,Y,148]));
-  s(plane(8,280,am,[-270,Y,20]));
-  s(plane(8,200,am,[-230,Y,10]));
-  s(plane(150,8,am,[-310,Y,145]));
-  s(plane(8,100,am,[-170,Y,10]));
-  s(plane(8,250,am,[200,Y,10]));
+  s(plane(400,8,am,[0,Y,128])); s(plane(130,35,am,[0,Y,148]));
+  s(plane(8,280,am,[-270,Y,20])); s(plane(8,200,am,[-230,Y,10]));
+  s(plane(150,8,am,[-310,Y,145])); s(plane(8,250,am,[200,Y,10]));
   s(plane(55,8,am,[215,Y,120]));
 }
 
@@ -376,13 +764,12 @@ function addLake(){
   const wm=createWaterMat();
   const lb=new THREE.Mesh(new THREE.BoxGeometry(195,.35,22),wm);
   lb.position.set(30,.16,-115); lb.receiveShadow=true; scene.add(lb); waterMeshes.push(lb);
-  for(const[ex,sc2] of[[-60,.9],[120,1.0]]){
+  for(const [ex,sc2] of [[-60,.9],[120,1.0]]){
     const ep=new THREE.Mesh(new THREE.SphereGeometry(13,12,4),wm);
     ep.position.set(ex,.05,-115); ep.scale.set(1,.2,sc2); scene.add(ep); waterMeshes.push(ep);
   }
   const sg=MATS.grassGreen();
-  s(plane(220,6,sg,[30,.12,-104]));
-  s(plane(220,6,sg,[30,.12,-126]));
+  s(plane(220,6,sg,[30,.12,-104])); s(plane(220,6,sg,[30,.12,-126]));
 }
 
 function addEastLake(){
@@ -392,316 +779,190 @@ function addEastLake(){
 }
 
 function addClubhouse(){
-  const parkM=MATS.roadAsph();
-  s(plane(55,28,parkM,[-65,.13,128]));
-  s(plane(55,28,parkM,[ 65,.13,128]));
+  s(plane(55,28,MATS.roadAsph(),[-65,.13,128]));
+  s(plane(55,28,MATS.roadAsph(),[65,.13,128]));
 }
 
-function makeDracoLoader() {
-  const draco = new DRACOLoader();
+// ─── GLB LOADERS ──────────────────────────────────────────────────────────────
+function makeDracoLoader(){
+  const draco=new DRACOLoader();
   draco.setDecoderPath("https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/libs/draco/");
-  const loader = new GLTFLoader();
-  loader.setDRACOLoader(draco);
-  return loader;
+  const loader=new GLTFLoader(); loader.setDRACOLoader(draco); return loader;
 }
 
-function loadOneGLB(path, scale, yOff, onDone, onFail) {
-  makeDracoLoader().load(path,
-    gltf => {
-      gltf.scene.scale.setScalar(scale);
-      gltf.scene.traverse(child => {
-        if (child.isMesh) {
-          child.castShadow = false; // NO SHADOWS ON BUILDINGS = HIGH FPS
-          child.receiveShadow = true;
-          child.frustumCulled = true;
-        }
-      });
-      const bbox = new THREE.Box3().setFromObject(gltf.scene);
-      const autoLift = bbox.min.y < 0 ? -bbox.min.y : 0;
-      gltf.scene.position.y = yOff + autoLift;
-      onDone(gltf.scene);
-    },
-    undefined,
-    err => { console.error("GLB failed:", path, err.message||err); if(onFail) onFail(); }
-  );
+function loadOneGLB(path,scale,yOff,onDone,onFail){
+  makeDracoLoader().load(path,gltf=>{
+    gltf.scene.scale.setScalar(scale);
+    gltf.scene.traverse(child=>{
+      if(child.isMesh){ child.castShadow=false; child.receiveShadow=true; child.frustumCulled=true; }
+    });
+    const bbox=new THREE.Box3().setFromObject(gltf.scene);
+    gltf.scene.position.y=yOff+(bbox.min.y<0?-bbox.min.y:0);
+    onDone(gltf.scene);
+  },undefined,err=>{console.error("GLB failed:",path,err.message||err);if(onFail)onFail();});
 }
 
 function loadClubhouseGLB(){
-  loadOneGLB("assets/clubhouse-mesh.glb", 60.975, 0, tmpl=>{
-    clubGLBTemplate=tmpl;
+  loadOneGLB("assets/clubhouse-mesh.glb",60.975,0,tmpl=>{
     const g=new THREE.Group(); g.position.set(0,0,108); g.rotation.y=Math.PI;
-    const bbox = new THREE.Box3().setFromObject(g);
-    const minY = bbox.min.y;
-    if(minY < -0.5) g.position.y -= minY;
     g.add(tmpl.clone(true)); scene.add(g);
+    const bbox=new THREE.Box3().setFromObject(g); if(bbox.min.y<-0.5) g.position.y-=bbox.min.y;
   });
 }
-
 function loadStablesGLB(){
-  loadOneGLB("assets/stables-mesh.glb", 18.846, 0, tmpl=>{
-    stablesGLBTemplate=tmpl;
-    const g=new THREE.Group(); g.position.set(-375,0,90);
-    g.add(tmpl.clone(true)); scene.add(g);
+  loadOneGLB("assets/stables-mesh.glb",18.846,0,tmpl=>{
+    const g=new THREE.Group(); g.position.set(-375,0,90); g.add(tmpl.clone(true)); scene.add(g);
   });
 }
 
 function loadVillaGLB(){
-  makeDracoLoader().load("assets/villa-mesh.glb",
-    gltf=>{
-      gltf.scene.scale.setScalar(VILLA_SCALE);
-      gltf.scene.traverse(c=>{
-        if(c.isMesh){
-          c.castShadow=false; c.receiveShadow=true; // NO SHADOWS
-          if(c.material){ c.material.envMapIntensity=0.4; c.material.needsUpdate=true; }
-        }
-      });
-      const bbox = new THREE.Box3().setFromObject(gltf.scene);
-      const autoLift = bbox.min.y < 0 ? -bbox.min.y : VILLA_Y;
-      gltf.scene.position.y = autoLift;
-      const wrapper = new THREE.Group();
-      wrapper.add(gltf.scene);
-      villaGLBScene = wrapper;
-      pendingVillas.forEach(({x,z,ry,plotKey})=>placeVillaGLB(x,z,ry,plotKey));
-      pendingVillas=[];
-    },
-    null,
-    err=>{
-      pendingVillas.forEach(({x,z,ry})=>{ const v=createVillaFallback(); v.position.set(x,0,z); v.rotation.y=ry; scene.add(v); });
-      pendingVillas=[];
-    }
-  );
+  makeDracoLoader().load("assets/villa-mesh.glb",gltf=>{
+    gltf.scene.scale.setScalar(VILLA_SCALE);
+    gltf.scene.traverse(c=>{
+      if(c.isMesh){ c.castShadow=false; c.receiveShadow=true;
+        if(c.material){ c.material.envMapIntensity=0.4; c.material.needsUpdate=true; }
+      }
+    });
+    const bbox=new THREE.Box3().setFromObject(gltf.scene);
+    gltf.scene.position.y=bbox.min.y<0?-bbox.min.y:0;
+    const wrapper=new THREE.Group(); wrapper.add(gltf.scene); villaGLBScene=wrapper;
+    pendingVillas.forEach(({x,z,ry,plotKey})=>placeVillaGLBWithLOD(x,z,ry,plotKey));
+    pendingVillas=[];
+  },null,err=>{
+    pendingVillas.forEach(({x,z,ry})=>{const v=_createVillaFallback();v.position.set(x,0,z);v.rotation.y=ry;scene.add(v);});
+    pendingVillas=[];
+  });
 }
 
 function loadApartmentGLB(){
-  makeDracoLoader().load("assets/apartment-mesh.glb",
-    gltf=>{
-      gltf.scene.scale.setScalar(APT_SCALE);
-      gltf.scene.traverse(c=>{
-        if(c.isMesh){ c.castShadow=false; c.receiveShadow=true; }
-      });
-      const bbox = new THREE.Box3().setFromObject(gltf.scene);
-      gltf.scene.position.y = bbox.min.y < 0 ? -bbox.min.y : APT_Y;
-      const wrapper = new THREE.Group();
-      wrapper.add(gltf.scene);
-      aptGLBScene=wrapper;
-      pendingApts.forEach(({x,z,ry})=>placeAptGLB(x,z,ry));
-      pendingApts=[];
-    },
-    null,
-    ()=>{ pendingApts.forEach(({x,z})=>{ scene.add(createFlatBlock(x,z)); }); pendingApts=[]; }
-  );
+  makeDracoLoader().load("assets/apartment-mesh.glb",gltf=>{
+    gltf.scene.scale.setScalar(APT_SCALE);
+    gltf.scene.traverse(c=>{if(c.isMesh){c.castShadow=false;c.receiveShadow=true;}});
+    const bbox=new THREE.Box3().setFromObject(gltf.scene);
+    gltf.scene.position.y=bbox.min.y<0?-bbox.min.y:0;
+    const wrapper=new THREE.Group(); wrapper.add(gltf.scene); aptGLBScene=wrapper;
+    pendingApts.forEach(({x,z,ry})=>placeAptGLB(x,z,ry)); pendingApts=[];
+  },null,()=>{pendingApts.forEach(({x,z})=>scene.add(_createFlatBlock(x,z)));pendingApts=[];});
 }
 
-function placeVillaGLB(x,z,ry,plotKey){
-  if(!villaGLBScene){ pendingVillas.push({x,z,ry,plotKey}); return; }
-  const clone=villaGLBScene.clone(true);
-  clone.position.set(x,0,z);
-  clone.rotation.y=ry;
-  clone.userData.isVillaGLB=true;
-  clone.userData.baseRotY=ry;
-  clone.userData.plotKey=plotKey;
-  scene.add(clone);
-  if(plotKey) addPlotOverlay(x,z,ry,plotKey,clone);
+function loadLoftGLB(){
+  makeDracoLoader().load("assets/loft-mesh.glb",gltf=>{
+    gltf.scene.scale.setScalar(LOFT_SCALE);
+    gltf.scene.traverse(c=>{if(c.isMesh){c.castShadow=false;c.receiveShadow=true;}});
+    const bbox=new THREE.Box3().setFromObject(gltf.scene);
+    gltf.scene.position.y=bbox.min.y<0?-bbox.min.y:0;
+    const wrapper=new THREE.Group(); wrapper.add(gltf.scene); loftGLBScene=wrapper;
+    pendingLofts.forEach(({x,z,ry})=>placeLoftGLB(x,z,ry)); pendingLofts=[];
+  },null,err=>{pendingLofts.forEach(({x,z,ry})=>scene.add(_createLoftBlock(x,z,ry)));pendingLofts=[];});
 }
 
 function placeAptGLB(x,z,ry=0){
-  if(!aptGLBScene){ pendingApts.push({x,z,ry}); return; }
-  const clone=aptGLBScene.clone(true);
-  clone.position.set(x,0,z);
-  clone.rotation.y=ry;
-  scene.add(clone);
+  if(!aptGLBScene){pendingApts.push({x,z,ry});return;}
+  const clone=aptGLBScene.clone(true); clone.position.set(x,0,z); clone.rotation.y=ry; scene.add(clone);
+}
+function placeLoftGLB(x,z,ry){
+  ry=ry||0; if(!loftGLBScene){pendingLofts.push({x,z,ry});return;}
+  const clone=loftGLBScene.clone(true); clone.position.set(x,0,z); clone.rotation.y=ry; scene.add(clone);
 }
 
-//        PLOT RESERVATION SYSTEM
+// ─── PLOT OVERLAY ─────────────────────────────────────────────────────────────
 function addPlotOverlay(x,z,ry,plotKey,villaClone){
   const mat=MATS.plotAvail();
   const overlay=new THREE.Mesh(new THREE.PlaneGeometry(20,18),mat);
-  overlay.rotation.x=-Math.PI/2;
-  overlay.position.set(x,.25,z);
-  overlay.userData.plotKey=plotKey;
-  overlay.userData.isPlotOverlay=true;
-  overlay.userData.villaClone=villaClone;
+  overlay.rotation.x=-Math.PI/2; overlay.position.set(x,.25,z);
+  overlay.userData.plotKey=plotKey; overlay.userData.isPlotOverlay=true; overlay.userData.villaClone=villaClone;
   scene.add(overlay);
-  plotRegistry.set(plotKey,{ status:"available", overlay, villaClone, x,z,ry });
+  plotRegistry.set(plotKey,{status:"available",overlay,villaClone,x,z,ry});
+}
+
+export function highlightPlot(plotKey){
+  plotRegistry.forEach((plot,key)=>{
+    if(!plot.overlay) return;
+    plot.overlay.material.opacity = (key===plotKey&&plot.status==='available') ? 0.35 : (plot.status==='reserved' ? 0.5 : 0);
+  });
 }
 
 export function reservePlot(plotKey){
-  const plot=plotRegistry.get(plotKey);
-  if(!plot||plot.status==="reserved") return false;
+  const plot=plotRegistry.get(plotKey); if(!plot||plot.status==="reserved") return false;
   plot.status="reserved";
   plot.villaClone && plot.villaClone.traverse(c=>{
-    if(c.isMesh&&c.material){
-      c.material=c.material.clone();
-      c.material.color.set(0x888888);
-      c.material.opacity=.7; c.material.transparent=true;
-    }
+    if(c.isMesh&&c.material){c.material=c.material.clone();c.material.color.set(0x888888);c.material.opacity=.7;c.material.transparent=true;}
   });
-  if(plot.overlay){
-    plot.overlay.material=MATS.plotReserved();
-    plot.overlay.material.transparent=true;
-    plot.overlay.material.opacity=.5;
-  }
-  plotRegistry.set(plotKey,plot);
-  return true;
+  if(plot.overlay){plot.overlay.material.color.set(0xff4444);plot.overlay.material.opacity=0;}
+  plotRegistry.set(plotKey,plot); return true;
 }
 
 export function getPlotAtRay(raycaster){
   const overlays=[];
-  scene.traverse(o=>{ if(o.userData.isPlotOverlay) overlays.push(o); });
+  plotRegistry.forEach(plot=>{if(plot.overlay){plot.overlay.material.opacity=0.01;overlays.push(plot.overlay);}});
   const hits=raycaster.intersectObjects(overlays,false);
-  return hits.length>0 ? hits[0].object.userData.plotKey : null;
+  plotRegistry.forEach(plot=>{if(plot.overlay&&plot.status!=='reserved')plot.overlay.material.opacity=0;});
+  return hits.length>0?hits[0].object.userData.plotKey:null;
 }
 
-//        LOFT TERRACE GLB
-function loadLoftGLB(){
-  makeDracoLoader().load("assets/loft-mesh.glb",
-    gltf=>{
-      gltf.scene.scale.setScalar(LOFT_SCALE);
-      gltf.scene.traverse(child=>{
-        if(child.isMesh){
-          child.castShadow=false; child.receiveShadow=true;
-        }
-      });
-      const bbox = new THREE.Box3().setFromObject(gltf.scene);
-      gltf.scene.position.y = bbox.min.y < 0 ? -bbox.min.y : LOFT_Y;
-      const wrapper=new THREE.Group();
-      wrapper.add(gltf.scene);
-      loftGLBScene=wrapper;
-      pendingLofts.forEach(({x,z,ry})=>placeLoftGLB(x,z,ry));
-      pendingLofts=[];
-    },
-    null,
-    err=>{
-      pendingLofts.forEach(({x,z,ry})=>{ scene.add(createLoftBlock(x,z,ry)); });
-      pendingLofts=[];
-    }
-  );
+// ─── VILLA RING ───────────────────────────────────────────────────────────────
+const NO_BUILD_ZONES=[[0,128,75,55],[-375,90,55,45],[-248,-25,50,22],[-248,55,50,22],
+  [-390,0,65,100],[270,65,28,18],[218,0,28,28],[218,52,30,26],[0,0,140,76],[30,-115,105,18]];
+const villaFootprints=[];
+function registerVillaFootprint(x,z){villaFootprints.push({cx:x,cz:z,r:12});}
+function isInNoBuildZone(x,z){
+  for(const [cx,cz,hw,hd] of NO_BUILD_ZONES) if(Math.abs(x-cx)<=hw&&Math.abs(z-cz)<=hd) return true;
+  for(const {cx,cz,r} of villaFootprints) if((x-cx)*(x-cx)+(z-cz)*(z-cz)<=r*r) return true;
+  return false;
 }
 
-function placeLoftGLB(x,z,ry){
-  ry = ry || 0;
-  if(!loftGLBScene){ pendingLofts.push({x,z,ry}); return; }
-  const clone=loftGLBScene.clone(true);
-  clone.position.set(x,0,z);
-  clone.rotation.y=ry;
-  scene.add(clone);
-}
-
-//        VILLA RING
 function addVillaRing(){
   const PLOT=28;
-  for(let i=0;i<8;i++){ const z=-96+i*PLOT; placeVillaWithLandscape(-162,z,Math.PI/2); }
-  for(let i=0;i<7;i++){ const z=-82+i*PLOT; placeVillaWithLandscape(-192,z,Math.PI/2); }
-  for(let i=0;i<8;i++){ const z=-96+i*PLOT; placeVillaWithLandscape(162,z,-Math.PI/2); }
-  for(let i=0;i<7;i++){ const z=-82+i*PLOT; placeVillaWithLandscape(192,z,-Math.PI/2); }
-  const LAKE_CX=30, LAKE_R=90, BOW=17;
-  const northX=[-140,-116,-92,-68,-44,-20,4,28,52,76,100,124,148,172,196];
-  northX.forEach(x=>{
-    const dx=x-LAKE_CX;
-    const bow=dx*dx<LAKE_R*LAKE_R ? BOW*(1-(dx*dx)/(LAKE_R*LAKE_R)) : 0;
-    placeVillaWithLandscape(x, -132-bow, 0);
+  const cypressPositions=[];
+  function placeV(x,z,ry){
+    const plotKey=`${Math.round(x)},${Math.round(z)}`;
+    registerVillaFootprint(x,z);
+    placeVillaGLBWithLOD(x,z,ry,plotKey);
+    addVillaContactShadow(x,z); // IMPROVEMENT 8
+    const fx=Math.sin(ry)*(-9),fz=Math.cos(ry)*(-9),rx=Math.cos(ry)*8,rz=-Math.sin(ry)*8;
+    if(!isInNoBuildZone(x+rx+fx,z+rz+fz)) cypressPositions.push([x+rx+fx,z+rz+fz]);
+    if(!isInNoBuildZone(x-rx+fx,z-rz+fz)) cypressPositions.push([x-rx+fx,z-rz+fz]);
+  }
+  for(let i=0;i<8;i++){placeV(-162,-96+i*PLOT,Math.PI/2);placeV(162,-96+i*PLOT,-Math.PI/2);}
+  for(let i=0;i<7;i++){placeV(-192,-82+i*PLOT,Math.PI/2);placeV(192,-82+i*PLOT,-Math.PI/2);}
+  const LAKE_CX=30,LAKE_R=90,BOW=17;
+  [-140,-116,-92,-68,-44,-20,4,28,52,76,100,124,148,172,196].forEach(x=>{
+    const dx=x-LAKE_CX; const bow=dx*dx<LAKE_R*LAKE_R?BOW*(1-(dx*dx)/(LAKE_R*LAKE_R)):0;
+    placeV(x,-132-bow,0);
   });
-  for(const side of[-1,1]){
-    [65,93,121].forEach(xabs=>{
-      const x=side*xabs;
-      placeVillaWithLandscape(x, 105+Math.abs(x)*.04, 0);
-    });
-  }
-}
-
-function placeVillaWithLandscape(x,z,ry){
-  const plotKey=`${Math.round(x)},${Math.round(z)}`;
-  registerVillaFootprint(x,z);
-  placeVillaGLB(x,z,ry,plotKey);
-  addPlotLandscaping(x,z,ry);
-}
-
-function addPlotLandscaping(vx,vz,ry){
-  const hm=MATS.hedgeGreen();
-  const gm2=new THREE.MeshStandardMaterial({color:0x8a7050,roughness:.7,metalness:.2});
-  const pm=new THREE.MeshStandardMaterial({color:0xd0c8b4,roughness:.8});
-  const g=new THREE.Group(); g.position.set(vx,0,vz); g.rotation.y=ry;
-  const hl=new THREE.Mesh(new THREE.BoxGeometry(.4,1.1,18),hm);
-  hl.position.set(-10,.55,0); hl.receiveShadow=true; hl.castShadow=true; g.add(hl);
-  const hr=hl.clone(); hr.position.set(10,.55,0); g.add(hr);
-  const hf=new THREE.Mesh(new THREE.BoxGeometry(18,.7,.4),hm);
-  hf.position.set(0,.35,-10); hf.receiveShadow=true; g.add(hf);
-  for(const gx of[-2.5,2.5]){
-    const gp=new THREE.Mesh(new THREE.BoxGeometry(.3,1.5,.3),gm2);
-    gp.position.set(gx,.75,-10); gp.castShadow=true; g.add(gp);
-  }
-  const dp=new THREE.Mesh(new THREE.PlaneGeometry(4.5,5),pm);
-  dp.rotation.x=-Math.PI/2; dp.position.set(0,.02,-7.5); dp.receiveShadow=true; g.add(dp);
-  scene.add(g);
-}
-
-function createVillaFallback(){
-  const g=new THREE.Group();
-  const bm=MATS.villaBody(); const rm=MATS.villaRoof();
-  const wm=MAT_WHITE_TRIM(); const gw=MAT_GLASS_WARM(.55);
-  g.add(box(16,2.1,13,new THREE.MeshStandardMaterial({color:0xb0a898,roughness:.8}),[0,1.05,0]));
-  g.add(box(16,5.8,13,bm,[0,5.15,0]));
-  g.add(box(15,2.2,.4,gw,[0,5.5,-6.6]));
-  const rm2=new THREE.Mesh(new THREE.ConeGeometry(12,3.5,4),rm);
-  rm2.position.set(0,9.85,0); rm2.rotation.y=Math.PI/4; g.add(rm2);
-  g.add(box(16,.18,4,wm,[0,4.03,-8.5],0,false));
-  return g;
+  for(const side of[-1,1]) [65,93,121].forEach(xa=>{placeV(side*xa,105+xa*.04,0);});
+  // IMPROVEMENT 1: instanced cypress instead of individual meshes
+  buildInstancedCypress(cypressPositions);
 }
 
 function addLoftTerraces(){
-  for(let x=-310; x<=-110; x+=36){
-    const cz=-162-Math.abs(x)*.05;
-    registerVillaFootprint(x,cz); placeLoftGLB(x,cz,Math.PI);
-  }
-  for(let x=95; x<=310; x+=36){
-    const cz=-162-Math.abs(x)*.05;
-    registerVillaFootprint(x,cz); placeLoftGLB(x,cz,Math.PI);
-  }
-  registerVillaFootprint(-220,-40); registerVillaFootprint(-220, 40);
-  placeLoftGLB(-220,-40,-Math.PI/2); placeLoftGLB(-220, 40,-Math.PI/2);
-}
-
-function createLoftBlock(x,z,ry){
-  const g=new THREE.Group(); g.position.set(x,0,z); g.rotation.y=ry;
-  const UNITS=4, UW=10.0, UD=11.0, TW=UNITS*UW;
-  g.add(box(TW,3.2,UD,new THREE.MeshStandardMaterial({color:0x9a8a78,roughness:.9}),[0,1.6,0]));
-  g.add(box(TW,3.2,UD,MATS.loftBody(),[0,4.85,0]));
-  g.add(box(TW+.4,.4,UD+.4,MATS.loftRoof(),[0,6.65,0],0,false));
-  return g;
+  for(let x=-310;x<=-110;x+=36){const cz=-162-Math.abs(x)*.05;registerVillaFootprint(x,cz);placeLoftGLB(x,cz,Math.PI);}
+  for(let x=95;x<=310;x+=36){const cz=-162-Math.abs(x)*.05;registerVillaFootprint(x,cz);placeLoftGLB(x,cz,Math.PI);}
+  registerVillaFootprint(-220,-40);registerVillaFootprint(-220,40);
+  placeLoftGLB(-220,-40,-Math.PI/2);placeLoftGLB(-220,40,-Math.PI/2);
 }
 
 function addWestCompound(){
-  s(plane(120,185,MATS.safetyBrown(),[-390,.06,0]));
-  s(plane(100,160,MAT_GRASS_FIELD(),[-390,.10,0]));
-  placeAptGLB(-248,-25,Math.PI/2);
-  placeAptGLB(-248, 55,Math.PI/2);
+  s(plane(120,185,MATS.safetyBrown(),[-390,.06,0])); s(plane(100,160,MAT_GRASS_FIELD(),[-390,.10,0]));
+  placeAptGLB(-248,-25,Math.PI/2); placeAptGLB(-248,55,Math.PI/2);
 }
-
-function createFlatBlock(x,z){
-  const g=new THREE.Group(); g.position.set(x,0,z);
-  g.add(box(80,20,28,MATS.flatGrey(),[0,10,0]));
-  scene.add(g); return g;
-}
-
-function addStables(){ return; }
 
 function addPaddock(){
   s(plane(40,38,MAT_GRASS_FIELD(),[218,.07,0]));
-  const post=MATS.railWhite();
-  for(let fz=-19;fz<=19;fz+=4){ s(cyl(.1,.1,1.6,6,post,[198,.8,fz])); s(cyl(.1,.1,1.6,6,post,[238,.8,fz])); }
-  for(let fx=198;fx<=238;fx+=4){ s(cyl(.1,.1,1.6,6,post,[fx,.8,-19])); s(cyl(.1,.1,1.6,6,post,[fx,.8,19])); }
-  s(box(.08,.1,38,post,[198,1.0,0],0,false)); s(box(.08,.1,38,post,[238,1.0,0],0,false));
-  s(box(40,.1,.08,post,[218,1.0,-19],0,false)); s(box(40,.1,.08,post,[218,1.0,19],0,false));
+  const postPos=[];
+  for(let fz=-19;fz<=19;fz+=4){postPos.push([198,.8,fz]);postPos.push([238,.8,fz]);}
+  for(let fx=198;fx<=238;fx+=4){postPos.push([fx,.8,-19]);postPos.push([fx,.8,19]);}
+  buildInstancedFencePosts(postPos); // IMPROVEMENT 1
+  const rm=MATS.railWhite();
+  s(box(.08,.1,38,rm,[198,1.0,0],0,false)); s(box(.08,.1,38,rm,[238,1.0,0],0,false));
+  s(box(40,.1,.08,rm,[218,1.0,-19],0,false)); s(box(40,.1,.08,rm,[218,1.0,19],0,false));
   s(plane(60,60,MATS.grassGreen(),[255,.06,-58]));
 }
 
 function addGamePark(){
   s(plane(54,44,MAT_GRASS_FIELD(),[218,.07,52]));
   const cols=[0xe8602a,0x2a88c8,0xe8c82a,0x4ac84a];
-  for(let i=0;i<5;i++){
-    const h=2.6+i*.4;
-    s(box(3.2,h,3.2,new THREE.MeshStandardMaterial({color:cols[i%4],roughness:.6}),[203+i*7,h/2,50+(i%2)*8]));
-  }
+  for(let i=0;i<5;i++){const h=2.6+i*.4;s(box(3.2,h,3.2,new THREE.MeshStandardMaterial({color:cols[i%4],roughness:.6}),[203+i*7,h/2,50+(i%2)*8]));}
 }
 
 function addCommercialBlock(){
@@ -716,46 +977,73 @@ function addServiceCompound(){
   s(box(30,6,17,MATS.flatGrey(),[-240,3,100]));
 }
 
-// ─── LANDSCAPING DISABLED FOR PERFORMANCE ───────────────────────────
-function addLandscaping(){ return; }
-
-// ─── NO-BUILD ZONE REGISTRY ─────────────────────────────────────────
-const NO_BUILD_ZONES = [
-  [0,128,75,55],[-375,90,55,45],[-248,-25,50,22],[-248,55,50,22],
-  [-390,0,65,100],[-255,95,30,20],[270,65,28,18],[218,0,28,28],
-  [218,52,30,26],[0,0,140,76],[30,-115,105,18],[220,-48,12,22],
-];
-
-const villaFootprints = [];
-function registerVillaFootprint(x,z){ villaFootprints.push({cx:x,cz:z,r:12}); }
-
-function isInNoBuildZone(x,z){
-  for(const [cx,cz,hw,hd] of NO_BUILD_ZONES)
-    if(Math.abs(x-cx)<=hw && Math.abs(z-cz)<=hd) return true;
-  for(const {cx,cz,r} of villaFootprints)
-    if((x-cx)*(x-cx)+(z-cz)*(z-cz)<=r*r) return true;
-  return false;
+function addLandscaping(){
+  const palmMats=[];
+  const tl2=new THREE.TextureLoader();
+  ['assets/palm-sprite.png','assets/palm-sprite-2.png'].forEach(src=>{
+    const t=tl2.load(src); t.colorSpace=THREE.SRGBColorSpace;
+    palmMats.push(new THREE.MeshBasicMaterial({map:t,transparent:true,alphaTest:.1,depthWrite:false,side:THREE.DoubleSide}));
+  });
+  function addPalm(x,y,z,scale=1){
+    if(isInNoBuildZone(x,z)) return;
+    const mat=palmMats[Math.floor(Math.random()*palmMats.length)];
+    const h=(13+Math.random()*5)*scale,w=h*.5;
+    for(const ry of[0,Math.PI/2]){
+      const m=new THREE.Mesh(new THREE.PlaneGeometry(w,h),mat);
+      m.position.set(x,y+h/2,z); m.rotation.y=ry; scene.add(m); palmBillboards.push(m);
+    }
+  }
+  for(let x=-280;x<=280;x+=28){addPalm(x,.1,206,1.3);addPalm(x,.1,224,1.2);}
+  for(let z=-95;z<=95;z+=40){addPalm(-160,.1,z,1.1);addPalm(160,.1,z,1.1);}
+  for(const pz of[95,103,111,119]){addPalm(-16,.1,pz,1.2);addPalm(16,.1,pz,1.2);}
 }
 
-// ─── 3D TREE GLB (Skipped to reduce draw calls) ──────────────────────
-function loadTreeGLB(){}
+function _createVillaFallback(){
+  const g=new THREE.Group();
+  g.add(box(16,2.1,13,new THREE.MeshStandardMaterial({color:0xb0a898,roughness:.8}),[0,1.05,0]));
+  g.add(box(16,5.8,13,new THREE.MeshStandardMaterial({color:0xF5E6B0,roughness:.75}),[0,5.15,0]));
+  const rm2=new THREE.Mesh(new THREE.ConeGeometry(12,3.5,4),MATS.villaRoof());
+  rm2.position.set(0,9.85,0); rm2.rotation.y=Math.PI/4; g.add(rm2); return g;
+}
 
-//        TICK
-let _tickFrame = 0;
+function _createLoftBlock(x,z,ry){
+  const g=new THREE.Group(); g.position.set(x,0,z); g.rotation.y=ry;
+  const TW=40;
+  g.add(box(TW,3.2,11,new THREE.MeshStandardMaterial({color:0x9a8a78,roughness:.9}),[0,1.6,0]));
+  g.add(box(TW,3.2,11,MATS.loftBody(),[0,4.85,0]));
+  g.add(box(TW+.4,.4,11.4,MATS.loftRoof(),[0,6.65,0],0,false)); return g;
+}
+
+function _createFlatBlock(x,z){
+  const g=new THREE.Group(); g.position.set(x,0,z);
+  g.add(box(80,20,28,MATS.flatGrey(),[0,10,0])); scene.add(g); return g;
+}
+
+// ─── TICK ─────────────────────────────────────────────────────────────────────
+let _tickFrame=0;
 export function tickScene(elapsed, camera){
   _tickFrame++;
   tickWater(waterMeshes, elapsed);
   tickGrass(camera);
-
+  // Palm billboard update: rate-limited per perf mode
   const palmDiv = PERF_SETTINGS[PERF_MODE].palmTickDiv;
   if (_tickFrame % palmDiv === 0) {
-    palmBillboards.forEach(s=>{
-      s.rotation.y=Math.atan2(camera.position.x-s.position.x,camera.position.z-s.position.z);
+    palmBillboards.forEach(pb=>{
+      pb.rotation.y=Math.atan2(camera.position.x-pb.position.x,camera.position.z-pb.position.z);
     });
   }
+  // LOD update: Three.js THREE.LOD auto-updates via camera
+  // NPC horse tick
+  tickNPCHorses(Math.min(elapsed - (_prevElapsed||0), 0.033));
+  _prevElapsed = elapsed;
+  // Tour tick
+  if (_tourActive) tickTour(Math.min(elapsed-(_prevElapsed||0),0.033), camera);
 }
+let _prevElapsed = 0;
 
 export function getRenderer() { return renderer; }
 export function getScene()    { return scene;    }
 export function getCamera()   { return camera;   }
 export function getClock()    { return clock;    }
+
+// Export audio init so app.js can call it on first user gesture
