@@ -947,7 +947,8 @@ export function initScene(canvas) {
     addEastLake();
     addClubhouse();
     addEstateSignage();
-    addLandmarkHotspots(); // Fix 04: floating 3D labels
+    addLandmarkHotspots();
+    addNightLighting(); // security lamps + building floodlights // Fix 04: floating 3D labels
 
     // Phase 3 — heavy GLBs deferred another frame
     requestAnimationFrame(() => {
