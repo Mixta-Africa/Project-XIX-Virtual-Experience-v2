@@ -14,6 +14,24 @@
   <title>Project XIX | Mixta Africa — High Fidelity</title>
   <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
   <link rel="stylesheet" href="css/styles.css" />
+  <style>
+    /* Embedded Topbar Dropdown CSS to ensure it renders over everything */
+    .topbar-dropdown { position: relative; display: inline-block; }
+    .topbar-dropdown-menu {
+      display: none; position: absolute; top: calc(100% + 8px); right: 0;
+      background: rgba(10, 20, 12, 0.95); border: 1px solid rgba(201,168,76,0.3);
+      min-width: 120px; z-index: 9999; border-radius: 4px; padding: 4px;
+    }
+    .topbar-dropdown:hover .topbar-dropdown-menu,
+    .topbar-dropdown:focus-within .topbar-dropdown-menu { display: flex; flex-direction: column; }
+    .wx-btn {
+      background: transparent; color: rgba(240,236,224,0.7); border: none;
+      padding: 8px 12px; text-align: left; font-size: 0.7rem; cursor: pointer; white-space: nowrap;
+    }
+    .wx-btn:hover, .wx-btn.active { color: #c9a84c; background: rgba(201,168,76,0.1); border-left: 2px solid #c9a84c; }
+    .world-btn { background: rgba(0,0,0,0.3); color: rgba(240,236,224,0.8); border: 1px solid rgba(255,255,255,0.15); display: flex; align-items: center; gap: 4px; padding: 6px 12px; border-radius: 3px; cursor: pointer; font-size: 0.7rem; }
+    .world-btn:hover { background: rgba(201,168,76,0.2); border-color: #c9a84c; color: #c9a84c; }
+  </style>
 </head>
 <body>
 
@@ -157,7 +175,7 @@
     <div class="residence-grid">
       <!-- 3-bed Villa -->
       <article class="residence-card anim-fade">
-        <img class="residence-card-img" src="assets/villa-3-bedroom.png" alt="3 Bedroom Villa exterior — flat roof, timber louvres, undercroft parking" loading="lazy" />
+        <img class="residence-card-img" src="assets/villa-3-bedroom.png" alt="3 Bedroom Villa exterior" loading="lazy" />
         <div class="residence-card-body">
           <div class="residence-card-type">3 Bed Villa</div>
           <div class="residence-card-name">Premium Villa</div>
@@ -171,7 +189,7 @@
 
       <!-- 2-bed Loft -->
       <article class="residence-card anim-fade">
-        <img class="residence-card-img" src="assets/loft-terrace.png" alt="2 Bedroom Loft Terrace — gabion stone ground floor, timber louvres above" loading="lazy" />
+        <img class="residence-card-img" src="assets/loft-terrace.png" alt="2 Bedroom Loft Terrace" loading="lazy" />
         <div class="residence-card-body">
           <div class="residence-card-type">2 Bed Loft</div>
           <div class="residence-card-name">Loft Terrace</div>
@@ -185,7 +203,7 @@
 
       <!-- Apartment Block -->
       <article class="residence-card anim-fade">
-        <img class="residence-card-img" src="assets/apartment-block.png" alt="Apartment Block — 7 storeys, wave roofline canopy, dark louvre fins" loading="lazy" />
+        <img class="residence-card-img" src="assets/apartment-block.png" alt="Apartment Block" loading="lazy" />
         <div class="residence-card-body">
           <div class="residence-card-type">2 Bed Flat</div>
           <div class="residence-card-name">Apartment Block</div>
@@ -199,7 +217,7 @@
 
       <!-- Clubhouse -->
       <article class="residence-card anim-fade">
-        <img class="residence-card-img" src="assets/clubhouse.png" alt="Clubhouse — 3 floors, tiered seating facing the polo field" loading="lazy" />
+        <img class="residence-card-img" src="assets/clubhouse.png" alt="Clubhouse" loading="lazy" />
         <div class="residence-card-body">
           <div class="residence-card-type">Social Anchor</div>
           <div class="residence-card-name">Club House</div>
@@ -213,7 +231,7 @@
 
       <!-- Stables -->
       <article class="residence-card anim-fade">
-        <img class="residence-card-img" src="assets/horse-stables.png" alt="Horse Stables — red laterite brick, exposed timber trusses, cobblestone courtyard" loading="lazy" />
+        <img class="residence-card-img" src="assets/horse-stables.png" alt="Horse Stables" loading="lazy" />
         <div class="residence-card-body">
           <div class="residence-card-type">Equestrian</div>
           <div class="residence-card-name">Horse Stables</div>
@@ -333,10 +351,11 @@
       <div id="scene-caption" class="world-caption">Project XIX — Virtual Estate</div>
     </div>
     <div class="world-controls">
+      
       <!-- Time Dropdown -->
       <div class="topbar-dropdown" tabindex="0">
         <button class="world-btn" aria-label="Time of day">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
           Time <span class="vp-chevron">&#9662;</span>
         </button>
         <div class="topbar-dropdown-menu">
@@ -350,7 +369,7 @@
       <!-- Weather Dropdown -->
       <div class="topbar-dropdown" tabindex="0">
         <button class="world-btn" aria-label="Weather">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.5 19c1.93 0 3.5-1.57 3.5-3.5a3.5 3.5 0 0 0-3.3-3.49C17.2 9.17 14.85 7 12 7c-2.48 0-4.57 1.76-5.1 4.09A4.5 4.5 0 0 0 7 20"/></svg>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path></svg>
           Weather <span class="vp-chevron">&#9662;</span>
         </button>
         <div class="topbar-dropdown-menu">
@@ -362,8 +381,8 @@
 
       <!-- Quality Dropdown -->
       <div class="topbar-dropdown" tabindex="0">
-        <button class="world-btn" aria-label="Performance Quality">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <button class="world-btn" aria-label="Quality">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
           Quality <span class="vp-chevron">&#9662;</span>
         </button>
         <div class="topbar-dropdown-menu">
@@ -372,20 +391,9 @@
           <button class="wx-btn perf-btn" data-mode="rich" onclick="switchPerfMode('rich')">Rich</button>
         </div>
       </div>
-
-      <!-- Aerial -->
-      <button class="world-btn world-btn-aerial" id="btn-aerial" aria-label="Toggle aerial orbit view" onclick="toggleAerial(this)">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>
-        Aerial
-      </button>
-      <button class="world-btn world-btn-vr" id="vr-btn" aria-label="Enter VR mode">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 8s3-2 10-2 10 2 10 2v6s-3 2-10 2-10-2-10-2V8z"/><circle cx="8" cy="11" r="2"/><circle cx="16" cy="11" r="2"/></svg>
-        VR
-      </button>
-      <button class="world-btn world-btn-close" id="btn-close-world" aria-label="Return to website">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        Exit
-      </button>
+      
+      <button class="world-btn world-btn-aerial" onclick="toggleAerial(this)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg> Aerial</button>
+      <button class="world-btn world-btn-close" id="btn-close-world"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Exit</button>
     </div>
   </div>
 
@@ -397,7 +405,7 @@
     <div class="crosshair" aria-hidden="true"></div>
 
     <!-- Enter prompt -->
-    <div id="enter-prompt" aria-live="polite">Click to look around · WASD to walk</div>
+    <div id="enter-prompt" aria-live="polite">Click to lock cursor · WASD to walk</div>
 
     <!-- Minimap -->
     <div id="minimap" aria-label="Estate minimap">
@@ -443,13 +451,12 @@
     <!-- Touch joystick overlay (mobile) -->
     <div id="joystick-overlay" aria-hidden="true">
       <div class="look-hint-mobile" aria-hidden="true">Drag right<br>to look</div>
-
     </div>
   </div>
 </div>
 
 
-<!-- ═══ VILLA INTERIOR OVERLAY ════════════════════════════════ -->
+<!-- ═══ VILLA INTERIOR OVERLAY (Now integrated to main world) ════════════════════════════════ -->
 <div id="villa-overlay" role="dialog" aria-modal="true" aria-label="Villa interior walkthrough">
 
   <div class="world-topbar">
@@ -460,15 +467,17 @@
     <div class="world-controls">
       <button class="world-btn world-btn-close" id="btn-close-villa" aria-label="Return to estate">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        Exit Villa
+        Exit Interior
       </button>
     </div>
   </div>
 
   <div class="world-body">
-    <canvas id="villa-canvas" aria-label="Villa interior 3D walkthrough"></canvas>
+    <!-- Blank transparent canvas space (the real world renders behind it) -->
+    <canvas id="villa-canvas" style="display:none;"></canvas>
+    
     <div class="crosshair" aria-hidden="true"></div>
-    <div id="enter-prompt" aria-live="polite">Click to look around · WASD to walk</div>
+    <div id="enter-prompt" aria-live="polite" style="margin-top:20px; font-size:11px;">Click to look · WASD to walk · ESC to exit</div>
 
     <!-- Floor plan side panel -->
     <aside class="villa-plan-panel" aria-label="Villa floor plans">
@@ -653,10 +662,8 @@
 </script>
 <!-- Bridge: exposes module functions to inline onclick handlers -->
 <script>
-// Weather/time functions called by onclick buttons
-// These delegate to the module once it loads
 window._pendingCalls = [];
-['applyTimePreset','applyWeather','toggleAerial','rotateVillaGLB','showProductPanel'].forEach(fn=>{
+['applyTimePreset','applyWeather','toggleAerial','rotateVillaGLB','showProductPanel','switchPerfMode'].forEach(fn=>{
   window[fn] = function(...args){
     if(window.__moduleReady && window.__moduleReady[fn]) window.__moduleReady[fn](...args);
     else window._pendingCalls.push({fn,args});
@@ -667,20 +674,16 @@ window._pendingCalls = [];
 <script type="module">
 import { initInterior, openInterior, closeInterior, resizeInterior, getInteriorRooms, INTERIORS } from "./js/interior.js";
 
-// Init interior renderer on the canvas
 const intCanvas = document.getElementById("interior-canvas");
 initInterior(intCanvas);
 
-// Expose to window
 window.openInteriorView = function(buildingType, roomKey) {
   const overlay = document.getElementById("interior-overlay");
   const bld = INTERIORS[buildingType];
   if (!bld) return;
 
-  // Set header
   overlay.querySelector(".int-building-name").textContent = bld.name;
 
-  // Build room strip
   const strip = document.getElementById("int-room-strip");
   strip.innerHTML = "";
   bld.rooms.forEach(room => {
@@ -698,18 +701,15 @@ window.openInteriorView = function(buildingType, roomKey) {
     strip.appendChild(btn);
   });
 
-  // Activate first room
   strip.querySelector(".int-room-btn")?.classList.add("active");
   const firstRoom = bld.rooms[0];
   overlay.querySelector(".int-room-label").textContent = firstRoom.label;
   overlay.querySelector(".int-room-hint").textContent  = firstRoom.hint || firstRoom.sublabel;
 
-  // Size canvas
   const W = window.innerWidth, H = window.innerHeight;
   intCanvas.width  = W; intCanvas.height = H;
   resizeInterior(W, H);
 
-  // Open
   openInterior(buildingType, firstRoom.key);
   overlay.classList.add("open");
   document.body.classList.add("interior-open");
@@ -730,12 +730,10 @@ window.addEventListener("resize", () => {
 </script>
 <script type="module">
   import { openProductPanel, closeProductPanel, resizePanelViewer } from "./js/product-panel.js";
-  // Register immediately AND set up a persistent getter so app.js overwrite cannot break it
   window.__moduleReady = window.__moduleReady || {};
   window.__moduleReady.showProductPanel = openProductPanel;
   window.__moduleReady.closeProductPanel = closeProductPanel;
   window.closeProductPanel = closeProductPanel;
-  // Re-register after a tick in case app.js DOMContentLoaded fires later and overwrites
   setTimeout(() => {
     window.__moduleReady = window.__moduleReady || {};
     window.__moduleReady.showProductPanel = openProductPanel;
@@ -744,7 +742,6 @@ window.addEventListener("resize", () => {
   window.addEventListener("resize", resizePanelViewer, { passive: true });
 </script>
 
-<!-- Pointer lock body class for crosshair -->
 <script>
   document.addEventListener("pointerlockchange", () => {
     document.body.classList.toggle("pointer-locked", !!document.pointerLockElement);
