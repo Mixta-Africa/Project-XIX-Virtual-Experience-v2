@@ -1597,35 +1597,68 @@ button.residence-card-btn {
 @media (max-width: 1024px) {
   /* On iPad/tablets, allow the topbar to scroll horizontally so the menus don't overlap */
   .world-topbar {
-    justify-content: flex-start;
-    overflow-x: auto;
-    overflow-y: visible;
-  }
-  .world-brand {
-    margin-right: 2rem;
-  }
-  .world-controls {
-    flex-wrap: nowrap;
-  }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   CROSS-DEVICE SYSTEM v2
+   Device classes set by JS at boot:
+   .device-mobile    — phone (<768px touch)
+   .device-tablet    — iPad / Android tablet (768-1919px touch)
+   .device-desktop   — laptop / desktop (no touch or large non-touch)
+   .device-billboard — large landscape touchscreen >= 1920px (kiosk/signage)
+   .touch            — any touch device
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* ── TOUCH TARGET FLOOR ───────────────────────────────────────────────────── */
+/* All interactive elements: 44px min on phones/tablets, 56px on billboards */
+.btn, .world-btn, .wx-btn, .vp-btn, .vp-dropdown-item,
+.residence-card-btn, .plan-tab, .plan-room, .int-room-btn,
+.plot-reserve-btn, .plot-panel-close, .pp-close,
+.zone-enter-btn, .mobile-nav-link {
+  min-height: 44px;
+  -webkit-tap-highlight-color: transparent;
+}
+.device-billboard .btn,
+.device-billboard .world-btn,
+.device-billboard .vp-btn,
+.device-billboard .residence-card-btn,
+.device-billboard .int-room-btn {
+  min-height: 64px;
+  font-size: 1rem;
+  padding: 1rem 1.8rem;
 }
 
-@media (max-width: 640px) {
-  /* Scale joystick slightly smaller on phones */
-  .vj-base {
-    width: 90px;
-    height: 90px;
-    bottom: 30px !important;
-    left: 20px !important;
-  }
-  .touch-sprint-btn {
-    bottom: 130px !important;
-    left: 20px !important;
-  }
+/* ── SAFE AREA (notched phones, rounded-corner displays) ──────────────────── */
+#world-overlay, #loading-screen, #villa-overlay, #interior-overlay {
+  padding-top:    env(safe-area-inset-top,    0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left:   env(safe-area-inset-left,   0px);
+  padding-right:  env(safe-area-inset-right,  0px);
+}
+.world-topbar {
+  padding-left:  max(0.8rem, env(safe-area-inset-left,  0px));
+  padding-right: max(0.8rem, env(safe-area-inset-right, 0px));
+  padding-top:   max(0.5rem, env(safe-area-inset-top,   0px));
+}
+#viewpoint-strip {
+  padding-bottom: max(0.8rem, env(safe-area-inset-bottom, 0px));
+  padding-left:   max(0.6rem, env(safe-area-inset-left,   0px));
+  padding-right:  max(0.6rem, env(safe-area-inset-right,  0px));
 }
 
-/*           WORLD OVERLAY RESPONSIVE                                                                                                     */
+/* ── WORLD CANVAS ─────────────────────────────────────────────────────────── */
+#world-canvas, #villa-canvas, #interior-canvas {
+  width:  100% !important;
+  height: 100% !important;
+  display: block;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+}
 
-/* Topbar scroll on small screens */
+/* Prevent scroll bleed when overlay is open */
+body.world-open, body.interior-open { overflow: hidden; position: fixed; width: 100%; }
+
+/* ── TOPBAR — SCROLLABLE ON SMALL SCREENS ─────────────────────────────────── */
 .world-topbar {
   pointer-events: auto;
   flex-wrap: nowrap;
@@ -1634,62 +1667,217 @@ button.residence-card-btn {
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
   gap: 0.3rem;
-  padding: 0 0.8rem;
 }
 .world-topbar::-webkit-scrollbar { display: none; }
 
-/* Weather group compact on mobile */
+/* Hide text labels in topbar on small screens; icon-only */
 @media (max-width: 640px) {
-  .wx-group { gap: 0.2rem; padding: 0 0.2rem; }
-  .wx-btn { padding: 0.22rem 0.45rem; font-size: 0.58rem; }
+  .world-btn-label  { display: none; }
+  .world-btn        { padding: 6px 10px; gap: 0; min-height: 44px; }
   .world-brand-mark { display: none; }
-  .world-btn { padding: 0.3rem 0.6rem; font-size: 0.65rem; }
-  #scene-caption { display: none; } /* too cramped on mobile */
+  #scene-caption    { display: none; }
+  .wx-btn           { padding: 10px 12px; font-size: 0.68rem; }
 }
 
-/* Viewpoint strip scroll on mobile */
+/* ── MOBILE NAV DRAWER ────────────────────────────────────────────────────── */
+.nav-hamburger {
+  display: none;
+  background: none;
+  border: 1px solid rgba(201,168,76,0.3);
+  border-radius: 4px;
+  padding: 6px 8px;
+  color: var(--gold-300);
+  cursor: pointer;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  -webkit-tap-highlight-color: transparent;
+}
+@media (max-width: 640px) {
+  .nav-hamburger  { display: flex; }
+  .nav-links      { display: none; }
+  .brand-name     { display: none; }
+}
+
+.mobile-nav {
+  position: fixed;
+  top: 0; right: 0; bottom: 0;
+  width: min(320px, 85vw);
+  background: var(--green-900);
+  border-left: 1px solid rgba(201,168,76,0.2);
+  z-index: 5000;
+  transform: translateX(100%);
+  transition: transform 0.32s cubic-bezier(0.22,0.61,0.36,1);
+  display: flex;
+  flex-direction: column;
+  padding: 1.5rem 1.2rem;
+  gap: 0.6rem;
+  overflow-y: auto;
+}
+.mobile-nav.open { transform: translateX(0); }
+.mobile-nav-close {
+  align-self: flex-end;
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.6);
+  padding: 8px;
+  cursor: pointer;
+  margin-bottom: 1rem;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+.mobile-nav-links { display: flex; flex-direction: column; gap: 0.2rem; flex: 1; }
+.mobile-nav-link {
+  display: block;
+  padding: 1rem 0.6rem;
+  font-size: 1.1rem;
+  color: var(--text-inverse);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  font-family: "Cormorant Garamond", serif;
+  font-weight: 300;
+  letter-spacing: 0.04em;
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+}
+.mobile-nav-link:active { color: var(--gold-300); }
+.mobile-nav-cta { padding-top: 1.5rem; }
+
+.mobile-nav-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  z-index: 4999;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.32s;
+}
+.mobile-nav-backdrop.visible { opacity: 1; pointer-events: auto; }
+
+/* ── MINIMAP ──────────────────────────────────────────────────────────────── */
+/* Responsive minimap sizing by breakpoint */
+@media (max-width: 480px) {
+  #minimap { width: 120px; bottom: 100px; right: 0.8rem; }
+  #minimap-canvas { width: 120px !important; height: 78px !important; }
+  .minimap-label { font-size: 0.52rem; }
+}
+@media (min-width: 481px) and (max-width: 768px) {
+  #minimap { width: 160px; bottom: 100px; }
+  #minimap-canvas { width: 160px !important; height: 104px !important; }
+}
+/* Billboard: larger minimap */
+.device-billboard #minimap { width: 280px; bottom: 130px; right: 2rem; }
+.device-billboard #minimap-canvas { width: 280px !important; height: 182px !important; }
+.device-billboard .minimap-label { font-size: 0.75rem; }
+
+/* ── VIEWPOINT STRIP ──────────────────────────────────────────────────────── */
 #viewpoint-strip {
   -webkit-overflow-scrolling: touch;
   scroll-snap-type: x mandatory;
+  scrollbar-width: none;
 }
+#viewpoint-strip::-webkit-scrollbar { display: none; }
 .vp-btn { scroll-snap-align: start; }
 
-/*           MINIMAP RESPONSIVE                                                                                                                       */
-
-@media (max-width: 480px) {
-  #minimap {
-    width: 130px;
-    bottom: 90px;
-    right: 0.8rem;
-  }
-  #minimap-canvas { width: 130px; height: 85px; }
+/* Billboard: strip items are bigger and more spaced */
+.device-billboard .vp-btn {
+  padding: 1rem 1.4rem;
+  font-size: 0.85rem;
+  gap: 0.6rem;
+  min-height: 64px;
+}
+.device-billboard .vp-icon svg { width: 22px; height: 22px; }
+.device-billboard .vp-dropdown-item {
+  padding: 1.1rem 1.4rem;
+  font-size: 0.85rem;
+  min-height: 56px;
 }
 
-/*           PLOT PANEL RESPONSIVE                                                                                                              */
+/* ── JOYSTICK — PINNED BOTTOM-LEFT ───────────────────────────────────────── */
+#joystick-overlay {
+  display: none; /* shown only by JS on touch devices */
+  position: fixed !important;
+  bottom: 28px !important;
+  left: 28px !important;
+  right: auto !important;
+  top: auto !important;
+  transform: none !important;
+  z-index: 9999 !important;
+  pointer-events: auto !important;
+}
+/* Larger joystick zone on billboard */
+.device-billboard #joystick-overlay { bottom: 40px !important; left: 40px !important; }
+.device-billboard .vj-base { width: 140px !important; height: 140px !important; }
 
+/* ── PLOT PANEL ───────────────────────────────────────────────────────────── */
 @media (max-width: 640px) {
   .plot-panel {
-    left: 0;
-    right: 0;
-    top: auto;
-    bottom: 80px;
+    left: 0; right: 0; top: auto; bottom: 80px;
     width: 100%;
-    border-radius: 8px 8px 0 0;
-    max-height: 65vh;
+    border-radius: 12px 12px 0 0;
+    max-height: 68vh;
     overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
     transform: translateY(20px);
+    transition: transform 0.28s ease, opacity 0.28s ease;
   }
   .plot-panel.visible { transform: translateY(0); }
   .plot-spec-grid { grid-template-columns: 1fr 1fr; }
 }
+/* Billboard: plot panel centred, larger text */
+.device-billboard .plot-panel {
+  left: 50%; transform: translateX(-50%) translateY(20px);
+  width: min(600px, 90vw);
+  bottom: 120px;
+  font-size: 1rem;
+}
+.device-billboard .plot-panel.visible { transform: translateX(-50%) translateY(0); }
+.device-billboard .plot-id { font-size: 1.6rem; }
+.device-billboard .plot-reserve-btn { font-size: 1rem; min-height: 60px; }
 
-/*           LANDING PAGE RESPONSIVE                                                                                                        */
+/* ── PRODUCT PANEL ────────────────────────────────────────────────────────── */
+.product-panel {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  max-height: 100dvh; /* dvh = dynamic viewport height, handles mobile keyboard */
+}
+.pp-body {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  padding-bottom: max(80px, env(safe-area-inset-bottom, 0px));
+}
+#pp-glb-canvas { touch-action: none; }
+body.panel-open { overflow: hidden !important; }
 
 @media (max-width: 768px) {
+  .product-panel { width: 100vw; border-left: none; border-top: 1px solid rgba(201,168,76,.2); border-radius: 12px 12px 0 0; top: auto; bottom: 0; height: 92dvh; }
+  .pp-body { grid-template-columns: 1fr; }
+  .pp-viewer { max-height: 240px; }
+}
+/* Billboard: full-width slide-up */
+.device-billboard .product-panel {
+  width: 100vw; left: 0; right: 0;
+  height: 85vh; top: auto; bottom: 0;
+  border-left: none;
+  border-top: 1px solid rgba(201,168,76,.2);
+  border-radius: 16px 16px 0 0;
+  transform: translateY(100%);
+}
+.device-billboard .product-panel.open { transform: translateY(0); }
+.device-billboard .pp-body { grid-template-columns: 1.4fr 1fr; }
+.device-billboard .pp-title { font-size: 2.4rem; }
+.device-billboard .pp-spec-label, .device-billboard .pp-spec-val { font-size: 0.92rem; }
+.device-billboard .pp-cta .btn { min-height: 60px; font-size: 1rem; }
+
+/* ── LANDING PAGE — PHONE ─────────────────────────────────────────────────── */
+@media (max-width: 768px) {
   .hero-content { grid-template-columns: 1fr; padding-bottom: 2rem; }
-  .hero-stats { flex-direction: row; gap: 1.2rem; }
+  .hero-stats { flex-direction: row; gap: 1.2rem; flex-wrap: wrap; }
   .hero-actions { flex-direction: column; gap: 0.6rem; }
-  .hero-actions .btn { text-align: center; justify-content: center; }
+  .hero-actions .btn { text-align: center; justify-content: center; width: 100%; }
   h1 { font-size: clamp(2.2rem, 12vw, 4rem); }
   .intro-strip-inner { grid-template-columns: 1fr 1fr; }
   .intro-divider { display: none; }
@@ -1701,68 +1889,120 @@ button.residence-card-btn {
 }
 
 @media (max-width: 480px) {
-  :root { --nav-h: 50px; }
-  .topbar { padding: 0 0.8rem; }
-  .nav-links { display: none; }
-  .brand-name { display: none; }
+  :root { --nav-h: 52px; }
+  .topbar { padding: 0 1rem; }
   .section { padding: 3.5rem 0; }
   h2 { font-size: clamp(1.6rem, 8vw, 2.4rem); }
   .container { width: 95%; }
-  .btn { padding: 0.7rem 1.4rem; font-size: 0.76rem; }
+  .btn { padding: 0.8rem 1.4rem; font-size: 0.8rem; }
+  .hero-desc { display: none; } /* too much text on small phones */
 }
 
-/*           TOUCH FRIENDLY                                                                                                                                   */
-
-/* Ensure tap targets meet 44px minimum */
-.room-btn, .vp-btn, .wx-btn, .world-btn { min-height: 38px; }
-
-/* Remove hover states that don't work on touch */
-@media (hover: none) {
-  .residence-card:hover { transform: none; border-color: rgba(201,168,76,0.1); }
-  .btn-gold:hover { transform: none; box-shadow: none; }
-}
-
-/* Safe area for notched phones (iPhone X+) */
-#world-overlay, #loading-screen {
-  padding-top: env(safe-area-inset-top);
-  padding-bottom: env(safe-area-inset-bottom);
-}
-.world-topbar {
-  padding-top: max(0.8rem, env(safe-area-inset-top));
-}
-#viewpoint-strip {
-  padding-bottom: max(0.8rem, env(safe-area-inset-bottom));
-}
-
-/*           TABLET (iPad)                                                                                                                                      */
-
+/* ── TABLET (iPad, Android 768-1024) ─────────────────────────────────────── */
 @media (min-width: 768px) and (max-width: 1024px) {
-  .masterplan-shell { grid-template-columns: 1fr 320px; }
+  .masterplan-shell { grid-template-columns: 1fr 300px; }
   .residence-grid { grid-template-columns: repeat(2, 1fr); }
   .investor-grid { grid-template-columns: repeat(2, 1fr); }
   h1 { font-size: clamp(2.8rem, 6vw, 5rem); }
-  .vp-btn { padding: 0.5rem 0.9rem; }
+  .vp-btn { padding: 0.6rem 1rem; }
 }
 
-/*           WORLD CANVAS SIZING                                                                                                                    */
+/* ── BILLBOARD / KIOSK (≥1920px touch) ───────────────────────────────────── */
+.device-billboard {
+  --nav-h: 80px;
+}
+.device-billboard .topbar {
+  height: 80px;
+  padding: 0 3rem;
+}
+.device-billboard .brand-mark { font-size: 1.4rem; }
+.device-billboard .brand-name { font-size: 1.1rem; }
+.device-billboard .nav-links a { font-size: 0.95rem; letter-spacing: 0.06em; }
 
-#world-canvas {
-  width: 100% !important;
-  height: 100% !important;
-  display: block;
-  touch-action: none; /* prevent browser handling touch on canvas */
-  -webkit-tap-highlight-color: transparent;
-  outline: none;
+.device-billboard h1 { font-size: clamp(5rem, 7vw, 10rem); }
+.device-billboard h2 { font-size: clamp(3rem, 4.5vw, 6rem); }
+.device-billboard p  { font-size: 1.1rem; }
+.device-billboard .eyebrow { font-size: 0.85rem; }
+
+.device-billboard .hero-content { padding: 0 6rem; }
+.device-billboard .stat-value { font-size: 3.5rem; }
+.device-billboard .stat-label { font-size: 0.85rem; }
+
+.device-billboard .residence-grid { grid-template-columns: repeat(3, 1fr); gap: 2rem; }
+.device-billboard .investor-grid { grid-template-columns: repeat(3, 1fr); gap: 2rem; }
+.device-billboard .investor-card { padding: 2.5rem; }
+.device-billboard .investor-text { font-size: 1rem; }
+
+/* Billboard CTA that floats on hero */
+.billboard-cta {
+  display: none; /* shown by JS only on .device-billboard */
+  position: fixed;
+  bottom: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  text-align: center;
+  pointer-events: auto;
+  animation: billboard-pulse 3s ease-in-out infinite;
+}
+@keyframes billboard-pulse {
+  0%, 100% { transform: translateX(-50%) translateY(0); }
+  50% { transform: translateX(-50%) translateY(-8px); }
+}
+.billboard-cta-text {
+  font-size: 1.1rem;
+  color: rgba(240,236,224,0.7);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.billboard-cta-btn {
+  font-size: 1.1rem !important;
+  padding: 1.2rem 3rem !important;
+  min-height: 72px !important;
+  border-radius: 8px !important;
+  box-shadow: 0 0 40px rgba(201,168,76,0.3);
 }
 
-/* Prevent body scroll while world is open */
-body.world-open { overflow: hidden; position: fixed; width: 100%; }
+/* ── HOVER STATES: only when device can hover ─────────────────────────────── */
+@media (hover: none) {
+  /* Disable hover transforms on touch — they get stuck after tap */
+  .residence-card:hover { transform: none; border-color: rgba(201,168,76,0.1); }
+  .btn-gold:hover { transform: none; box-shadow: none; }
+  .investor-card:hover { transform: none; border-color: rgba(201,168,76,0.1); }
+}
 
-/*           LOOK HINT ON MOBILE                                                                                                                    */
+/* ── HIGH RESOLUTION DISPLAYS (Retina, 4K, billboard) ────────────────────── */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+  /* Sharper borders on hi-dpi */
+  .world-topbar, .topbar { border-width: 0.5px; }
+  .vp-btn, .world-btn    { border-width: 0.5px; }
+}
 
+/* ── REDUCED MOTION ───────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  .billboard-cta { animation: none; }
+  html { scroll-behavior: auto; }
+}
+
+/* ── LANDSCAPE PHONE ──────────────────────────────────────────────────────── */
+@media (max-height: 500px) and (orientation: landscape) {
+  .hero { min-height: 100svh; }
+  .hero-content { padding: 1rem 2rem; }
+  .hero-stats { display: none; } /* too cramped in landscape phone */
+  #minimap { bottom: 70px; width: 120px; }
+  #minimap-canvas { width: 120px !important; height: 78px !important; }
+  #viewpoint-strip { padding-bottom: 4px; }
+  .vp-btn { padding: 0.4rem 0.8rem; font-size: 0.65rem; }
+}
+
+/* ── LOOK HINT ────────────────────────────────────────────────────────────── */
 .look-hint-mobile {
   position: absolute;
-  bottom: 100px;
+  bottom: 110px;
   right: 1.2rem;
   font-size: 0.62rem;
   letter-spacing: 0.08em;
@@ -1772,441 +2012,88 @@ body.world-open { overflow: hidden; position: fixed; width: 100%; }
   line-height: 1.8;
   pointer-events: none;
 }
+.device-billboard .look-hint-mobile { font-size: 0.85rem; bottom: 160px; right: 2rem; }
 
-/*           VIEWPOINT DROPDOWN                                                                                                                       */
-
+/* ── VIEWPOINT DROPDOWN ───────────────────────────────────────────────────── */
 .vp-wrapper { position: relative; flex-shrink: 0; pointer-events: auto; z-index: 31; }
-
-.vp-chevron {
-  font-size: .55rem;
-  margin-left: .3rem;
-  opacity: .7;
-  vertical-align: middle;
-}
-
+.vp-chevron { font-size:.55rem; margin-left:.3rem; opacity:.7; vertical-align:middle; }
 .vp-dropdown {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  z-index: 200;
-  pointer-events: auto;
-  left: 0;
+  position: fixed; /* fixed so it's never clipped by overflow:hidden parents */
+  z-index: 9000;
   flex-direction: column;
-  background: rgba(6, 18, 8, 0.97);
-  border: 1px solid rgba(201,168,76,0.35);
-  border-radius: 4px;
+  background: rgba(6,18,8,0.97);
+  border: 1px solid rgba(201,168,76,.35);
+  border-radius: 6px;
   overflow: hidden;
-  min-width: 140px;
-  box-shadow: 0 -8px 24px rgba(0,0,0,0.6);
-  z-index: 60;
+  min-width: 160px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.7);
 }
-
 .vp-dropdown-item {
-  padding: .65rem 1rem;
-  font-size: .72rem;
-  font-weight: 500;
-  letter-spacing: .05em;
-  color: rgba(240,236,224,.75);
-  text-align: left;
-  border: none;
-  background: none;
-  cursor: pointer;
+  padding: .7rem 1.1rem; font-size: .74rem; font-weight: 500;
+  letter-spacing: .05em; color: rgba(240,236,224,.8); text-align: left;
+  border: none; background: none; cursor: pointer;
   border-bottom: 1px solid rgba(201,168,76,.08);
   transition: background .15s, color .15s;
-  white-space: nowrap;
+  white-space: nowrap; min-height: 44px; display: flex; align-items: center;
 }
 .vp-dropdown-item:last-child { border-bottom: none; }
-.vp-dropdown-item:hover {
-  background: rgba(201,168,76,.12);
-  color: var(--gold-300);
-}
+.vp-dropdown-item:hover, .vp-dropdown-item:active { background: rgba(201,168,76,.14); color: var(--gold-300); }
 
-/*                                                                                                                                                                                              
-   PRODUCT PANEL
-                                                                                                                                                                                                 */
-
-.pp-overlay {
-  position: fixed; inset: 0; background: rgba(0,0,0,.65);
-  z-index: 800; opacity: 0; pointer-events: none;
-  transition: opacity .35s;
-}
-.product-panel.open ~ .pp-overlay { opacity: 1; pointer-events: auto; }
-
-.product-panel {
-  position: fixed;
-  top: 0; right: 0; bottom: 0;
-  width: min(95vw, 1100px);
-  background: var(--green-900);
-  border-left: 1px solid rgba(201,168,76,.2);
-  z-index: 901;              /* above overlay */
-  display: flex; flex-direction: column;
-  transform: translateX(100%);
-  transition: transform .4s cubic-bezier(.22,.61,.36,1);
-  overflow: hidden;
-  will-change: transform;   /* GPU compositing */
-}
-.product-panel.open { transform: translateX(0); }
-
-/* Header */
-.pp-header {
-  padding: 1.4rem 1.6rem 1.2rem;
-  border-bottom: 1px solid rgba(201,168,76,.14);
-  display: flex; justify-content: space-between; align-items: flex-start;
-  flex-shrink: 0;
-}
-.pp-type { display: block; margin-bottom: .4rem; }
-.pp-title { font-size: clamp(1.4rem, 3vw, 2.2rem); color: var(--cream-100); line-height: 1.1; }
-.pp-tagline { font-size: .82rem; color: var(--gold-300); margin-top: .35rem; font-style: italic; }
-.pp-close {
-  font-size: 1.6rem; color: rgba(240,236,224,.45); flex-shrink: 0;
-  margin-left: 1rem; margin-top: -.2rem;
-  background: none; border: none; cursor: pointer; line-height: 1;
-}
-.pp-close:hover { color: var(--cream-100); }
-
-/* Body: two columns */
-.pp-body {
-  display: grid;
-  grid-template-columns: 1.2fr 1fr;
-  flex: 1; overflow: hidden;
-}
-@media (max-width: 768px) {
-  .product-panel { width: 100vw; }
-  .pp-body { grid-template-columns: 1fr; overflow-y: auto; }
-}
-
-/* Left: 3D viewer */
-.pp-viewer {
-  background: #0a1208;
-  display: flex; flex-direction: column;
-  border-right: 1px solid rgba(201,168,76,.1);
-}
-.pp-viewer-label {
-  padding: .6rem 1rem;
-  font-size: .6rem;
-  border-bottom: 1px solid rgba(201,168,76,.1);
-}
-#pp-glb-canvas {
-  flex: 1;
-  width: 100%; height: 100%;
-  min-height: 280px;
-  display: block;
-  cursor: grab;
-  touch-action: none;
-}
-#pp-glb-canvas:active { cursor: grabbing; }
-.pp-glb-fallback {
-  flex: 1; min-height: 280px;
-  display: flex; align-items: center; justify-content: center;
-  color: rgba(240,236,224,.3); font-size: .8rem; font-style: italic;
-}
-
-/* Right: details */
-.pp-details {
-  padding: 1.2rem 1.4rem;
-  overflow-y: auto;
-  display: flex; flex-direction: column; gap: 1.2rem;
-}
-
-/* Specs grid */
-.pp-specs {
-  display: grid; grid-template-columns: 1fr 1fr; gap: .5rem .8rem;
-}
-.pp-spec { display: flex; flex-direction: column; gap: .15rem; }
-.pp-spec-label {
-  font-size: .6rem; font-weight: 600; letter-spacing: .1em;
-  text-transform: uppercase; color: var(--text-muted);
-}
-.pp-spec-val { font-size: .82rem; color: var(--cream-200); }
-
-/* Plan tabs */
-.pp-plan-tabs { display: flex; gap: .4rem; flex-wrap: wrap; margin-bottom: .6rem; }
-.pp-tab {
-  padding: .3rem .75rem; font-size: .68rem; font-weight: 500;
-  border: 1px solid rgba(201,168,76,.25); border-radius: 2px;
-  color: rgba(240,236,224,.6); background: none; cursor: pointer;
-  transition: all .15s;
-}
-.pp-tab:hover, .pp-tab.active {
-  border-color: var(--gold-500); color: var(--gold-300);
-  background: rgba(201,168,76,.08);
-}
-.pp-plan-img {
-  width: 100%; border-radius: 3px; border: 1px solid rgba(201,168,76,.1);
-  max-height: 200px; object-fit: cover;
-}
-
-/* Description */
-.pp-desc { font-size: .84rem; color: rgba(240,236,224,.65); line-height: 1.7; }
-
-/* CTA */
-.pp-cta { display: flex; gap: .7rem; flex-wrap: wrap; margin-top: auto; padding-top: 1rem; }
-.pp-cta .btn { flex: 1; text-align: center; justify-content: center; min-width: 140px; }
-
-/*                                                                                                                                                                                              
-   INTERIOR WALKTHROUGH OVERLAY
-                                                                                                                                                                                                 */
-
-.interior-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1200;
-  background: #000;
-  display: flex;
-  flex-direction: column;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity .35s;
-}
-.interior-overlay.open {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-/* Header */
-.int-header {
-  position: absolute;
-  top: 0; left: 0; right: 0;
-  padding: .8rem 1.4rem;
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  background: linear-gradient(to bottom, rgba(0,0,0,.75), transparent);
-  z-index: 10;
-  pointer-events: none;
-}
-.int-header-right { pointer-events: auto; }
-.int-header-left { display: flex; flex-direction: column; gap: .15rem; }
-.int-building-name { color: var(--gold-500); }
-.int-room-label {
-  font-size: 1.1rem;
-  font-weight: 300;
-  letter-spacing: .05em;
-  color: var(--cream-100);
-  font-family: "Cormorant Garamond", serif;
-}
-.int-room-hint {
-  font-size: .72rem;
-  color: rgba(240,236,224,.5);
-  font-style: italic;
-}
-.int-exit-btn {
-  padding: .45rem 1rem;
-  border: 1px solid rgba(201,168,76,.4);
-  border-radius: 3px;
-  background: rgba(0,0,0,.5);
-  color: rgba(240,236,224,.8);
-  font-size: .72rem;
-  letter-spacing: .08em;
-  cursor: pointer;
-  transition: all .2s;
-}
-.int-exit-btn:hover { border-color: var(--gold-500); color: var(--gold-300); }
-
-/* Canvas fills screen */
-#interior-canvas {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  display: block;
-  cursor: crosshair;
-  touch-action: none;
-}
-body.interior-open { overflow: hidden; }
-
-/* Crosshair */
-.int-crosshair {
-  position: absolute;
-  top: 50%; left: 50%;
-  transform: translate(-50%,-50%);
-  width: 16px; height: 16px;
-  pointer-events: none;
-  z-index: 11;
-}
-.int-crosshair::before, .int-crosshair::after {
-  content: '';
-  position: absolute;
-  background: rgba(255,255,255,.7);
-}
-.int-crosshair::before { width: 1.5px; height: 16px; left: 7.25px; top: 0; }
-.int-crosshair::after  { height: 1.5px; width: 16px; top: 7.25px; left: 0; }
-
-/* Room strip (bottom) */
-.int-room-strip {
-  position: absolute;
-  bottom: 0; left: 0; right: 0;
-  display: flex;
-  gap: .4rem;
-  padding: 1rem 1.4rem 1.2rem;
-  background: linear-gradient(to top, rgba(0,0,0,.85) 0%, transparent 100%);
-  overflow-x: auto;
-  scrollbar-width: none;
-  z-index: 10;
-  pointer-events: auto;
-}
-.int-room-strip::-webkit-scrollbar { display: none; }
-
-.int-room-btn {
-  display: flex;
-  flex-direction: column;
-  gap: .2rem;
-  padding: .55rem 1rem;
-  border: 1px solid rgba(201,168,76,.2);
-  border-radius: 3px;
-  background: rgba(0,0,0,.55);
-  cursor: pointer;
-  white-space: nowrap;
-  flex-shrink: 0;
-  transition: all .2s;
-}
-.int-room-btn:hover { border-color: rgba(201,168,76,.5); }
-.int-room-btn.active {
-  border-color: var(--gold-500);
-  background: rgba(201,168,76,.12);
-}
-.irb-label {
-  font-size: .75rem;
-  font-weight: 600;
-  color: rgba(240,236,224,.85);
-  letter-spacing: .04em;
-}
-.irb-sub {
-  font-size: .62rem;
-  color: rgba(240,236,224,.4);
-}
-
-/* Controls hint */
-.int-controls-hint {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  margin-top: 30px;
-  font-size: .68rem;
-  letter-spacing: .08em;
-  color: rgba(255,255,255,.35);
-  pointer-events: none;
-  z-index: 9;
-  text-align: center;
-  transition: opacity 1s;
-}
-
-/* "View from inside" button     added to product panel */
-.pp-interior-btn {
-  width: 100%;
-  margin-bottom: .6rem;
-  padding: .85rem;
-  background: rgba(201,168,76,.08);
-  border: 1px solid rgba(201,168,76,.4);
-  color: var(--gold-300);
-  border-radius: 3px;
-  cursor: pointer;
-  font-size: .78rem;
-  font-weight: 600;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-  transition: all .2s;
-}
-.pp-interior-btn:hover {
-  background: rgba(201,168,76,.18);
-  border-color: var(--gold-500);
-}
-
-/* Mobile */
+/* ── INTERIOR OVERLAY — MOBILE ────────────────────────────────────────────── */
 @media (max-width: 640px) {
-  .int-room-btn { padding: .4rem .7rem; }
-  .irb-label { font-size: .68rem; }
+  .int-room-btn { padding: .5rem .8rem; min-height: 48px; }
+  .irb-label { font-size: .72rem; }
   .irb-sub { display: none; }
   .int-controls-hint { display: none; }
 }
+.device-billboard .int-room-btn { min-height: 64px; padding: .8rem 1.2rem; }
+.device-billboard .irb-label { font-size: .9rem; }
 
-/*           TOUCH SPRINT BUTTON                                                                                                                    */
+/* ── INTERIOR TOUCH-SPRINT BUTTON ─────────────────────────────────────────── */
 .touch-sprint-btn {
-  position: absolute;
-  bottom: 108px;
-  left: 1.4rem;
-  width: 72px;
-  height: 36px;
-  border-radius: 18px;
+  position: fixed;
+  bottom: 108px; left: 1.4rem;
+  width: 72px; height: 44px;
+  border-radius: 22px;
   border: 1.5px solid rgba(201,168,76,0.5);
   background: rgba(6,18,8,0.7);
   color: rgba(201,168,76,0.8);
-  font-size: 0.62rem;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  cursor: pointer;
-  pointer-events: auto;
-  touch-action: none;
-  -webkit-tap-highlight-color: transparent;
-  transition: background 0.15s, border-color 0.15s;
-  z-index: 25;
+  font-size: 0.62rem; font-weight: 700; letter-spacing: 0.12em;
+  cursor: pointer; pointer-events: auto;
+  touch-action: none; -webkit-tap-highlight-color: transparent;
+  transition: background .15s, border-color .15s; z-index: 25;
+  display: flex; align-items: center; justify-content: center;
 }
-.touch-sprint-btn.active {
-  background: rgba(201,168,76,0.25);
-  border-color: var(--gold-500);
-  color: var(--gold-300);
-}
+.touch-sprint-btn.active { background: rgba(201,168,76,.25); border-color: var(--gold-500); color: var(--gold-300); }
+.device-billboard .touch-sprint-btn { width: 100px; height: 60px; font-size: 0.8rem; border-radius: 30px; }
 
-/* Fix Product Panel Scrolling on Mobile */
-.product-panel {
-  overflow-y: auto !important;
-  -webkit-overflow-scrolling: touch !important;
-  max-height: 100vh;
+/* ── PANEL CLOSE BUTTONS — ALWAYS VISIBLE AND REACHABLE ─────────────────── */
+.plot-panel-close {
+  position: absolute; top: 0.8rem; right: 0.8rem;
+  width: 44px; height: 44px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 50%; color: rgba(255,255,255,0.7);
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+  transition: background .15s;
 }
-.pp-body {
-  overflow-y: auto !important;
-  -webkit-overflow-scrolling: touch !important;
-  padding-bottom: 80px; /* Give space at the bottom to scroll past the text */
-}
-body.panel-open {
-  overflow: hidden !important;
-}
+.plot-panel-close:hover, .plot-panel-close:active { background: rgba(255,255,255,0.18); color: #fff; }
+.device-billboard .plot-panel-close { width: 56px; height: 56px; top: 1.2rem; right: 1.2rem; }
 
-#product-panel.product-panel {
-  display: flex !important;
-  flex-direction: column !important;
-  max-height: 90vh !important;
-  height: 90vh !important;
-  overflow-y: auto !important;
-  -webkit-overflow-scrolling: touch !important;
-  touch-action: pan-y !important;
-  z-index: 99999 !important;
+/* ── FOCUS RINGS — KEYBOARD NAVIGATION (desktops) ────────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--gold-500);
+  outline-offset: 3px;
+  border-radius: 3px;
 }
+/* Hide focus ring on touch devices */
+.touch :focus-visible { outline: none; }
 
-#product-panel .pp-body {
-  flex: 1 1 auto !important;
-  overflow-y: auto !important;
-  -webkit-overflow-scrolling: touch !important;
-  touch-action: pan-y !important;
-  padding-bottom: 120px !important;
-}
-
-#pp-glb-canvas {
-  touch-action: none;
-}
-body.panel-open {
-  overflow: hidden !important;
-}
-
-#product-panel.product-panel {
-  display: flex !important;
-  flex-direction: column !important;
-  max-height: 90vh !important;
-  height: 90vh !important;
-  overflow-y: auto !important;
-  -webkit-overflow-scrolling: touch !important;
-  touch-action: pan-y !important;
-  z-index: 99999 !important;
-}
-
-#product-panel .pp-body {
-  flex: 1 1 auto !important;
-  overflow-y: auto !important;
-  -webkit-overflow-scrolling: touch !important;
-  touch-action: pan-y !important;
-  padding-bottom: 120px !important;
-}
-
-#pp-glb-canvas {
-  touch-action: none;
+/* ── PRINT ────────────────────────────────────────────────────────────────── */
+@media print {
+  .topbar, #world-overlay, #loading-screen, .hero-actions,
+  .cta-actions, #joystick-overlay { display: none !important; }
+  body { color: #000; background: #fff; }
+  h1, h2 { color: #000; }
+  .display { font-size: 3rem; }
 }
