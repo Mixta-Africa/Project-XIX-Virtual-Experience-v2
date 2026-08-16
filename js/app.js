@@ -724,7 +724,14 @@ function startRenderLoop() {
     tickScene(elapsed, camera);
     updateMinimap(camera.position.x, camera.position.z, getYaw());
     updateSpatialAudio(camera.position.x, camera.position.z);
-    renderFrame();
+    
+    // STRICT PERFORMANCE BYPASS:
+    // If we are in Fast mode, bypass the heavy EffectComposer entirely
+    if (window.PERF_MODE === 'fast' || !composer) {
+      renderer.render(scene, camera);
+    } else {
+      renderFrame();
+    }
   }
 
   frame();
