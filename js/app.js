@@ -725,10 +725,10 @@ function startRenderLoop() {
     updateMinimap(camera.position.x, camera.position.z, getYaw());
     updateSpatialAudio(camera.position.x, camera.position.z);
     
-    // STRICT PERFORMANCE BYPASS:
-    // If we are in Fast mode, bypass the heavy EffectComposer entirely
-    if (window.PERF_MODE === 'fast' || !composer) {
-      renderer.render(scene, camera);
+    // TRUE PERFORMANCE BYPASS:
+    // If in Fast mode, bypass the heavy EffectComposer entirely
+    if (PERF_MODE === 'fast') {
+      getRenderer().render(getScene(), getCamera());
     } else {
       renderFrame();
     }
