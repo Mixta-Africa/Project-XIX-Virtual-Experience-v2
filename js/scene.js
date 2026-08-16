@@ -1,7 +1,7 @@
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
 import { GLTFLoader }  from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/GLTFLoader.js";
 import { DRACOLoader } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/DRACOLoader.js";
-import { PBR, createWaterMat, addGrassField, tickGrass, tickWater } from "./graphics.js";
+import { PBR, createWaterMat, addGrassField, tickGrass, tickWater, setPerfModeGraphics } from "./graphics.js";
 import {
   MAT_GRASS_FIELD, MAT_DIRT, MAT_ASPHALT,
   MAT_BRICK, MAT_CONCRETE, MAT_TIMBER, MAT_STONE, MAT_TILE_ROOF,
@@ -20,6 +20,7 @@ const PERF_SETTINGS = {
 export function setPerfMode(mode) {
   if (!PERF_SETTINGS[mode]) return;
   PERF_MODE = mode;
+  setPerfModeGraphics(mode); // bypass postfx in Fast, enable in Balanced/Rich
   if (!renderer) return;
   const s = PERF_SETTINGS[mode];
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, s.pixelRatio));
@@ -79,16 +80,26 @@ export function loadHorseGLB() {
     scene.add(horseGroup);
     
     horseMixer = new THREE.AnimationMixer(model);
-let clip = gltf.animations.find(a => {
-const n = a.name.toLowerCase();
-return n.includes('trot') || n.includes('walk') || n.includes('run');
-}) || gltf.animations[0];
-if (clip) {
-const action = horseMixer.clipAction(clip);
-action.setLoop(THREE.LoopRepeat, Infinity);
-action.timeScale = 1.2;
-action.play();
-}
+    let rawClip = gltf.animations.find(a => {
+      const n = a.name.toLowerCase();
+      return n.includes('trot') || n.includes('walk') || n.includes('run');
+    }) || gltf.animations[0];
+    if (rawClip) {
+      // Strip root-motion tracks (position + rotation on the root joint).
+      // These baked-in keyframes cause the horse to spin or drift uncontrollably.
+      // We control position/rotation externally via setHorsePosition().
+      const filteredTracks = rawClip.tracks.filter(track => {
+        // Keep all non-root tracks. Root is typically named '_rootJoint', 'Root', 'Hips_01', or 'RootNode'
+        const isRootBone = /^(root|_rootjoint|rootnode|hips_01)/i.test(track.name.split('.')[0]);
+        const isPositionOrRotation = track.name.endsWith('.position') || track.name.endsWith('.quaternion');
+        return !(isRootBone && isPositionOrRotation);
+      });
+      const clip = new THREE.AnimationClip(rawClip.name, rawClip.duration, filteredTracks);
+      const action = horseMixer.clipAction(clip);
+      action.setLoop(THREE.LoopRepeat, Infinity);
+      action.timeScale = 1.2;
+      action.play();
+    }
 
   }, undefined, err => {
     console.error("Failed to load horse.glb:", err);
