@@ -151,6 +151,9 @@ function applyTimePreset(name) {
     else if (typeof updateSky === 'function') updateSky(...(p.sky||[]));
   } catch(e){ console.warn('[XIX] sky update:', e.message); }
   try { setBloomForTime(name); } catch(e){}
+  // Night security lights and building glow — uses actual scene exports
+  try { if (typeof updateNightLights === 'function') updateNightLights(name); } catch(e){}
+  try { if (typeof updateBuildingNightGlow === 'function') updateBuildingNightGlow(name); } catch(e){}
   const sc = getScene();
   if (sc && sc.fog) {
     sc.fog.color.set(p.fog);
@@ -707,7 +710,7 @@ function showPlotPanel(plotKey) {
   // Close button — guaranteed immediate
   const closeBtn=document.getElementById("plot-panel-close");
   if(closeBtn){
-    const handler=e=>{ e.stopImmediatePropagation(); panel.classList.remove("visible"); highlightPlot(null); closeBtn.removeEventListener('click',handler,true); };
+    const handler=e=>{ e.stopImmediatePropagation(); panel.classList.remove("visible"); _stopPlotHighlightPulse(); closeBtn.removeEventListener('click',handler,true); };
     closeBtn.addEventListener('click',handler,{capture:true,once:true});
   }
 }
@@ -732,6 +735,32 @@ function _startPlotGlow(plotKey) {
     _glowAnimId = requestAnimationFrame(pulse);
   }
   pulse();
+}
+
+// ── Gold pulse on selected villa overlay ────────────────────────────────────
+let _pulseInterval = null;
+function _startPlotHighlightPulse(plotKey) {
+  _stopPlotHighlightPulse();
+  let t = 0;
+  _pulseInterval = setInterval(() => {
+    t += 0.08;
+    const alpha = 0.15 + Math.abs(Math.sin(t)) * 0.30;
+    try {
+      const sc = getScene();
+      if (!sc) return;
+      sc.traverse(o => {
+        if (o.userData?.isPlotOverlay && o.userData?.plotKey === plotKey && o.material) {
+          o.material.opacity = alpha;
+          o.material.color.setHex(0xC9A84C);
+          o.material.needsUpdate = true;
+        }
+      });
+    } catch(e){}
+  }, 50);
+}
+function _stopPlotHighlightPulse() {
+  if (_pulseInterval) { clearInterval(_pulseInterval); _pulseInterval = null; }
+  try { highlightPlot(null); } catch(e){}
 }
 
 function showNotification(msg) {
@@ -870,7 +899,7 @@ async function openWorldAt(viewKey) {
     // Desktop: show prompt for 10s, then auto-hide
     showEnterPrompt("Click to lock cursor  •  WASD to walk  •  Shift to sprint");
     setTimeout(hideEnterPrompt, 10000);
-    // Brief re-show (2s) when user first presses a movement key
+    // Re-show briefly (2s) on first keyboard movement attempt
     let _promptShown = false;
     function _onFirstMove(e) {
       const mvKeys = new Set(['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright']);
@@ -881,7 +910,18 @@ async function openWorldAt(viewKey) {
         document.removeEventListener('keydown', _onFirstMove);
       }
     }
-    document.addEventListener('keydown', _onFirstMove, { passive:true, once:false });
+    document.addEventListener('keydown', _onFirstMove, { passive:true });
+    // Mobile/touch: 2s flash when joystick is first touched
+    const _joy = document.getElementById('joystick-overlay');
+    if (_joy) {
+      _joy.addEventListener('touchstart', () => {
+        if (!_promptShown) {
+          _promptShown = true;
+          showEnterPrompt('Drag right to look  •  Joystick to move');
+          setTimeout(hideEnterPrompt, 2000);
+        }
+      }, { passive:true, once:true });
+    }
   }
   enableAudio();
   startRenderLoop();
