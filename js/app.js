@@ -119,10 +119,10 @@ window.setMoveMode = function(mode) {
 
 //           TIME PRESETS
 const TIME_PRESETS = {
-  morning:   { sky:["#1e3a5a","#7aaac8","#4a7a38"], sunCol:0xffd080, sunInt:1.8, sunPos:[-80,55,-80],   fog:"#8ab8cc", fogD:0.0008, exp:0.92, hemiInt:0.9 },
-  afternoon: { sky:["#1a3a6a","#5a9acc","#3a6a30"], sunCol:0xffe8b0, sunInt:2.2, sunPos:[-160,160,100], fog:"#8ab8cc", fogD:0.0009, exp:1.02, hemiInt:1.2 },
-  sunset:    { sky:["#0a1830","#c84818","#4a2a10"], sunCol:0xff8030, sunInt:1.6, sunPos:[-100,28,60],   fog:"#c06040", fogD:0.0012, exp:1.05, hemiInt:0.8 },
-  night:     { sky:["#000508","#020a14","#050a08"], sunCol:0x304870, sunInt:0.12,sunPos:[0,40,-80],     fog:"#020810", fogD:0.0015, exp:0.55, hemiInt:0.15 },
+  morning:   { sky:["#1e3a5a","#7aaac8","#4a7a38"], sunCol:0xffd080, sunInt:1.8, sunPos:[-80,55,-80],   fog:"#8ab8cc", fogD:0.00018, exp:0.92, hemiInt:0.9 },
+  afternoon: { sky:["#1a3a6a","#5a9acc","#3a6a30"], sunCol:0xffe8b0, sunInt:2.2, sunPos:[-160,160,100], fog:"#8ab8cc", fogD:0.00014, exp:1.02, hemiInt:1.2 },
+  sunset:    { sky:["#0a1830","#c84818","#4a2a10"], sunCol:0xff8030, sunInt:1.6, sunPos:[-100,28,60],   fog:"#c06040", fogD:0.00022, exp:1.05, hemiInt:0.8 },
+  night:     { sky:["#000508","#020a14","#050a08"], sunCol:0x304870, sunInt:0.12,sunPos:[0,40,-80],     fog:"#020810", fogD:0.00035, exp:0.55, hemiInt:0.15 },
 };
 
 function applyTimePreset(name) {
@@ -137,7 +137,11 @@ function applyTimePreset(name) {
   } catch(e){ console.warn('[XIX] sky update:', e.message); }
   try { setBloomForTime(name); } catch(e){}
   const sc = getScene();
-  if (sc && sc.fog) { sc.fog.color.set(p.fog); sc.fog.density = p.fogD; }
+  if (sc && sc.fog) {
+    sc.fog.color.set(p.fog);
+    _currentFogD = p.fogD;
+    sc.fog.density = _fogEnabled ? p.fogD : 0.000001;
+  }
   // Update lights directly via cached refs — no scene.traverse
   const _sun = typeof getSunLight === 'function' ? getSunLight() : null;
   if (_sun) { _sun.color.setHex(p.sunCol); _sun.intensity = p.sunInt; _sun.position.set(...p.sunPos); }
@@ -150,14 +154,29 @@ function applyWeather(w) {
     b.classList.toggle("active", b.dataset.weather === w));
   const sc = getScene();
   if (!sc || !sc.fog) return;
-  const baseD = TIME_PRESETS.afternoon.fogD;
-  if (w === "rain")        sc.fog.density = baseD * 3.5;
-  else if (w === "cloudy") sc.fog.density = baseD * 1.8;
-  else                     sc.fog.density = baseD;
+  if (w === "rain")        _currentFogD = _currentFogD * 3.5;
+  else if (w === "cloudy") _currentFogD = _currentFogD * 1.8;
+  // else "clear" — _currentFogD stays at the time preset value (set by applyTimePreset)
+  if (_fogEnabled) sc.fog.density = _currentFogD;
 }
 
 window.applyTimePreset = applyTimePreset;
 window.applyWeather    = applyWeather;
+
+// ─── FOG TOGGLE ───────────────────────────────────────────────────────────────
+let _fogEnabled  = true;
+let _currentFogD = TIME_PRESETS.afternoon.fogD;
+
+window.setFogEnabled = function(enabled) {
+  _fogEnabled = enabled;
+  const sc = getScene();
+  if (!sc || !sc.fog) return;
+  sc.fog.density = enabled ? _currentFogD : 0.000001;
+  // Sync toggle button state if present
+  const btn = document.getElementById('fog-toggle-btn');
+  if (btn) btn.classList.toggle('active', enabled);
+};
+window.isFogEnabled = function() { return _fogEnabled; };
 
 // rotateVillaGLB still works from console — just not in toolbar
 window.rotateVillaGLB = function(degrees) {
@@ -887,9 +906,9 @@ function toggleAerial(btn){
     const cam = getCamera();
     // Restore normal FOV + far plane
     cam.fov = 65; cam.far = 1200; cam.updateProjectionMatrix();
-    // Restore fog
+    // Restore fog to current time/weather density (respects fog toggle)
     const _scR = getScene();
-    if (_scR && _scR.fog) _scR.fog.density = 0.0012;
+    if (_scR && _scR.fog) _scR.fog.density = _fogEnabled ? _currentFogD : 0.000001;
     // Re-enable LOD auto-update — renderer resumes distance-based switching
     if (typeof setAerialMode === 'function') setAerialMode(false);
     const walkH = (typeof FOOT_EYE_HEIGHT  !== 'undefined') ? FOOT_EYE_HEIGHT  : 1.72;
@@ -1134,7 +1153,7 @@ function openVillaInterior(){
     villaRenderer.outputColorSpace=THREE.SRGBColorSpace;
     villaScene=new THREE.Scene();
     villaScene.background=new THREE.Color(0x7ab4d4);
-    villaScene.fog=new THREE.FogExp2(0x9ac5d4,0.025);
+    villaScene.fog=new THREE.FogExp2(0x9ac5d4,0.006);
     buildVillaInterior(villaScene);
   }
   teleportVillaTo("approach");
