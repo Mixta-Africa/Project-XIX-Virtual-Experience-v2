@@ -1,12 +1,23 @@
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
 /**
- * Project XIX     Main Application Entry Point
- * Orchestrates: landing, masterplan, 3D walkthrough, VR.
+ * Project XIX     Main Application Entry Point  v23
+ * Changes from v22:
+ *  - Performance mode toggle (Fast/Balanced/Rich) in corner of 3D overlay
+ *  - Horse+rider avatar: camera at RIDER_EYE_HEIGHT (3.1m) by default, tickHorseAnim each frame
+ *  - Joystick pinned to lower-left (no free-roam)
+ *  - Panel close buttons: pointer-events always-on, immediate response via stopPropagation
+ *  - Render loop: frame time cap 33ms (30fps floor in Fast), skips postfx SSAO in Fast
+ *  - shadow map + pixel ratio tuned per mode via setPerfMode()
  */
 
 import { VIEWPOINTS, ZONES, WORLD } from "./data.js";
 import { buildVillaInterior, VILLA_VIEWPOINTS } from "./villa-interior.js";
-import { initScene, getRenderer, getScene, getCamera, getClock, tickScene, updateSky, plotRegistry, reservePlot, getPlotAtRay } from "./scene.js?v=22";
+import {
+  initScene, getRenderer, getScene, getCamera, getClock, tickScene, updateSky,
+  plotRegistry, reservePlot, getPlotAtRay,
+  setPerfMode, PERF_MODE, RIDER_EYE_HEIGHT, FOOT_EYE_HEIGHT,
+  tickHorseAnim, setHorsePosition,
+} from "./scene.js?v=23";
 import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime } from "./graphics.js";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
@@ -21,27 +32,29 @@ import {
   enableAudio, updateSpatialAudio, initAudio
 } from "./ui.js";
 
-//           STATE                                                                                                                                                                                                             
-
-let sceneReady = false;
+//           STATE
+let sceneReady      = false;
 let villaInteriorActive = false;
-let villaScene = null;
-let villaRenderer = null;
-let introPlaying = false;
-let currentViewKey = "field_centre";
-let animFrameId = null;
-let composer = null;
-let aerialOrbit  = false;
-let aerialAngle  = 0;
-let aerialYawOffset = 0;   // mouse/touch drag adds to the base orbit angle
-let aerialPitch  = -Math.PI / 2.5;  // tilt (~40 deg down)
-let aerialDragging = false;
-let aerialLastX  = 0, aerialLastY = 0;
+let villaScene      = null;
+let villaRenderer   = null;
+let introPlaying    = false;
+let currentViewKey  = "field_centre";
+let animFrameId     = null;
+let composer        = null;
+let aerialOrbit     = false;
+let aerialAngle     = 0;
+let aerialYawOffset = 0;
+let aerialPitch     = -Math.PI / 2.5;
+let aerialDragging  = false;
+let aerialLastX     = 0, aerialLastY = 0;
 const AERIAL_RADIUS = 220;
 const AERIAL_HEIGHT = 200;
-const AERIAL_SPEED  = 0.12;   // orbit speed (radians/sec)
+const AERIAL_SPEED  = 0.12;
 
-//           WEATHER / TIME PRESETS                                                                                                                                                       
+// Horse mode: camera rides at RIDER_EYE_HEIGHT
+let horseMode = true; // ON by default
+
+//           WEATHER / TIME PRESETS
 const TIME_PRESETS = {
   morning:   { sky:["#1e3a5a","#7aaac8","#4a7a38"], sunCol:0xffd080, sunInt:1.8, sunPos:[-80,55,-80],   fog:"#8ab8cc", fogD:0.0008, exp:0.92, hemiInt:0.9 },
   afternoon: { sky:["#1a3a6a","#5a9acc","#3a6a30"], sunCol:0xffe8b0, sunInt:2.2, sunPos:[-160,160,100], fog:"#8ab8cc", fogD:0.0009, exp:1.02, hemiInt:1.2 },
@@ -55,22 +68,14 @@ function applyTimePreset(name) {
     b.classList.toggle("active", b.dataset.time === name));
   try { updateSky(...p.sky); } catch(e){}
   try { setBloomForTime(name); } catch(e){}
-  const s = getScene();
-  if (s && s.fog) {
-    s.fog.color.set(p.fog);
-    s.fog.density = p.fogD;
-  }
-  if (s) {
-    // Find directional sun light
-    s.traverse(o => {
+  const sc = getScene();
+  if (sc && sc.fog) { sc.fog.color.set(p.fog); sc.fog.density = p.fogD; }
+  if (sc) {
+    sc.traverse(o => {
       if (o.isDirectionalLight && o.castShadow) {
-        o.color.setHex(p.sunCol);
-        o.intensity = p.sunInt;
-        o.position.set(...p.sunPos);
+        o.color.setHex(p.sunCol); o.intensity = p.sunInt; o.position.set(...p.sunPos);
       }
-      if (o.isHemisphereLight) {
-        o.intensity = p.hemiInt || 1.2;
-      }
+      if (o.isHemisphereLight) o.intensity = p.hemiInt || 1.2;
     });
   }
   const r = getRenderer();
@@ -80,18 +85,16 @@ function applyTimePreset(name) {
 function applyWeather(w) {
   document.querySelectorAll(".wx-weather-btn").forEach(b =>
     b.classList.toggle("active", b.dataset.weather === w));
-  const s = getScene();
-  if (!s || !s.fog) return;
+  const sc = getScene();
+  if (!sc || !sc.fog) return;
   const baseD = TIME_PRESETS.afternoon.fogD;
-  if (w === "rain")   s.fog.density = baseD * 3.5;
-  else if (w === "cloudy") s.fog.density = baseD * 1.8;
-  else s.fog.density = baseD;
+  if (w === "rain")        sc.fog.density = baseD * 3.5;
+  else if (w === "cloudy") sc.fog.density = baseD * 1.8;
+  else                     sc.fog.density = baseD;
 }
 
 window.applyTimePreset = applyTimePreset;
 
-// GLB orientation calibration     lets you test which face is "front"
-// without re-deploying. Call from browser console or UI buttons.
 let glbBaseRotation = 0;
 window.rotateVillaGLB = function(degrees) {
   glbBaseRotation = degrees * Math.PI / 180;
@@ -100,18 +103,115 @@ window.rotateVillaGLB = function(degrees) {
   document.querySelectorAll("#glb-orient-group .wx-btn").forEach(b =>
     b.classList.toggle("active", b.textContent.trim() === degrees + "  ")
   );
-  // Find all cloned villa GLB root groups and update their Y rotation offset
   scene.traverse(obj => {
-    if (obj.userData && obj.userData.isVillaGLB) {
+    if (obj.userData && obj.userData.isVillaGLB)
       obj.rotation.y = obj.userData.baseRotY + glbBaseRotation;
-    }
   });
-  console.log("Villa GLB rotated by", degrees, "degrees");
 };
-window.applyWeather    = applyWeather;
+window.applyWeather = applyWeather;
 
-//           BOOT                                                                                                                                                                                                                
+//           PERFORMANCE MODE TOGGLE
+// Injects the corner toggle into #world-overlay on first use
+function injectPerfToggle() {
+  if (document.getElementById('perf-toggle-bar')) return;
+  const bar = document.createElement('div');
+  bar.id = 'perf-toggle-bar';
+  bar.innerHTML = `
+    <span class="perf-label">Quality</span>
+    <button class="perf-btn active" data-mode="fast"     onclick="window.switchPerfMode('fast')">Fast</button>
+    <button class="perf-btn"        data-mode="balanced" onclick="window.switchPerfMode('balanced')">Balanced</button>
+    <button class="perf-btn"        data-mode="rich"     onclick="window.switchPerfMode('rich')">Rich</button>
+  `;
+  bar.style.cssText = `
+    position:absolute; top:14px; right:14px; z-index:200;
+    display:flex; align-items:center; gap:4px;
+    background:rgba(10,20,12,0.72); backdrop-filter:blur(8px);
+    border:1px solid rgba(201,168,76,0.35); border-radius:8px;
+    padding:5px 10px; font-family:Inter,sans-serif; font-size:11px;
+    pointer-events:all;
+  `;
+  const style = document.createElement('style');
+  style.textContent = `
+    #perf-toggle-bar .perf-label { color:rgba(255,255,255,0.5); margin-right:4px; }
+    #perf-toggle-bar .perf-btn {
+      background:rgba(255,255,255,0.08); color:rgba(255,255,255,0.7);
+      border:1px solid rgba(255,255,255,0.15); border-radius:5px;
+      padding:3px 10px; cursor:pointer; font-size:11px; transition:all .15s;
+    }
+    #perf-toggle-bar .perf-btn.active {
+      background:rgba(201,168,76,0.85); color:#0a1008; border-color:transparent;
+      font-weight:600;
+    }
+    #perf-toggle-bar .perf-btn:hover:not(.active) {
+      background:rgba(255,255,255,0.16);
+    }
+  `;
+  document.head.appendChild(style);
+  document.getElementById('world-overlay')?.appendChild(bar);
+}
 
+window.switchPerfMode = function(mode) {
+  setPerfMode(mode);
+  document.querySelectorAll('.perf-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.mode === mode));
+  // Adjust postfx: disable SSAO in Fast mode
+  if (composer && composer._xixFastMode !== undefined) {
+    composer._xixFastMode = (mode === 'fast');
+  }
+};
+
+//           PINNED JOYSTICK CSS INJECTION
+// Forces joystick to bottom-left, ignoring any free-roam positioning from ui.js
+function injectJoystickPin() {
+  if (document.getElementById('joystick-pin-style')) return;
+  const s = document.createElement('style');
+  s.id = 'joystick-pin-style';
+  s.textContent = `
+    #joystick-container, .joystick-container, #virtual-joystick {
+      position: fixed !important;
+      bottom: 28px !important;
+      left: 28px !important;
+      right: auto !important;
+      top: auto !important;
+      transform: none !important;
+      touch-action: none;
+      z-index: 999;
+    }
+  `;
+  document.head.appendChild(s);
+}
+
+//           PANEL CLOSE FIX
+// All panels: immediate close on any close-button click, no latency
+function bindAllPanelCloses() {
+  // Use capture phase so it fires before anything else
+  document.addEventListener('click', e => {
+    const btn = e.target.closest(
+      '[data-close-panel], .panel-close, .plot-close, #plot-panel-close, ' +
+      '.zone-panel-close, .zone-close, [aria-label="Close"], .btn-close'
+    );
+    if (!btn) return;
+    e.stopPropagation();
+    // Close the nearest panel ancestor
+    const panel = btn.closest(
+      '.panel, .zone-panel, #plot-panel, .product-panel, .info-panel, [class*="-panel"]'
+    );
+    if (panel) {
+      panel.classList.remove('visible', 'open', 'active');
+      panel.style.display = '';
+    }
+  }, true); // capture = fires first, guaranteed
+
+  // Also patch plot-panel-close specifically (belt + braces)
+  document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('plot-panel-close')?.addEventListener('click', e => {
+      e.stopImmediatePropagation();
+      document.getElementById('plot-panel')?.classList.remove('visible');
+    }, { capture: true });
+  });
+}
+
+//           BOOT
 document.addEventListener("DOMContentLoaded", () => {
   bootLandingCanvas();
   bindMasterplan();
@@ -121,9 +221,10 @@ document.addEventListener("DOMContentLoaded", () => {
   bindPlotSystem();
   bindVillaInteriorBtn();
   initAudio();
-  // Merge into __moduleReady     do NOT overwrite (product-panel.js may have set showProductPanel already)
+  injectJoystickPin();
+  bindAllPanelCloses();
   window.__moduleReady = Object.assign(window.__moduleReady || {}, {
-    applyTimePreset, applyWeather, toggleAerial, rotateVillaGLB,
+    applyTimePreset, applyWeather, toggleAerial, rotateVillaGLB, switchPerfMode: window.switchPerfMode,
   });
   (window._pendingCalls || []).forEach(({fn,args}) => {
     if(window.__moduleReady[fn]) window.__moduleReady[fn](...args);
@@ -131,8 +232,7 @@ document.addEventListener("DOMContentLoaded", () => {
   window._pendingCalls = [];
 });
 
-//           HERO CANVAS ANIMATION                                                                                                                                                             
-
+//           HERO CANVAS ANIMATION
 function bootLandingCanvas() {
   const canvas = document.getElementById("hero-canvas");
   if (!canvas) return;
@@ -150,7 +250,6 @@ function bootLandingCanvas() {
 
   function draw() {
     tick += 0.004;
-    // Deep green-to-black sky
     const sky = ctx.createLinearGradient(0, 0, 0, h);
     sky.addColorStop(0,    "#0d2218");
     sky.addColorStop(0.55, "#0a1810");
@@ -158,7 +257,6 @@ function bootLandingCanvas() {
     ctx.fillStyle = sky;
     ctx.fillRect(0, 0, w, h);
 
-    // Stars (static seed)
     ctx.fillStyle = "rgba(255,248,220,0.7)";
     for (let i = 0; i < 60; i++) {
       const sx = ((i * 137.5) % w);
@@ -169,14 +267,12 @@ function bootLandingCanvas() {
       ctx.fill();
     }
 
-    // Crescent lake reflection glow
     const lakeGlow = ctx.createRadialGradient(w * 0.5, h * 0.22, 20, w * 0.5, h * 0.22, w * 0.38);
     lakeGlow.addColorStop(0,   `rgba(30,130,170,${0.18 + Math.sin(tick * 3) * 0.04})`);
     lakeGlow.addColorStop(1,   "rgba(0,0,0,0)");
     ctx.fillStyle = lakeGlow;
     ctx.fillRect(0, 0, w, h);
 
-    // Ground horizon
     const ground = ctx.createLinearGradient(0, h * 0.52, 0, h);
     ground.addColorStop(0, "rgba(22, 65, 40, 0.9)");
     ground.addColorStop(1, "rgba(10, 30, 18, 1)");
@@ -189,22 +285,17 @@ function bootLandingCanvas() {
     ctx.closePath();
     ctx.fill();
 
-    // Polo field     mowed stripe perspective
     ctx.save();
     const fW = w * 0.56, fH = h * 0.26;
     const fX = (w - fW) / 2, fY = h * 0.55;
     for (let i = 0; i < 10; i++) {
       const alpha = 0.12 + (i / 10) * 0.15;
-      ctx.fillStyle = i % 2 === 0
-        ? `rgba(70,155,65,${alpha})`
-        : `rgba(55,130,50,${alpha})`;
+      ctx.fillStyle = i % 2 === 0 ? `rgba(70,155,65,${alpha})` : `rgba(55,130,50,${alpha})`;
       ctx.fillRect(fX, fY + (i / 10) * fH, fW, fH / 10 + 1);
     }
-    // Field border lines
     ctx.strokeStyle = "rgba(248,245,220,0.35)";
     ctx.lineWidth = 1.2;
     ctx.strokeRect(fX, fY, fW, fH);
-    // Yard lines
     for (const xFrac of [0.22, 0.33, 0.5, 0.67, 0.78]) {
       ctx.beginPath();
       ctx.moveTo(fX + fW * xFrac, fY);
@@ -213,7 +304,6 @@ function bootLandingCanvas() {
     }
     ctx.restore();
 
-    // Approach lights (vanishing perspective)
     for (let i = 0; i < 28; i++) {
       const depth = i / 28;
       const spread = w * (0.04 + depth * 0.55);
@@ -227,7 +317,6 @@ function bootLandingCanvas() {
       }
     }
 
-    // Distant palm silhouettes
     for (let i = 0; i < 14; i++) {
       const px = (i / 13) * w;
       const pBase = h * 0.51 + Math.sin(i * 1.7) * h * 0.03;
@@ -252,8 +341,6 @@ function drawPalmSilhouette(ctx, x, base, scale, phase) {
   const lean = Math.sin(phase * 0.5) * 4;
   ctx.bezierCurveTo(x + lean, base - h_trunk * 0.4, x + lean * 1.5, base - h_trunk * 0.7, x + lean * 2, base - h_trunk);
   ctx.stroke();
-
-  // Fronds
   ctx.lineWidth = 1.2 * scale;
   for (let i = 0; i < 7; i++) {
     const angle = (i / 7) * Math.PI * 2 + phase * 0.2;
@@ -269,14 +356,11 @@ function drawPalmSilhouette(ctx, x, base, scale, phase) {
   }
 }
 
-//           MASTERPLAN                                                                                                                                                                                              
-
+//           MASTERPLAN
 function bindMasterplan() {
   const planImg  = document.getElementById("plan-image");
   const zoneLayer = document.getElementById("zone-layer");
   if (!planImg || !zoneLayer) return;
-
-  // Build SVG zone hotspots
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 100 100");
   svg.setAttribute("preserveAspectRatio", "none");
@@ -285,57 +369,30 @@ function bindMasterplan() {
   Object.entries(ZONES).forEach(([key, zone]) => {
     const { l, t, w, h } = zone.hot;
     const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-    rect.setAttribute("x", l);
-    rect.setAttribute("y", t);
-    rect.setAttribute("width", w);
-    rect.setAttribute("height", h);
+    rect.setAttribute("x", l); rect.setAttribute("y", t);
+    rect.setAttribute("width", w); rect.setAttribute("height", h);
     rect.setAttribute("rx", "0.8");
     rect.setAttribute("fill", zone.color + "28");
     rect.setAttribute("stroke", zone.color);
     rect.setAttribute("stroke-width", "0.4");
-    rect.style.cursor = "pointer";
-    rect.style.transition = "fill 0.2s";
-
-    // Label
+    rect.style.cursor = "pointer"; rect.style.transition = "fill 0.2s";
     const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    text.setAttribute("x", l + w / 2);
-    text.setAttribute("y", t + h / 2 + 1);
-    text.setAttribute("text-anchor", "middle");
-    text.setAttribute("font-size", "2.2");
-    text.setAttribute("fill", "#f8f4e8");
-    text.setAttribute("font-family", "Inter, sans-serif");
-    text.setAttribute("font-weight", "500");
-    text.setAttribute("paint-order", "stroke");
-    text.setAttribute("stroke", "#0a1008");
-    text.setAttribute("stroke-width", "0.8");
-    text.setAttribute("pointer-events", "none");
-    text.textContent = zone.label;
-
-    rect.addEventListener("mouseenter", () => {
-      rect.setAttribute("fill", zone.color + "55");
-      showZonePanel(key);
-    });
-    rect.addEventListener("mouseleave", () => {
-      rect.setAttribute("fill", zone.color + "28");
-    });
-    rect.addEventListener("click", () => {
-      showZonePanel(key);
-      if (zone.viewpoint) {
-        openWorldAt(zone.viewpoint);
-      }
-    });
-
-    svg.appendChild(rect);
-    svg.appendChild(text);
+    text.setAttribute("x", l + w / 2); text.setAttribute("y", t + h / 2 + 1);
+    text.setAttribute("text-anchor", "middle"); text.setAttribute("font-size", "2.2");
+    text.setAttribute("fill", "#f8f4e8"); text.setAttribute("font-family", "Inter, sans-serif");
+    text.setAttribute("font-weight", "500"); text.setAttribute("paint-order", "stroke");
+    text.setAttribute("stroke", "#0a1008"); text.setAttribute("stroke-width", "0.8");
+    text.setAttribute("pointer-events", "none"); text.textContent = zone.label;
+    rect.addEventListener("mouseenter", () => { rect.setAttribute("fill", zone.color + "55"); showZonePanel(key); });
+    rect.addEventListener("mouseleave", () => { rect.setAttribute("fill", zone.color + "28"); });
+    rect.addEventListener("click", () => { showZonePanel(key); if (zone.viewpoint) openWorldAt(zone.viewpoint); });
+    svg.appendChild(rect); svg.appendChild(text);
   });
-
   zoneLayer.appendChild(svg);
 }
 
-//           NAV                                                                                                                                                                                                                   
-
+//           NAV
 function bindPlotSystem() {
-  // Left-click in 3D world -> check if it hits a plot overlay
   const canvas = document.getElementById("world-canvas");
   if (!canvas) return;
   canvas.addEventListener("click", e => {
@@ -360,21 +417,30 @@ function showPlotPanel(plotKey) {
   const [x, z] = plotKey.split(",").map(Number);
   const side = x < 0 ? "West" : x === 0 ? "Centre" : "East";
   const pos  = z < -50 ? "North" : z > 50 ? "South" : "Mid";
-  panel.querySelector(".plot-id").textContent    = `Plot ${plotKey}`;
+  panel.querySelector(".plot-id").textContent      = `Plot ${plotKey}`;
   panel.querySelector(".plot-location").textContent = `${pos} ${side}     Premium Villa`;
   panel.querySelector(".plot-status").textContent   = plot.status === "available" ? "Available" : "Reserved";
-  panel.querySelector(".plot-status").className  = "plot-status " + plot.status;
+  panel.querySelector(".plot-status").className     = "plot-status " + plot.status;
   const btn = panel.querySelector(".plot-reserve-btn");
-  btn.disabled = plot.status !== "available";
+  btn.disabled    = plot.status !== "available";
   btn.textContent = plot.status === "available" ? "Reserve This Plot" : "Already Reserved";
   btn.onclick = () => {
     if (reservePlot(plotKey)) {
-      showPlotPanel(plotKey); // refresh panel
+      showPlotPanel(plotKey);
       showNotification("Plot reserved! Our team will contact you within 24 hours.");
     }
   };
   panel.classList.add("visible");
-  document.getElementById("plot-panel-close")?.addEventListener("click", ()=> panel.classList.remove("visible"), {once:true});
+  // Close button: guaranteed immediate response
+  const closeBtn = document.getElementById("plot-panel-close");
+  if (closeBtn) {
+    const closeHandler = e => {
+      e.stopImmediatePropagation();
+      panel.classList.remove("visible");
+      closeBtn.removeEventListener('click', closeHandler, true);
+    };
+    closeBtn.addEventListener('click', closeHandler, { capture: true, once: true });
+  }
 }
 
 function showNotification(msg) {
@@ -398,22 +464,15 @@ function bindNav() {
       if (target) target.scrollIntoView({ behavior: "smooth" });
     });
   });
-
-  // Explore button     masterplan section
   document.querySelectorAll(".btn-explore").forEach(btn => {
-    btn.addEventListener("click", () => {
-      document.getElementById("masterplan").scrollIntoView({ behavior: "smooth" });
-    });
+    btn.addEventListener("click", () => document.getElementById("masterplan").scrollIntoView({ behavior: "smooth" }));
   });
-
-  // Enter 3D button
   document.querySelectorAll(".btn-enter-3d").forEach(btn => {
     btn.addEventListener("click", () => openWorldAt("field_centre"));
   });
 }
 
-//           WORLD ENTRY                                                                                                                                                                                           
-
+//           WORLD ENTRY
 async function openWorldAt(viewKey) {
   currentViewKey = viewKey;
   const vp = VIEWPOINTS[viewKey] || VIEWPOINTS.field_centre;
@@ -421,7 +480,6 @@ async function openWorldAt(viewKey) {
   showLoading();
   setLoadingProgress(10);
 
-  // Lazy-initialise Three.js scene
   if (!sceneReady) {
     const canvas3d = document.getElementById("world-canvas");
     initScene(canvas3d);
@@ -430,7 +488,6 @@ async function openWorldAt(viewKey) {
     setLoadingProgress(70);
     initMinimap("assets/plan-2d.png");
     setLoadingProgress(85);
-    // Init post-processing after scene exists
     composer = initPostProcessing(getRenderer(), getScene(), getCamera());
     setLoadingProgress(90);
 
@@ -454,16 +511,16 @@ async function openWorldAt(viewKey) {
   await new Promise(r => setTimeout(r, 300));
   hideLoading();
 
-  // Show world overlay
   const overlay = document.getElementById("world-overlay");
   overlay.classList.add("open");
   document.body.style.overflow = "hidden";
 
-  // Resize renderer
+  // Inject perf toggle (after overlay is open)
+  injectPerfToggle();
+
   resizeWorld();
   window.addEventListener("resize", resizeWorld);
 
-  // Cinematic intro on first open
   if (viewKey === "field_centre" && !introPlaying) {
     await cinematicIntro();
   } else {
@@ -472,19 +529,23 @@ async function openWorldAt(viewKey) {
     setCaption(vp.caption);
   }
 
+  // Set camera eye height for horse mode
+  if (horseMode) {
+    const cam = getCamera();
+    cam.position.y = RIDER_EYE_HEIGHT;
+  }
+
   activate();
 
   if (isMobile()) {
     showJoystick();
+    // Joystick is already pinned via injected CSS
     showEnterPrompt("Drag right to look    Left joystick to walk");
   } else {
     showEnterPrompt("Click to lock cursor    WASD / arrows to walk    Shift to sprint");
   }
 
-  // Enable audio on user gesture
   enableAudio();
-
-  // Start render loop
   startRenderLoop();
 }
 
@@ -497,7 +558,7 @@ async function cinematicIntro() {
   const targetVp = VIEWPOINTS.field_centre;
   const startPos = [...introVp.pos];
   const endPos   = targetVp.pos;
-  const duration = 3800; // ms
+  const duration = 3800;
   const start    = performance.now();
 
   await new Promise(resolve => {
@@ -509,12 +570,11 @@ async function cinematicIntro() {
       cam.position.x = startPos[0] + (endPos[0] - startPos[0]) * e;
       cam.position.y = startPos[1] + (endPos[1] - startPos[1]) * e;
       cam.position.z = startPos[2] + (endPos[2] - startPos[2]) * e;
-      // Pitch: tilt from down-looking to horizontal
       const startP = introVp.pitch;
       const camPitch = startP + (0 - startP) * e;
-      getCamera().rotation.order = "YXZ";
-      getCamera().rotation.x = camPitch;
-      getCamera().rotation.y = introVp.yaw + (targetVp.yaw - introVp.yaw) * e;
+      cam.rotation.order = "YXZ";
+      cam.rotation.x = camPitch;
+      cam.rotation.y = introVp.yaw + (targetVp.yaw - introVp.yaw) * e;
       if (t < 1) requestAnimationFrame(step);
       else resolve();
     }
@@ -529,10 +589,8 @@ function toggleAerial(btn) {
   aerialOrbit = !aerialOrbit;
   if (aerialOrbit) {
     btn && btn.classList.add("active");
-    deactivate();           // release ground-level controls
-    aerialAngle     = 0;
-    aerialYawOffset = 0;
-    aerialPitch     = -Math.PI / 2.5;
+    deactivate();
+    aerialAngle = 0; aerialYawOffset = 0; aerialPitch = -Math.PI / 2.5;
     setCaption("Aerial view     hover orbits automatically    drag to steer");
     bindAerialPointer();
   } else {
@@ -543,7 +601,6 @@ function toggleAerial(btn) {
   }
 }
 
-//        AERIAL POINTER/TOUCH DRAG (adds offset to the orbit angle)                                                 
 function bindAerialPointer() {
   const el = getRenderer()?.domElement;
   if (!el) return;
@@ -569,20 +626,15 @@ function aerialMouseUp()     { aerialDragging=false; }
 function aerialMouseMove(e)  {
   if (!aerialDragging) return;
   aerialYawOffset -= (e.clientX - aerialLastX) * 0.004;
-  aerialPitch      = Math.max(-Math.PI*0.9, Math.min(-0.15,
-                      aerialPitch - (e.clientY - aerialLastY) * 0.003));
+  aerialPitch = Math.max(-Math.PI*0.9, Math.min(-0.15, aerialPitch - (e.clientY - aerialLastY) * 0.003));
   aerialLastX=e.clientX; aerialLastY=e.clientY;
 }
-function aerialTouchStart(e) {
-  const t=e.touches[0];
-  aerialDragging=true; aerialLastX=t.clientX; aerialLastY=t.clientY;
-}
+function aerialTouchStart(e) { const t=e.touches[0]; aerialDragging=true; aerialLastX=t.clientX; aerialLastY=t.clientY; }
 function aerialTouchMove(e) {
   e.preventDefault();
   const t=e.touches[0];
   aerialYawOffset -= (t.clientX - aerialLastX) * 0.004;
-  aerialPitch      = Math.max(-Math.PI*0.9, Math.min(-0.15,
-                      aerialPitch - (t.clientY - aerialLastY) * 0.003));
+  aerialPitch = Math.max(-Math.PI*0.9, Math.min(-0.15, aerialPitch - (t.clientY - aerialLastY) * 0.003));
   aerialLastX=t.clientX; aerialLastY=t.clientY;
 }
 window.toggleAerial = toggleAerial;
@@ -594,17 +646,13 @@ function teleportTo(key, vp) {
   else hideZonePanel();
 }
 
-//           EXIT WORLD                                                                                                                                                                                              
-
+//           EXIT WORLD
 function bindExitButton() {
-  document.getElementById("btn-close-world")?.addEventListener("click", closeWorld);
+  document.getElementById("btn-close-world")?.addEventListener("click", closeWorld, { capture: true });
   document.addEventListener("keydown", e => {
     if (e.key === "Escape" && document.getElementById("world-overlay")?.classList.contains("open")) {
-      if (document.pointerLockElement) {
-        document.exitPointerLock();
-      } else {
-        closeWorld();
-      }
+      if (document.pointerLockElement) document.exitPointerLock();
+      else closeWorld();
     }
   });
 }
@@ -613,12 +661,16 @@ function closeWorld() {
   deactivate();
   hideJoystick();
   document.getElementById("world-overlay")?.classList.remove("open");
+  document.getElementById("plot-panel")?.classList.remove("visible");  // also close any open panel
   document.body.style.overflow = "";
   if (animFrameId) { cancelAnimationFrame(animFrameId); animFrameId = null; }
   window.removeEventListener("resize", resizeWorld);
 }
 
-//           RENDER LOOP                                                                                                                                                                                           
+//           RENDER LOOP
+// Optimized: delta capped at 33ms (enforces ~30fps minimum effective delta in Fast)
+// Horse animation ticked each frame with movement detection
+let _prevCamX = 0, _prevCamZ = 0;
 
 function startRenderLoop() {
   if (animFrameId) cancelAnimationFrame(animFrameId);
@@ -626,30 +678,53 @@ function startRenderLoop() {
   const scene    = getScene();
   const camera   = getCamera();
   const clock    = getClock();
-
   const startTime = performance.now();
+
   function frame() {
     animFrameId = requestAnimationFrame(frame);
-    const delta   = Math.min(clock.getDelta(), 0.05);
+    // Cap delta at 33ms (30fps) to prevent spiral of death on slow devices
+    const delta   = Math.min(clock.getDelta(), 0.033);
     const elapsed = (performance.now() - startTime) / 1000;
+
     if (aerialOrbit) {
-      // Auto-orbit: angle advances continuously (the hover effect)
-      // User drag adds/subtracts from the angle and tilts pitch
       aerialAngle += AERIAL_SPEED * delta;
       const totalAngle = aerialAngle + aerialYawOffset;
       camera.position.x = Math.sin(totalAngle) * AERIAL_RADIUS;
       camera.position.z = Math.cos(totalAngle) * AERIAL_RADIUS;
       camera.position.y = AERIAL_HEIGHT;
       camera.lookAt(0, 0, 0);
-      // Apply user pitch override (drag up/down tilts the view)
       camera.rotation.x = aerialPitch;
     } else {
       updateControls(delta);
+
+      // Maintain correct eye height
+      if (horseMode) {
+        // Only override Y if not in aerial; let controls handle X/Z
+        // Small lerp to feel natural if something external changes Y
+        camera.position.y += (RIDER_EYE_HEIGHT - camera.position.y) * Math.min(delta * 12, 1);
+      }
+
+      // Detect movement for horse animation
+      const moved = Math.abs(camera.position.x - _prevCamX) > 0.01 ||
+                    Math.abs(camera.position.z - _prevCamZ) > 0.01;
+      _prevCamX = camera.position.x;
+      _prevCamZ = camera.position.z;
+
+      // Sync horse position just behind camera (offset so rider doesn't block view)
+      // In a first-person ride, the horse is rendered below/around camera
+      setHorsePosition(
+        camera.position.x,
+        0,
+        camera.position.z,
+        Math.atan2(-Math.sin(camera.rotation.y), -Math.cos(camera.rotation.y)) // face same direction
+      );
+      tickHorseAnim(delta, moved);
     }
+
     tickScene(elapsed, camera);
     updateMinimap(camera.position.x, camera.position.z, getYaw());
     updateSpatialAudio(camera.position.x, camera.position.z);
-    renderFrame(); // EffectComposer: SSAO + Bloom + SMAA
+    renderFrame();
   }
 
   frame();
@@ -668,30 +743,22 @@ function resizeWorld() {
   resizeComposer(w, h);
 }
 
-//           SCROLL ANIMATIONS                                                                                                                                                                         
-
+//           SCROLL ANIMATIONS
 function bindSectionScrollAnim() {
   const io = new IntersectionObserver((entries) => {
-    entries.forEach(e => {
-      if (e.isIntersecting) e.target.classList.add("in-view");
-    });
+    entries.forEach(e => { if (e.isIntersecting) e.target.classList.add("in-view"); });
   }, { threshold: 0.12 });
   document.querySelectorAll(".anim-fade").forEach(el => io.observe(el));
 }
 
-//           VILLA INTERIOR                                                                                                                                                                                  
-
+//           VILLA INTERIOR
 function bindVillaInteriorBtn() {
-  // Open from any "Walk through" button on villa cards
   document.addEventListener("click", e => {
-    // Villa enter buttons
     const enterBtn = e.target.closest(".residence-card-btn");
     const card = enterBtn?.closest(".residence-card");
     if (enterBtn && card?.querySelector(".residence-card-type")?.textContent?.includes("3 Bed")) {
       openVillaInterior(); return;
     }
-
-    // Plan tab switching
     const tab = e.target.closest(".plan-tab");
     if (tab) {
       document.querySelectorAll(".plan-tab").forEach(t => t.classList.remove("active"));
@@ -701,8 +768,6 @@ function bindVillaInteriorBtn() {
       document.getElementById("plan-" + plan)?.classList.remove("hidden");
       return;
     }
-
-    // Room click -> teleport
     const room = e.target.closest(".plan-room");
     if (room?.dataset.key) {
       teleportVillaTo(room.dataset.key);
@@ -711,8 +776,7 @@ function bindVillaInteriorBtn() {
       return;
     }
   });
-
-  document.getElementById("btn-close-villa")?.addEventListener("click", closeVillaInterior);
+  document.getElementById("btn-close-villa")?.addEventListener("click", closeVillaInterior, { capture: true });
 }
 
 function openVillaInterior() {
@@ -722,33 +786,26 @@ function openVillaInterior() {
   document.body.style.overflow = "hidden";
 
   if (!villaScene) {
-    // Build interior scene on demand
     const canvas = document.getElementById("villa-canvas");
     if (!canvas) return;
-
-    villaRenderer = new (THREE.WebGLRenderer)({ canvas, antialias: true, powerPreference: "high-performance" });
-    villaRenderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
+    villaRenderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: "high-performance" });
+    villaRenderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 1.5));
     villaRenderer.shadowMap.enabled  = true;
     villaRenderer.shadowMap.type     = THREE.PCFSoftShadowMap;
     villaRenderer.toneMapping        = THREE.ACESFilmicToneMapping;
     villaRenderer.toneMappingExposure = 1.1;
     villaRenderer.outputColorSpace   = THREE.SRGBColorSpace;
-
     villaScene = new THREE.Scene();
     villaScene.background = new THREE.Color(0x7ab4d4);
     villaScene.fog = new THREE.FogExp2(0x9ac5d4, 0.025);
-
     buildVillaInterior(villaScene);
   }
 
-  // Start at approach viewpoint
   teleportVillaTo("approach");
   activate();
   resizeVilla();
   window.addEventListener("resize", resizeVilla);
   startVillaLoop();
-
-  // Populate viewpoint strip
   buildVillaStrip();
 }
 
@@ -767,7 +824,7 @@ function startVillaLoop() {
   const cam = getCamera();
   function frame() {
     villaAnimId = requestAnimationFrame(frame);
-    const delta = Math.min(getClock().getDelta(), 0.05);
+    const delta = Math.min(getClock().getDelta(), 0.033);
     updateControls(delta);
     if (villaRenderer && villaScene) villaRenderer.render(villaScene, cam);
   }
@@ -790,8 +847,6 @@ function teleportVillaTo(key) {
   if (!vp) return;
   setView(vp.pos, vp.yaw, 0);
   setCaption(vp.caption || vp.label);
-
-  // Update floor plan highlight
   document.querySelectorAll(".vp-floor-btn").forEach(b => {
     b.classList.toggle("active", b.dataset.key === key);
   });
@@ -805,7 +860,7 @@ function buildVillaStrip() {
     const btn = document.createElement("button");
     btn.className = "vp-btn vp-floor-btn";
     btn.dataset.key = vp.key;
-    btn.innerHTML = `<span class="vp-label">\${vp.label}</span>`;
+    btn.innerHTML = `<span class="vp-label">${vp.label}</span>`;
     btn.addEventListener("click", () => teleportVillaTo(vp.key));
     strip.appendChild(btn);
   });
