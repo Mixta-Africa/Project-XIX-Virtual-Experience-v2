@@ -1,5 +1,5 @@
 /**
- * Project XIX — Scene v33
+ * Project XIX — Scene v34
  *
  * Fixes:
  *   - Removed import of setPerfModeGraphics from graphics.js (it's now called
@@ -25,6 +25,7 @@ import { DRACOLoader } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples
 import {
   PBR, createWaterMat, addGrassField, tickGrass, tickWater,
   setPerfModeGraphics, setBloomForTime, setSkyForTime, createAtmosphericSky,
+  buildEnvMapFromSky, applyPS4Materials,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
 } from "./graphics.js";
 
@@ -32,9 +33,9 @@ import {
 export let PERF_MODE = 'fast';
 
 const PERF_SETTINGS = {
-  fast:     { shadowMapSize: 512,  pixelRatio: 1.0, fogDensity: 0.0012, palmTickDiv: 8 },
-  balanced: { shadowMapSize: 1024, pixelRatio: 1.5, fogDensity: 0.0009, palmTickDiv: 4 },
-  rich:     { shadowMapSize: 2048, pixelRatio: 2.0, fogDensity: 0.0007, palmTickDiv: 1 },
+  fast:     { shadowMapSize: 1024, pixelRatio: 1.5, fogDensity: 0.0010, palmTickDiv: 6 },
+  balanced: { shadowMapSize: 2048, pixelRatio: 1.75,fogDensity: 0.0008, palmTickDiv: 3 },
+  rich:     { shadowMapSize: 4096, pixelRatio: 2.0, fogDensity: 0.0006, palmTickDiv: 1 },
 };
 
 export function setPerfMode(mode) {
@@ -88,7 +89,7 @@ export function loadHorseGLB() {
   makeDracoLoader().load("./assets/horse.glb", gltf => {
     const model = gltf.scene;
     model.scale.setScalar(0.022);
-    model.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+    applyPS4Materials(model);
     const bbox = new THREE.Box3().setFromObject(model);
     if (bbox.min.y < 0) model.position.y = -bbox.min.y;
     horseGroup = new THREE.Group();
@@ -207,7 +208,7 @@ function spawnNPCHorse(pathIndex) {
   makeDracoLoader().load("./assets/horse.glb", gltf => {
     const model = gltf.scene;
     model.scale.setScalar(0.020); // slightly smaller than player horse
-    model.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+    applyPS4Materials(model);
     const bbox = new THREE.Box3().setFromObject(model);
     if (bbox.min.y < 0) model.position.y = -bbox.min.y;
 
@@ -857,8 +858,14 @@ export function initScene(canvas) {
   // IMPROVEMENT 4: Atmospheric sky (replaces canvas gradient)
   const { skyObj, sun, skyUniforms } = createAtmosphericSky(scene, renderer);
   _skyObj = skyObj; _skySun = sun; _skyUniforms = skyUniforms;
-  // Set initial afternoon sky
   setSkyForTime(_skyUniforms, _skySun, sunLight, 'afternoon');
+
+  // Build PMREM environment map from sky AFTER first paint.
+  // This gives all GLB materials real IBL reflections (glass, metal, water).
+  // Deferred 2 frames so the sky texture is fully composited before capture.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    buildEnvMapFromSky(renderer, scene, skyObj);
+  }));
 
   // IMPROVEMENT 10: Progressive loading
   // Phase 1 — ground and field immediately (fast)
@@ -928,17 +935,26 @@ function buildLighting() {
   const perfS = PERF_SETTINGS[PERF_MODE];
   hemiLight = new THREE.HemisphereLight(0xd4e8ff, 0x4a6a30, 1.0);
   scene.add(hemiLight);
-  sunLight = new THREE.DirectionalLight(0xfff4e0, 2.2);
-  sunLight.position.set(-160, 160, 100);
-  sunLight.castShadow = (PERF_MODE !== 'fast');
-  sunLight.shadow.camera.left = sunLight.shadow.camera.bottom = -420;
-  sunLight.shadow.camera.right = sunLight.shadow.camera.top   =  420;
-  sunLight.shadow.camera.far   = 900;
+  sunLight = new THREE.DirectionalLight(0xfff4e0, 2.8); // brighter sun
+  sunLight.position.set(-180, 180, 120);
+  sunLight.castShadow = true; // shadows in ALL modes — 1024px is fast enough
+  sunLight.shadow.camera.left = sunLight.shadow.camera.bottom = -380;
+  sunLight.shadow.camera.right = sunLight.shadow.camera.top   =  380;
+  sunLight.shadow.camera.near  = 0.5;
+  sunLight.shadow.camera.far   = 800;
   sunLight.shadow.mapSize.set(perfS.shadowMapSize, perfS.shadowMapSize);
-  sunLight.shadow.bias = -0.0002; sunLight.shadow.normalBias = 0.02; sunLight.shadow.radius = 3.5;
+  sunLight.shadow.bias        = -0.00015; // tighter bias = sharper contact shadows
+  sunLight.shadow.normalBias  =  0.018;
+  sunLight.shadow.radius      =  2.5;    // sharper shadow edges (was 3.5)
   scene.add(sunLight);
-  const fill = new THREE.DirectionalLight(0xb8d0e8, 0.4);
-  fill.position.set(120, 80, -100); scene.add(fill);
+
+  // Fill light — warm bounce from ground (simulates GI)
+  const fill = new THREE.DirectionalLight(0xd4b890, 0.55);
+  fill.position.set(100, 60, -120); scene.add(fill);
+
+  // Ambient bounce — warm low sky light
+  const ambient = new THREE.DirectionalLight(0xb8d0ff, 0.28);
+  ambient.position.set(-80, 20, 80); scene.add(ambient);
 }
 
 // ─── GEOMETRY HELPERS ─────────────────────────────────────────────────────────
@@ -1112,9 +1128,8 @@ function makeDracoLoader(){
 function loadOneGLB(path,scale,yOff,onDone,onFail){
   makeDracoLoader().load(path,gltf=>{
     gltf.scene.scale.setScalar(scale);
-    gltf.scene.traverse(child=>{
-      if(child.isMesh){ child.castShadow=false; child.receiveShadow=true; child.frustumCulled=true; }
-    });
+    applyPS4Materials(gltf.scene);
+    gltf.scene.traverse(child=>{ if(child.isMesh) child.frustumCulled=true; });
     const bbox=new THREE.Box3().setFromObject(gltf.scene);
     gltf.scene.position.y=yOff+(bbox.min.y<0?-bbox.min.y:0);
     onDone(gltf.scene);
@@ -1156,7 +1171,7 @@ function loadVillaGLB(){
 function loadApartmentGLB(){
   makeDracoLoader().load("assets/apartment-mesh.glb",gltf=>{
     gltf.scene.scale.setScalar(APT_SCALE);
-    gltf.scene.traverse(c=>{if(c.isMesh){c.castShadow=false;c.receiveShadow=true;}});
+    applyPS4Materials(gltf.scene);
     const bbox=new THREE.Box3().setFromObject(gltf.scene);
     gltf.scene.position.y=bbox.min.y<0?-bbox.min.y:0;
     const wrapper=new THREE.Group(); wrapper.add(gltf.scene); aptGLBScene=wrapper;
@@ -1167,7 +1182,7 @@ function loadApartmentGLB(){
 function loadLoftGLB(){
   makeDracoLoader().load("assets/loft-mesh.glb",gltf=>{
     gltf.scene.scale.setScalar(LOFT_SCALE);
-    gltf.scene.traverse(c=>{if(c.isMesh){c.castShadow=false;c.receiveShadow=true;}});
+    applyPS4Materials(gltf.scene);
     const bbox=new THREE.Box3().setFromObject(gltf.scene);
     gltf.scene.position.y=bbox.min.y<0?-bbox.min.y:0;
     const wrapper=new THREE.Group(); wrapper.add(gltf.scene); loftGLBScene=wrapper;
