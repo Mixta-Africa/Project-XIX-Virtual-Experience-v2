@@ -18,7 +18,7 @@ import {
   highlightPlot, setPerfMode, PERF_MODE,
   RIDER_EYE_HEIGHT, FOOT_EYE_HEIGHT, tickHorse, tickHorseAnim,
   setHorsePosition, getThirdPersonCameraOffset,
-} from "./scene.js?v=30";
+} from "./scene.js?v=31";
 import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics } from "./graphics.js";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
@@ -619,10 +619,23 @@ function toggleAerial(btn){
     btn&&btn.classList.add("active");
     deactivate();
     aerialAngle=0; aerialYawOffset=0; aerialPitch=-0.685;
-    // Widen FOV so full estate fits in portrait mobile frame
-    getCamera().fov = 90; getCamera().updateProjectionMatrix();
-    // Disable fog during aerial — exponential fog hides buildings at orbital distance
-    const _sc = getScene(); if (_sc && _sc.fog) _sc.fog.density = 0.00001;
+    // Widen FOV — 90° shows full estate in portrait mobile
+    const _aerCam = getCamera();
+    _aerCam.fov = 90; _aerCam.far = 2000; _aerCam.updateProjectionMatrix();
+    // Disable fog — exponential fog hides buildings at orbital distance
+    const _sc = getScene();
+    if (_sc && _sc.fog) _sc.fog.density = 0.000001;
+    // Force all LOD objects to show highest detail level regardless of distance.
+    // In aerial every villa is >180m away which triggers the impostor — override that.
+    if (_sc) {
+      _sc.traverse(o => {
+        if (o.isLOD && o.levels && o.levels.length > 0) {
+          // Temporarily set all level distances to 999999 (always show level 0 = full GLB)
+          o.levels.forEach((lv, i) => { lv._origDist = lv.distance; lv.distance = i===0 ? 0 : 999999; });
+          o.userData._lodOverridden = true;
+        }
+      });
+    }
     setCaption("Aerial view — drag to steer");
     bindAerialPointer();
     // Mark aerial button active in mode toggle
@@ -634,11 +647,20 @@ function toggleAerial(btn){
     unbindAerialPointer();
     activate();
     const cam = getCamera();
-    // Restore normal FOV
-    cam.fov = 65; cam.updateProjectionMatrix();
+    // Restore normal FOV + far plane
+    cam.fov = 65; cam.far = 1200; cam.updateProjectionMatrix();
     // Restore fog
     const _scR = getScene();
     if (_scR && _scR.fog) _scR.fog.density = 0.0012;
+    // Restore LOD distances
+    if (_scR) {
+      _scR.traverse(o => {
+        if (o.isLOD && o.userData._lodOverridden) {
+          o.levels.forEach(lv => { if (lv._origDist !== undefined) lv.distance = lv._origDist; });
+          delete o.userData._lodOverridden;
+        }
+      });
+    }
     const walkH = (typeof FOOT_EYE_HEIGHT  !== 'undefined') ? FOOT_EYE_HEIGHT  : 1.72;
     const rideH = (typeof RIDER_EYE_HEIGHT !== 'undefined') ? RIDER_EYE_HEIGHT : 3.10;
     const targetY = (moveMode === 'ride') ? rideH : walkH;
@@ -738,29 +760,30 @@ function startRenderLoop(){
   const clock=getClock();
   const startTime=performance.now();
 
+  // Track consecutive errors — if too many, stop the loop gracefully
+  let _frameErrors = 0;
+
   function frame(){
     animFrameId=requestAnimationFrame(frame);
+    try {
     const delta=Math.min(clock.getDelta(),0.033);
     const elapsed=(performance.now()-startTime)/1000;
     const camera=getCamera();
+    if (!camera) return; // scene not ready yet
 
     if(aerialOrbit){
       aerialAngle += AERIAL_SPEED * delta;
       const totalAngle = aerialAngle + aerialYawOffset;
-      // Orbit tightly around estate centre. Radius 180, height 160.
-      // depression = atan(160/180) = 0.727 rad = 41.6° below horizontal.
-      // At 90° FOV this shows ~320m of estate width. Estate is ~500m; orbit reveals all.
-      const R = 180, H = 160;
-      camera.position.x = Math.sin(totalAngle) * R;
-      camera.position.z = Math.cos(totalAngle) * R;
-      camera.position.y = H;
-      // lookAt is correct and reliable for non-nadir aerial views
-      camera.rotation.order = 'YXZ';
+      // Spherical orbit: user pitch controls tilt (aerialPitch: -1.4 steep to -0.25 shallow)
+      // Clamp so camera never goes below horizon or flips through nadir
+      const elevAngle = Math.max(0.22, Math.min(1.35, -aerialPitch)); // radians from zenith
+      const R_ground = 260 * Math.sin(elevAngle); // horizontal radius
+      const H_pos    = 260 * Math.cos(elevAngle); // camera height
+      camera.position.x = Math.sin(totalAngle) * R_ground;
+      camera.position.z = Math.cos(totalAngle) * R_ground;
+      camera.position.y = Math.max(30, H_pos);   // never below 30m
+      // lookAt estate centre — always correct, no gimbal issues at these angles
       camera.lookAt(0, 0, 0);
-      // Apply user pitch offset on top of lookAt
-      if (aerialPitch !== 0 && aerialPitch !== -0.685) {
-        camera.rotation.x += (aerialPitch + 0.685);
-      }
     } else {
       updateControls(delta);
 
@@ -797,7 +820,24 @@ function startRenderLoop(){
     tickScene(elapsed,camera);
     updateMinimap(camera.position.x,camera.position.z,getYaw());
     updateSpatialAudio(camera.position.x,camera.position.z);
-    renderFrame(); // Fast mode = direct renderer.render(); Balanced/Rich = EffectComposer
+    renderFrame();
+    _frameErrors = 0; // reset on successful frame
+    } catch(err) {
+      _frameErrors++;
+      console.error('[XIX] frame error #' + _frameErrors + ':', err);
+      // After 10 consecutive errors, stop gracefully rather than crashing iOS
+      if (_frameErrors > 10) {
+        cancelAnimationFrame(animFrameId);
+        animFrameId = null;
+        console.error('[XIX] Render loop stopped after too many errors. Tap screen to restart.');
+        // Show a non-intrusive restart nudge
+        const nudge = document.createElement('div');
+        nudge.style.cssText = 'position:fixed;bottom:50%;left:50%;transform:translate(-50%,50%);background:rgba(10,20,12,0.92);color:#c9a84c;padding:16px 24px;border-radius:8px;font-family:Inter,sans-serif;font-size:14px;z-index:9999;cursor:pointer;border:1px solid rgba(201,168,76,0.4);';
+        nudge.textContent = 'Tap to resume';
+        nudge.onclick = () => { nudge.remove(); startRenderLoop(); };
+        document.getElementById('world-overlay')?.appendChild(nudge);
+      }
+    }
   }
 
   frame();
