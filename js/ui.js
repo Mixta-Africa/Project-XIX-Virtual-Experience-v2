@@ -335,8 +335,8 @@ function addAmbientLoop(baseFreq, gain, name, random = false) {
 }
 
 export function updateSpatialAudio(worldX, worldZ) {
+  // Oscillators disabled — no spatial audio sources to update
   if (!audioCtx || !audioSources.wind) return;
-  // Increase wind near north/south perimeter
   const dist = Math.min(Math.abs(worldZ - WORLD.zMin), Math.abs(worldZ - WORLD.zMax));
   const windGain = 0.015 + (1 - Math.min(dist / 100, 1)) * 0.02;
   audioSources.wind.gainNode.gain.setTargetAtTime(windGain, audioCtx.currentTime, 0.3);
@@ -372,16 +372,29 @@ export function showVRButton(onClick) {
   });
 }
 
-//           TOUCH JOYSTICK OVERLAY                                                                                                                                                          
+//           TOUCH JOYSTICK OVERLAY — PINNED BOTTOM-LEFT
+// MutationObserver prevents any other code from repositioning it.
+
+const JOYSTICK_PINNED = 'display:flex !important;position:fixed !important;bottom:28px !important;left:28px !important;right:auto !important;top:auto !important;transform:none !important;z-index:9999 !important;pointer-events:auto !important;';
+let _joystickObs = null;
 
 export function showJoystick() {
   const el = document.getElementById("joystick-overlay");
-  if (el) el.style.display = "flex";
+  if (!el) return;
+  el.style.cssText = JOYSTICK_PINNED;
+  if (_joystickObs) { _joystickObs.disconnect(); _joystickObs = null; }
+  _joystickObs = new MutationObserver(() => {
+    if (el.style.bottom !== '28px' || el.style.position !== 'fixed' || el.style.left !== '28px')
+      el.style.cssText = JOYSTICK_PINNED;
+  });
+  _joystickObs.observe(el, { attributes: true, attributeFilter: ['style'] });
 }
 
 export function hideJoystick() {
   const el = document.getElementById("joystick-overlay");
-  if (el) el.style.display = "none";
+  if (!el) return;
+  if (_joystickObs) { _joystickObs.disconnect(); _joystickObs = null; }
+  el.style.display = "none";
 }
 
 export function isMobile() {
