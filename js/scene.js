@@ -129,7 +129,8 @@ const _terrainRaycaster = new THREE.Raycaster(new THREE.Vector3(), new THREE.Vec
 let _terrainMeshes = [];  // populated after ground is built
 
 function getGroundY(x, z) {
-  _terrainRaycaster.ray.origin.set(x, 15, z);
+  if (_terrainMeshes.length === 0) return 0;
+  _terrainRaycaster.ray.origin.set(x, 50, z); // cast from higher up to catch any terrain
   const hits = _terrainRaycaster.intersectObjects(_terrainMeshes, false);
   return hits.length > 0 ? hits[0].point.y : 0;
 }
@@ -138,19 +139,19 @@ export function setHorsePosition(x, z, yaw) {
   if (!horseGroup) return;
   const groundY = getGroundY(x, z);
   if (horseViewMode === 'first') {
-    // First-person ride: push horse 2m ahead so body is visible peripherally.
-    // Keep feet on true ground level — bbox auto-lift handles Y.
-    const fwd = 2.0;
+    // First-person: horse sits directly beneath the camera (rider is on it).
+    // A tiny 0.5m forward offset so horse nose appears at screen bottom edge.
+    // No rearward placement — that causes camera-inside-horse clipping.
     horseGroup.position.set(
-      x - Math.sin(yaw) * fwd,
+      x + Math.sin(yaw) * 0.5,
       groundY,
-      z - Math.cos(yaw) * fwd
+      z + Math.cos(yaw) * 0.5
     );
   } else {
-    // Third-person: horse at camera XZ, body on ground.
+    // Third-person: horse at camera XZ, body on ground
     horseGroup.position.set(x, groundY, z);
   }
-  horseGroup.rotation.y = yaw + Math.PI;
+  horseGroup.rotation.y = yaw; // horse faces direction of travel
 }
 
 export function getThirdPersonCameraOffset() {
@@ -1316,14 +1317,13 @@ export function tickScene(elapsed, camera){
       pb.rotation.y=Math.atan2(camera.position.x-pb.position.x,camera.position.z-pb.position.z);
     });
   }
-  // Hotspot pulse (Fix 04)
+  // Hotspot pulse
   tickHotspots(elapsed);
-  // LOD update: Three.js THREE.LOD auto-updates via camera
-  // NPC horse tick
-  tickNPCHorses(Math.min(elapsed - (_prevElapsed||0), 0.033));
+  // Delta since last tick — compute ONCE, use for both NPC and tour
+  const _frameDelta = Math.min(elapsed - (_prevElapsed || 0), 0.033);
   _prevElapsed = elapsed;
-  // Tour tick
-  if (_tourActive) tickTour(Math.min(elapsed-(_prevElapsed||0),0.033), camera);
+  tickNPCHorses(_frameDelta);
+  if (_tourActive) tickTour(_frameDelta, camera);
 }
 let _prevElapsed = 0;
 
