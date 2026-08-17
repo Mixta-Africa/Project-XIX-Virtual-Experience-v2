@@ -1,29 +1,15 @@
 /**
- * Project XIX — Scene v34
- *
- * Fixes:
- *   - Removed import of setPerfModeGraphics from graphics.js (it's now called
- *     via the graphics module directly; scene.js only calls setPerfMode locally)
- *   - import from ./materials.js removed — all MAT_ now come from graphics.js
- *
- * New in v25 (all 10 improvements):
- *   1.  Instanced rendering  — villas, trees, and grass via InstancedMesh
- *   2.  Ambient sound design — Web Audio API wind/birds/hooves, no oscillator ringing
- *   3.  Guided tour mode     — TOUR_STOPS array, auto-camera path, Web Speech narration
- *   4.  Atmospheric sky      — Three.js Sky (Preetham scattering) replaces canvas gradient
- *   5.  LOD system           — villa GLB swaps to billboard impostor beyond 200m
- *   6.  Terrain following    — horse raycasts down each frame for true ground Y
- *   7.  NPC horses           — 3 animated horse GLBs patrol paddock + polo field
- *   8.  AO on building bases — fake contact-shadow plane under each villa
- *   9.  In-world signage     — XIX entry gate + directional signs as instanced geometry
- *  10.  Progressive loading  — ground + sky first, buildings stream in after 1 frame
+ * Project XIX — Scene (Production Standard v25)
+ * Upgrades: 
+ * - Real-time Planar Water reflections
+ * - 3D Spatial Audio (Web Audio API PannerNodes)
+ * - LOD instancing, Atmospheric Sky, and guided tour integration
  */
 
-import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/objects/Water.js";
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
 import { GLTFLoader }  from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/GLTFLoader.js";
 import { DRACOLoader } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/DRACOLoader.js";
-import { Reflector } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/objects/Reflector.js";
+import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/objects/Water.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
   buildPalmInstances, tickPalms,
@@ -74,7 +60,6 @@ const LOFT_SCALE = 20.0;
 export const plotRegistry = new Map();
 export let onPlotSelected = null;
 
-// Atmospheric sky refs
 let _skyUniforms = null, _skyObj = null, _skySun = null;
 
 // ─── HORSE + RIDER (player) ───────────────────────────────────────────────────
@@ -117,24 +102,21 @@ export function loadHorseGLB() {
 
 export function tickHorseAnim(delta, isMoving) {
   if (!horseMixer) return;
-  // Always advance the mixer — stopping mid-stride looks worse than slow idle.
-  // When stationary, slow the playback to 20% speed for a gentle idle sway.
   horseMixer.timeScale = isMoving ? 1.2 : 0.2;
   horseMixer.update(delta);
 }
 
-// Alias used by app.js (tickHorse without args = always tick)
 export function tickHorse(delta) {
   if (horseMixer) horseMixer.update(delta);
 }
 
-// ─── IMPROVEMENT 6: TERRAIN HEIGHT FOLLOWING ─────────────────────────────────
+// ─── TERRAIN HEIGHT FOLLOWING ────────────────────────────────────────────────
 const _terrainRaycaster = new THREE.Raycaster(new THREE.Vector3(), new THREE.Vector3(0,-1,0), 0, 20);
-let _terrainMeshes = [];  // populated after ground is built
+let _terrainMeshes = []; 
 
 function getGroundY(x, z) {
   if (_terrainMeshes.length === 0) return 0;
-  _terrainRaycaster.ray.origin.set(x, 50, z); // cast from higher up to catch any terrain
+  _terrainRaycaster.ray.origin.set(x, 50, z); 
   const hits = _terrainRaycaster.intersectObjects(_terrainMeshes, false);
   return hits.length > 0 ? hits[0].point.y : 0;
 }
@@ -143,61 +125,28 @@ export function setHorsePosition(x, z, yaw) {
   if (!horseGroup) return;
   const groundY = getGroundY(x, z);
   if (horseViewMode === 'first') {
-    // First-person: horse sits directly beneath the camera (rider is on it).
-    // A tiny 0.5m forward offset so horse nose appears at screen bottom edge.
-    // No rearward placement — that causes camera-inside-horse clipping.
-    horseGroup.position.set(
-      x + Math.sin(yaw) * 0.5,
-      groundY,
-      z + Math.cos(yaw) * 0.5
-    );
+    horseGroup.position.set(x + Math.sin(yaw) * 0.5, groundY, z + Math.cos(yaw) * 0.5);
   } else {
-    // Third-person: horse at camera XZ, body on ground
     horseGroup.position.set(x, groundY, z);
   }
-  horseGroup.rotation.y = yaw; // horse faces direction of travel
+  horseGroup.rotation.y = yaw; 
 }
 
-export function getThirdPersonCameraOffset() {
-  // Returns { back, up } — how far behind/above horse third-person cam sits
-  return { back: 5.5, up: 2.4 };
-}
+export function getThirdPersonCameraOffset() { return { back: 5.5, up: 2.4 }; }
 
 // ─── NPC HORSES ──────────────────────────────────────────────────────────────
-// 8 horses, all paths verified to avoid water bodies:
-//   Lake 1: centred [30,-115], extent ~[-70,-95] to [130,-135] — avoid z in [-95,-135]
-//   Lake 2 (east): centred [220,-48], small — avoid x in [210,230], z in [-60,-35]
-//
-// Paths use only dry-land waypoints.
 const npcHorses = [];
-
-// NPC horse paths — all strictly within open ground.
-// Polo field: x in [-137,137], z in [-73,73]
-// Paddock:    x in [202,234],  z in [-10,28]
-// Safety zone inner edge is at x=±142, z=±85 — horses stay inside that.
-// Lake at z=-95 to -135 — paths stop at z=-70 max (15m clear margin).
-// Villas at x=±162 — paths stop at x=±130 max (30m clear of hedge at ±172).
 const NPC_PATHS = [
-  // 0: Paddock loop — tight and self-contained
   [new THREE.Vector3(204,0,-5),new THREE.Vector3(232,0,-5),new THREE.Vector3(232,0,25),new THREE.Vector3(204,0,25)],
-
-  // 1: Polo field long gallop — full FIP field, well inside touch lines
-  [new THREE.Vector3(-120,0,65),new THREE.Vector3(0,0,60),new THREE.Vector3(120,0,65),
-   new THREE.Vector3(120,0,-65),new THREE.Vector3(0,0,-60),new THREE.Vector3(-120,0,-65)],
-
-  // 2: Polo field short diagonal — crosses the centre circle
-  [new THREE.Vector3(-100,0,0),new THREE.Vector3(0,0,55),new THREE.Vector3(100,0,0),
-   new THREE.Vector3(0,0,-55)],
-
-  // 3: Secondary polo field sweep — parallel path
-  [new THREE.Vector3(-110,0,40),new THREE.Vector3(0,0,35),new THREE.Vector3(110,0,40),
-   new THREE.Vector3(110,0,-40),new THREE.Vector3(0,0,-35),new THREE.Vector3(-110,0,-40)],
+  [new THREE.Vector3(-120,0,65),new THREE.Vector3(0,0,60),new THREE.Vector3(120,0,65),new THREE.Vector3(120,0,-65),new THREE.Vector3(0,0,-60),new THREE.Vector3(-120,0,-65)],
+  [new THREE.Vector3(-100,0,0),new THREE.Vector3(0,0,55),new THREE.Vector3(100,0,0),new THREE.Vector3(0,0,-55)],
+  [new THREE.Vector3(-110,0,40),new THREE.Vector3(0,0,35),new THREE.Vector3(110,0,40),new THREE.Vector3(110,0,-40),new THREE.Vector3(0,0,-35),new THREE.Vector3(-110,0,-40)],
 ];
 
 function spawnNPCHorse(pathIndex) {
   makeDracoLoader().load("./assets/horse.glb", gltf => {
     const model = gltf.scene;
-    model.scale.setScalar(0.020); // slightly smaller than player horse
+    model.scale.setScalar(0.020); 
     applyPS4Materials(model);
     const bbox = new THREE.Box3().setFromObject(model);
     if (bbox.min.y < 0) model.position.y = -bbox.min.y;
@@ -221,9 +170,7 @@ function spawnNPCHorse(pathIndex) {
     }
 
     const path = NPC_PATHS[pathIndex % NPC_PATHS.length];
-    const startPt = path[0];
-    group.position.copy(startPt);
-
+    group.position.copy(path[0]);
     npcHorses.push({ group, mixer, path, pathIdx: 0, speed: 2.5 + Math.random() * 1.5, progress: 0 });
   }, undefined, err => console.warn("NPC horse failed:", err));
 }
@@ -244,69 +191,40 @@ function tickNPCHorses(delta) {
     const t = Math.min(npc.progress / segLen, 1);
     npc.group.position.lerpVectors(from, to, t);
     npc.group.position.y = getGroundY(npc.group.position.x, npc.group.position.z);
-    // Face direction of travel
     const dir = segment.normalize();
     if (dir.lengthSq() > 0) npc.group.rotation.y = Math.atan2(dir.x, dir.z);
   });
 }
 
-// ─── IMPROVEMENT 3: GUIDED TOUR ───────────────────────────────────────────────
+// ─── GUIDED TOUR ──────────────────────────────────────────────────────────────
 export const TOUR_STOPS = [
-  { pos:[-20, 3.1, 210], yaw:0,           pitch:-0.08, caption:"Welcome to Project XIX — 18.8 hectares of polo and equestrian living at Lakowe, Ibeju-Lekki.",        voice:"Welcome to Project Nineteen. 18.8 hectares of polo and equestrian living at Lakowe, Ibeju-Lekki Lagos." },
-  { pos:[-20, 3.1,  80], yaw:0,           pitch:-0.04, caption:"The main polo field — 275 metres long. Full FIP international standard. Match-day from your terrace.", voice:"Ahead of you, the main polo field. 275 metres long, built to full FIP international standard. Imagine watching a match from your terrace." },
-  { pos:[-20, 3.1, -90], yaw:0,           pitch:-0.06, caption:"The lake — a 200-metre crescent between the polo ring and the villa north row.",                       voice:"The crescent lake. 200 metres of still water between the polo ring and your villa's front garden." },
-  { pos:[-155, 3.1,  0], yaw: Math.PI/2,  pitch:-0.04, caption:"West villa row — 120 premium 3-bedroom villas with direct polo-field view.",                           voice:"The west villa row. 120 premium three-bedroom residences, each with a direct polo field view and private garden." },
-  { pos:[  0, 3.1, 108], yaw: Math.PI,    pitch:-0.08, caption:"The Clubhouse — 3,419 m². 8 VIP skyboxes. Restaurant. Bar. The social heart of XIX.",                   voice:"The Clubhouse. 3,419 square metres. Eight VIP skyboxes, a restaurant, and bar. The social heart of Project Nineteen." },
-  { pos:[-375, 3.1, 90], yaw: Math.PI/2,  pitch:-0.05, caption:"The Equestrian Quarter — 56-stall stables, veterinary clinic, cobblestone courtyard.",                  voice:"The equestrian quarter. 56 stalls across four stable blocks, a veterinary clinic, and a cobblestone courtyard." },
-  { pos:[ 218, 3.1,  0], yaw:-Math.PI/2,  pitch:-0.04, caption:"The paddock — post-and-rail enclosure. Watch horses warm up from your east terrace.",                   voice:"The paddock. Post and rail fencing, used for horse warming and exercise. Visible from the east terrace of your villa." },
+  { pos:[-20, 3.1, 210], yaw:0,           pitch:-0.08, caption:"Welcome to Project XIX — 18.8 hectares of polo and equestrian living at Lakowe.",        voice:"Welcome to Project Nineteen. 18.8 hectares of polo and equestrian living at Lakowe, Ibeju-Lekki Lagos." },
+  { pos:[-20, 3.1,  80], yaw:0,           pitch:-0.04, caption:"The main polo field — 275 metres long. Full FIP international standard.", voice:"Ahead of you, the main polo field. 275 metres long, built to full FIP international standard." },
+  { pos:[-20, 3.1, -90], yaw:0,           pitch:-0.06, caption:"The lake — a 200-metre crescent between the polo ring and the villa north row.",                       voice:"The crescent lake. 200 metres of still water." },
+  { pos:[-155, 3.1,  0], yaw: Math.PI/2,  pitch:-0.04, caption:"West villa row — 120 premium 3-bedroom villas with direct polo-field view.",                           voice:"The west villa row. 120 premium three-bedroom residences." },
+  { pos:[  0, 3.1, 108], yaw: Math.PI,    pitch:-0.08, caption:"The Clubhouse — 3,419 m². 8 VIP skyboxes. Restaurant. Bar. The social heart of XIX.",                   voice:"The Clubhouse. 3,419 square metres. Eight VIP skyboxes, a restaurant, and bar." },
+  { pos:[-375, 3.1, 90], yaw: Math.PI/2,  pitch:-0.05, caption:"The Equestrian Quarter — 56-stall stables, veterinary clinic, cobblestone courtyard.",                  voice:"The equestrian quarter. 56 stalls across four stable blocks." },
+  { pos:[ 218, 3.1,  0], yaw:-Math.PI/2,  pitch:-0.04, caption:"The paddock — post-and-rail enclosure. Watch horses warm up from your east terrace.",                   voice:"The paddock. Post and rail fencing, used for horse warming." },
 ];
 
-// ─── FIX 02: SMOOTH CINEMATIC TOUR CAMERA ─────────────────────────────────────
-// Each tour transition is a cubic Bezier fly-through over ~3.5 seconds.
-// The camera lifts slightly on the arc midpoint for a cinematic rising feel.
-// After arrival, the camera holds for _pauseDuration seconds before auto-advancing.
+let _tourActive=false, _tourStop=0, _tourOnGetCam=null, _tourOnSetCam=null;
+let _pauseT=0, _flyT=0, _flying=false, _flyFrom=null, _flyTo=null;
+const _PAUSE_DUR=6.0, _FLY_DUR=3.5;
 
-let _tourActive   = false;
-let _tourStop     = 0;
-let _tourOnGetCam = null;   // () => { pos, yaw, pitch } — reads live camera state
-let _tourOnSetCam = null;   // (pos, yaw, pitch) — sets camera state
-let _pauseT       = 0;
-const _PAUSE_DUR  = 6.0;   // seconds at each stop before auto-advance
-let _flyT         = 0;
-const _FLY_DUR    = 3.5;   // seconds of fly-through between stops
-let _flying       = false;
-let _flyFrom      = null;   // { pos:[x,y,z], yaw, pitch }
-let _flyTo        = null;
-
-// Cubic ease in-out
 function _easeInOut(t) { return t<0.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2; }
-
-// Bezier midpoint: lifts camera 20m above the midpoint of the path
 function _bezierPoint(p0, p1, p2, t) {
   const mt = 1-t;
-  return [
-    mt*mt*p0[0] + 2*mt*t*p1[0] + t*t*p2[0],
-    mt*mt*p0[1] + 2*mt*t*p1[1] + t*t*p2[1],
-    mt*mt*p0[2] + 2*mt*t*p1[2] + t*t*p2[2],
-  ];
+  return [mt*mt*p0[0] + 2*mt*t*p1[0] + t*t*p2[0], mt*mt*p0[1] + 2*mt*t*p1[1] + t*t*p2[1], mt*mt*p0[2] + 2*mt*t*p1[2] + t*t*p2[2]];
 }
 
 export function startTour(onGetCam, onSetCam) {
-  _tourOnGetCam = onGetCam;
-  _tourOnSetCam = onSetCam;
-  _tourActive   = true;
-  _tourStop     = 0;
-  _pauseT       = 0;
-  _flying       = false;
-  _injectTourUI();
-  // Go to first stop immediately with a short fly-in from current position
-  _startFly(_tourStop);
-  _speakStop(0);
+  _tourOnGetCam = onGetCam; _tourOnSetCam = onSetCam;
+  _tourActive = true; _tourStop = 0; _pauseT = 0; _flying = false;
+  _injectTourUI(); _startFly(_tourStop); _speakStop(0);
 }
 
 export function stopTour() {
-  _tourActive = false;
-  _flying     = false;
+  _tourActive = false; _flying = false;
   window.speechSynthesis && window.speechSynthesis.cancel();
   document.getElementById('tour-ui')?.remove();
 }
@@ -315,12 +233,9 @@ export function isTourActive() { return _tourActive; }
 
 function _startFly(toIdx) {
   const toStop = TOUR_STOPS[toIdx];
-  // Get current camera state as fly-from
-  const cur = _tourOnGetCam ? _tourOnGetCam() : { pos:[0,3.1,200], yaw:0, pitch:0 };
-  _flyFrom = cur;
+  _flyFrom = _tourOnGetCam ? _tourOnGetCam() : { pos:[0,3.1,200], yaw:0, pitch:0 };
   _flyTo   = { pos: toStop.pos, yaw: toStop.yaw, pitch: toStop.pitch || 0 };
-  _flyT    = 0;
-  _flying  = true;
+  _flyT    = 0; _flying  = true;
 }
 
 function _speakStop(idx) {
@@ -328,15 +243,8 @@ function _speakStop(idx) {
   window.speechSynthesis.cancel();
   const stop = TOUR_STOPS[idx];
   const utt  = new SpeechSynthesisUtterance(stop.voice);
-  utt.rate   = 0.88;
-  utt.pitch  = 1.0;
-  // Prefer a female English voice if available
-  const voices = window.speechSynthesis.getVoices();
-  const preferred = voices.find(v => /en/i.test(v.lang) && /female|samantha|karen|victoria|moira/i.test(v.name))
-                 || voices.find(v => /en/i.test(v.lang));
-  if (preferred) utt.voice = preferred;
+  utt.rate = 0.88; utt.pitch = 1.0;
   window.speechSynthesis.speak(utt);
-  // Update tour HUD caption
   const capEl = document.getElementById('tour-caption');
   if (capEl) capEl.textContent = stop.caption;
   const cntEl = document.getElementById('tour-counter');
@@ -347,10 +255,7 @@ function _injectTourUI() {
   if (document.getElementById('tour-ui')) return;
   const ui = document.createElement('div');
   ui.id = 'tour-ui';
-  ui.style.cssText = `position:fixed;bottom:90px;left:50%;transform:translateX(-50%);
-    z-index:500;background:rgba(6,18,8,0.82);backdrop-filter:blur(10px);
-    border:1px solid rgba(201,168,76,0.4);border-radius:10px;padding:14px 20px;
-    max-width:520px;width:90%;font-family:Inter,sans-serif;pointer-events:all;`;
+  ui.style.cssText = `position:fixed;bottom:90px;left:50%;transform:translateX(-50%);z-index:500;background:rgba(6,18,8,0.82);backdrop-filter:blur(10px);border:1px solid rgba(201,168,76,0.4);border-radius:10px;padding:14px 20px;max-width:520px;width:90%;font-family:Inter,sans-serif;pointer-events:all;`;
   ui.innerHTML = `
     <div style="font-size:11px;color:rgba(201,168,76,0.8);margin-bottom:6px;letter-spacing:.08em;" id="tour-counter">1 / ${TOUR_STOPS.length}</div>
     <div style="font-size:13px;color:rgba(255,255,255,0.88);line-height:1.5;" id="tour-caption">${TOUR_STOPS[0].caption}</div>
@@ -362,63 +267,28 @@ function _injectTourUI() {
   document.getElementById('world-overlay')?.appendChild(ui);
 }
 
-window.__tourNext = () => {
-  if (!_tourActive) return;
-  _tourStop = (_tourStop + 1) % TOUR_STOPS.length;
-  _pauseT = 0;
-  _startFly(_tourStop);
-  _speakStop(_tourStop);
-};
-window.__tourPrev = () => {
-  if (!_tourActive) return;
-  _tourStop = (_tourStop - 1 + TOUR_STOPS.length) % TOUR_STOPS.length;
-  _pauseT = 0;
-  _startFly(_tourStop);
-  _speakStop(_tourStop);
-};
+window.__tourNext = () => { if(!_tourActive)return; _tourStop=(_tourStop+1)%TOUR_STOPS.length; _pauseT=0; _startFly(_tourStop); _speakStop(_tourStop); };
+window.__tourPrev = () => { if(!_tourActive)return; _tourStop=(_tourStop-1+TOUR_STOPS.length)%TOUR_STOPS.length; _pauseT=0; _startFly(_tourStop); _speakStop(_tourStop); };
 window.__tourStop = () => stopTour();
 
 function tickTour(delta, cam) {
   if (!_tourActive) return;
-
   if (_flying) {
     _flyT = Math.min(_flyT + delta / _FLY_DUR, 1);
     const e = _easeInOut(_flyT);
-
-    // Build Bezier control point: midpoint between stops, lifted 25m
-    const p0 = _flyFrom.pos;
-    const p2 = _flyTo.pos;
-    const midX = (p0[0]+p2[0])/2;
-    const midY = Math.max(p0[1],p2[1]) + 25; // arc lift
-    const midZ = (p0[2]+p2[2])/2;
-    const p1 = [midX, midY, midZ];
-
+    const p0 = _flyFrom.pos, p2 = _flyTo.pos;
+    const p1 = [(p0[0]+p2[0])/2, Math.max(p0[1],p2[1]) + 25, (p0[2]+p2[2])/2];
     const bp = _bezierPoint(p0, p1, p2, e);
-
-    // Yaw: slerp (wrap-aware angle lerp)
-    let yawFrom = _flyFrom.yaw || 0;
-    let yawTo   = _flyTo.yaw   || 0;
-    // Shortest arc
-    let dy = yawTo - yawFrom;
+    let dy = (_flyTo.yaw||0) - (_flyFrom.yaw||0);
     if (dy >  Math.PI) dy -= Math.PI*2;
     if (dy < -Math.PI) dy += Math.PI*2;
-    const yaw   = yawFrom + dy * e;
-    const pitch = (_flyFrom.pitch||0) + ((_flyTo.pitch||0) - (_flyFrom.pitch||0)) * e;
-
-    if (_tourOnSetCam) _tourOnSetCam(bp, yaw, pitch);
-
-    if (_flyT >= 1) {
-      _flying = false;
-      _pauseT = 0;
-    }
+    if (_tourOnSetCam) _tourOnSetCam(bp, (_flyFrom.yaw||0) + dy * e, (_flyFrom.pitch||0) + ((_flyTo.pitch||0) - (_flyFrom.pitch||0)) * e);
+    if (_flyT >= 1) { _flying = false; _pauseT = 0; }
   } else {
-    // Holding at stop — auto-advance after pause
     _pauseT += delta;
     if (_pauseT >= _PAUSE_DUR) {
-      _pauseT = 0;
-      _tourStop = (_tourStop + 1) % TOUR_STOPS.length;
-      _startFly(_tourStop);
-      _speakStop(_tourStop);
+      _pauseT = 0; _tourStop = (_tourStop + 1) % TOUR_STOPS.length;
+      _startFly(_tourStop); _speakStop(_tourStop);
     }
   }
 }
@@ -434,7 +304,6 @@ export function initAmbientAudio() {
   try {
     _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     
-    // Set up global listener (the player's ears)
     if (_audioCtx.listener.upX) {
       _audioCtx.listener.upX.value = 0;
       _audioCtx.listener.upY.value = 1;
@@ -444,17 +313,17 @@ export function initAmbientAudio() {
     _windGain  = _makeNoise('wind', 0.012);
     _birdsGain = _makeBirds();
     
-    // 3D Positional Sources
     const hoovesSetup = _makeHooves();
     _hoovesPanner = hoovesSetup.panner;
     _hoovesGain = hoovesSetup.gain;
 
-    _lakePanner = _makePositionalNoise('water', 30, -115); // Crescent Lake
-    _clubPanner = _makePositionalNoise('murmur', 0, 108);  // Clubhouse
+    _lakePanner = _makePositionalNoise('water', 30, -115); 
+    _clubPanner = _makePositionalNoise('murmur', 0, 108);  
   } catch(e) { console.warn('[XIX] Audio init failed:', e); }
 }
 
 function _createPanner(x, z, refDist = 20, maxDist = 150) {
+  if (!_audioCtx) return null;
   const panner = _audioCtx.createPanner();
   panner.panningModel = 'HRTF';
   panner.distanceModel = 'exponential';
@@ -545,7 +414,6 @@ function _makeHooves() {
   const gain = _audioCtx.createGain();
   gain.gain.value = 0;
   
-  // Attach hooves to a moving panner
   const panner = _createPanner(0, 0, 5, 50);
   gain.connect(panner);
   panner.connect(_audioCtx.destination);
@@ -569,7 +437,6 @@ function _makeHooves() {
 export function updateAudioForMovement(isMoving, worldX, worldZ) {
   if (!_audioCtx) return;
 
-  // 1. Update Listener (Player) Position in 3D Space
   const listener = _audioCtx.listener;
   if (listener.positionX) {
     listener.positionX.setTargetAtTime(worldX, _audioCtx.currentTime, 0.1);
@@ -577,35 +444,27 @@ export function updateAudioForMovement(isMoving, worldX, worldZ) {
     listener.positionZ.setTargetAtTime(worldZ, _audioCtx.currentTime, 0.1);
   }
 
-  // 2. Attach Hoof Panner to Player Position
   if (_hoovesPanner) {
     _hoovesPanner.positionX.setTargetAtTime(worldX, _audioCtx.currentTime, 0.1);
     _hoovesPanner.positionZ.setTargetAtTime(worldZ, _audioCtx.currentTime, 0.1);
   }
 
-  // Wind varies near perimeter
   if (_windGain) {
     const edge = Math.min(Math.abs(worldZ + 220), Math.abs(worldZ - 215));
     const windVal = 0.008 + (1 - Math.min(edge / 80, 1)) * 0.018;
     _windGain.gain.setTargetAtTime(windVal, _audioCtx.currentTime, 0.4);
   }
   
-  // Hooves only when moving
   if (_hoovesGain) {
     _hoovesGain.gain.setTargetAtTime(isMoving ? 0.6 : 0, _audioCtx.currentTime, 0.3);
   }
   
-  // Birds quieter when moving fast
   if (_birdsGain) {
     _birdsGain.gain.setTargetAtTime(isMoving ? 0 : 0.8, _audioCtx.currentTime, 0.8);
   }
 }
 
-// ─── IMPROVEMENT 1: INSTANCED RENDERING ──────────────────────────────────────
-// Replace repeated scene.add(clone) with InstancedMesh for trees & fence posts.
-// Villas still use clone() because each has a plotKey and unique overlay.
-// Trees, fence posts, and cypress become instanced.
-
+// ─── INSTANCED RENDERING ──────────────────────────────────────────────────────
 const _dummy = new THREE.Object3D();
 
 function buildInstancedFencePosts(positions) {
@@ -642,27 +501,15 @@ function buildInstancedCypress(positions) {
   scene.add(trunks); scene.add(cones);
 }
 
-// ─── FIX 01 + IMPROVEMENT 5: INSTANCED VILLA RENDERING WITH LOD ──────────────
-// Strategy:
-//   Near (0–180m): individual LOD node using the full GLB clone — needed because
-//     each villa has a unique plotKey, hover highlight, and reservation state.
-//     We cannot use a single InstancedMesh for the full GLB because we need
-//     per-instance material overrides on reservation.
-//   Mid (180–350m): one shared InstancedMesh with a box impostor for ALL villas.
-//     This collapses ~60 mid-distance villas from 60 draw calls to 1.
-//   Far (350m+): invisible, fog handles it.
-//
-// The impostor InstancedMesh is built once after all villas are placed.
-
-const _villaInstData = [];   // { x, z, ry, plotKey, lodGroup }
-let   _impostorMesh  = null; // built once in _buildVillaImpostors()
+// ─── INSTANCED VILLA RENDERING WITH LOD ───────────────────────────────────────
+const _villaInstData = [];   
+let   _impostorMesh  = null; 
 const _impostorMat   = new THREE.MeshStandardMaterial({ color:0xF5E6B0, roughness:.8 });
 const _impostorGeo   = new THREE.BoxGeometry(14, 8, 12);
 
 function placeVillaGLBWithLOD(x, z, ry, plotKey) {
   if (!villaGLBScene) { pendingVillas.push({x,z,ry,plotKey}); return; }
 
-  // Near-distance node: full GLB clone (individual, supports per-plot state)
   const lod = new THREE.LOD();
   lod.position.set(x, 0, z);
   lod.rotation.y = ry;
@@ -672,22 +519,15 @@ function placeVillaGLBWithLOD(x, z, ry, plotKey) {
 
   const highDetail = villaGLBScene.clone(true);
   highDetail.rotation.y = 0;
-  lod.addLevel(highDetail, 0);          // shown 0–180m
+  lod.addLevel(highDetail, 0);          
 
-  // Mid-distance placeholder (invisible — impostor InstancedMesh covers this range)
-  lod.addLevel(new THREE.Group(), 180); // LOD switches at 180m
-  // Far: also invisible
+  lod.addLevel(new THREE.Group(), 180); 
   lod.addLevel(new THREE.Group(), 350);
 
   scene.add(lod);
   if (plotKey) addPlotOverlay(x, z, ry, plotKey, lod);
   _villaInstData.push({ x, z, ry });
 }
-
-// ─── AERIAL MODE — LOD OVERRIDE ──────────────────────────────────────────────
-// In aerial: disable LOD auto-update and force level 0 (full GLB) visible on all villas.
-// This is O(n) ONCE on enter/exit — zero per-frame cost.
-// THREE.LOD.autoUpdate=false tells WebGLRenderer to skip lod.update() in its render loop.
 
 let _aerialModeActive = false;
 
@@ -700,57 +540,42 @@ export function setAerialMode(on) {
     if (!obj.userData.isVillaGLB) return;
 
     if (on) {
-      // ENTER aerial: freeze LOD, force full-detail level visible
       obj.autoUpdate = false;
       obj.levels.forEach((lv, i) => {
-        lv.object.visible = (i === 0); // only level 0 (full GLB) visible
+        lv.object.visible = (i === 0); 
       });
     } else {
-      // EXIT aerial: re-enable LOD auto-update
-      // WebGLRenderer will call lod.update(camera) on next render frame automatically
       obj.autoUpdate = true;
-      // Force all levels visible first — renderer will correct on next frame
       obj.levels.forEach(lv => { lv.object.visible = true; });
     }
   });
 
-  // Also hide/show the impostor InstancedMesh (it competes with full GLBs in aerial)
   if (_impostorMesh) _impostorMesh.visible = !on;
 }
 
-// Called once after all villas are placed — builds the single mid-distance impostor.
 function _buildVillaImpostors() {
   if (_villaInstData.length === 0) return;
   _impostorMesh = new THREE.InstancedMesh(_impostorGeo, _impostorMat, _villaInstData.length);
   _impostorMesh.receiveShadow = true;
   _impostorMesh.castShadow    = false;
-  // Frustum culling won't work well for instanced meshes spread across the estate —
-  // disable it so the GPU can handle culling per-instance via the LOD system.
   _impostorMesh.frustumCulled = false;
   const dummy = new THREE.Object3D();
   _villaInstData.forEach(({ x, z, ry }, i) => {
-    dummy.position.set(x, 4, z); // y=4 so box sits on ground (box height=8, centre at 4)
+    dummy.position.set(x, 4, z); 
     dummy.rotation.y = ry;
     dummy.updateMatrix();
     _impostorMesh.setMatrixAt(i, dummy.matrix);
   });
   _impostorMesh.instanceMatrix.needsUpdate = true;
-  // The impostor mesh is ONLY visible beyond 180m — we achieve this by checking
-  // camera distance in tickScene and toggling visibility, which is cheaper than
-  // per-instance distance checks. A simpler approach: just let fog handle far
-  // falloff and show the impostor always (it's behind the full GLB when close).
-  // We render-order it behind full GLBs via renderOrder.
   _impostorMesh.renderOrder = -1;
   scene.add(_impostorMesh);
 }
 
-// ─── IMPROVEMENT 9: IN-WORLD SIGNAGE ─────────────────────────────────────────
+// ─── IN-WORLD SIGNAGE ─────────────────────────────────────────────────────────
 function addEstateSignage() {
-  // Entry gate — two pillars + header bar with XIX text rendered on canvas texture
   const pillarMat = new THREE.MeshStandardMaterial({ color:0x2a3820, roughness:.7, metalness:.3 });
   const goldMat   = new THREE.MeshStandardMaterial({ color:0xC9A84C, roughness:.3, metalness:.8 });
 
-  // Gate pillars at south entrance (Lagos Road side)
   for (const gx of [-12, 12]) {
     const pillar = new THREE.Mesh(new THREE.BoxGeometry(1.2, 6, 1.2), pillarMat);
     pillar.position.set(gx, 3, 218);
@@ -759,11 +584,9 @@ function addEstateSignage() {
     cap.position.set(gx, 6.25, 218); scene.add(cap);
   }
 
-  // XIX header bar
   const headerBar = new THREE.Mesh(new THREE.BoxGeometry(26, 0.5, 0.3), pillarMat);
   headerBar.position.set(0, 6.5, 218); scene.add(headerBar);
 
-  // XIX logo on canvas texture
   const sigCanvas = document.createElement('canvas'); sigCanvas.width=512; sigCanvas.height=96;
   const sigCtx = sigCanvas.getContext('2d');
   sigCtx.fillStyle = '#061208'; sigCtx.fillRect(0,0,512,96);
@@ -779,7 +602,6 @@ function addEstateSignage() {
   );
   signMesh.position.set(0, 5.5, 217.9); scene.add(signMesh);
 
-  // Directional signs — smaller canvas labels on posts
   const signs = [
     { label:'CLUBHOUSE ▶',  pos:[-20, 0, 190], ry:0 },
     { label:'◀ STABLES',    pos:[ 20, 0, 190], ry:0 },
@@ -804,12 +626,8 @@ function addEstateSignage() {
   });
 }
 
-// ─── FIX 04: 3D FLOATING HOTSPOT LABELS ──────────────────────────────────────
-// Canvas-texture sprite above key landmarks. Faces camera every frame.
-// Pulses in opacity (0.6→1.0) on a slow sine cycle.
-// Clicking a hotspot in-world triggers the product panel.
-
-const _hotspots = [];  // { sprite, worldPos, label }
+// ─── 3D FLOATING HOTSPOT LABELS ───────────────────────────────────────────────
+const _hotspots = [];  
 
 const HOTSPOT_DEFS = [
   { label:'The Clubhouse',        sublabel:'3,419m²  ·  3 floors  ·  8 skyboxes', pos:[0, 18, 108],    productKey:'clubhouse' },
@@ -824,7 +642,6 @@ function _makeHotspotCanvas(label, sublabel) {
   const W = 380, H = 80;
   const c = document.createElement('canvas'); c.width=W; c.height=H;
   const ctx = c.getContext('2d');
-  // Background pill
   ctx.beginPath();
   const r = 14;
   ctx.moveTo(r,0); ctx.lineTo(W-r,0); ctx.quadraticCurveTo(W,0,W,r);
@@ -833,17 +650,13 @@ function _makeHotspotCanvas(label, sublabel) {
   ctx.lineTo(0,r); ctx.quadraticCurveTo(0,0,r,0); ctx.closePath();
   ctx.fillStyle = 'rgba(6,18,8,0.88)';
   ctx.fill();
-  // Gold border
   ctx.strokeStyle = '#C9A84C'; ctx.lineWidth = 2; ctx.stroke();
-  // Gold dot
   ctx.beginPath(); ctx.arc(22, H/2, 5, 0, Math.PI*2);
   ctx.fillStyle = '#C9A84C'; ctx.fill();
-  // Label text
   ctx.fillStyle = '#f0ece0';
   ctx.font = 'bold 22px Inter, sans-serif';
   ctx.textBaseline = 'middle';
   ctx.fillText(label, 36, H*0.38);
-  // Sublabel text
   ctx.fillStyle = 'rgba(201,168,76,0.85)';
   ctx.font = '16px Inter, sans-serif';
   ctx.fillText(sublabel, 36, H*0.72);
@@ -860,9 +673,8 @@ export function addLandmarkHotspots() {
       depthWrite: false, sizeAttenuation: true,
     });
     const sprite = new THREE.Sprite(mat);
-    // Scale: width = canvas aspect × height in world units
     const aspect = canvas.width / canvas.height;
-    const worldH = 6; // 6m tall label
+    const worldH = 6; 
     sprite.scale.set(worldH * aspect, worldH, 1);
     sprite.position.set(...def.pos);
     sprite.userData.productKey = def.productKey;
@@ -874,7 +686,6 @@ export function addLandmarkHotspots() {
 }
 
 export function tickHotspots(elapsed) {
-  // Gentle opacity pulse: 0.72 → 1.0, 2-second cycle
   _hotspots.forEach((h, i) => {
     const phase = (elapsed * 0.5 + i * 0.4) % (Math.PI * 2);
     h.sprite.material.opacity = 0.72 + Math.sin(phase) * 0.28;
@@ -889,21 +700,16 @@ export function getHotspotAtRay(raycaster) {
 }
 
 // ─── VILLA HEDGES ────────────────────────────────────────────────────────────
-// Instanced box-hedges around each villa plot perimeter.
-// Uses a single InstancedMesh per villa ring side for performance.
-// Each villa gets 4 hedge segments: front, back, left, right — gaps at driveway entrance.
-const _hedgeInstData = []; // collected during addVillaRing, built once after
+const _hedgeInstData = []; 
 
-// Water body zones — hedges must not be placed here
 const WATER_ZONES = [
-  { xMin:-85,xMax:140, zMin:-135,zMax:-95 }, // main crescent lake
-  { xMin:212,xMax:232, zMin:-60, zMax:-35  }, // east lake
+  { xMin:-85,xMax:140, zMin:-135,zMax:-95 }, 
+  { xMin:212,xMax:232, zMin:-60, zMax:-35  }, 
 ];
 function isInWater(x,z){
   return WATER_ZONES.some(w=>x>=w.xMin&&x<=w.xMax&&z>=w.zMin&&z<=w.zMax);
 }
 function collectVillaHedge(x, z, ry) {
-  // Don't place hedges on or near water — villas near north lake would clip
   if (isInWater(x,z) || isInWater(x,z-12) || isInWater(x,z+12)) return;
   _hedgeInstData.push({ x, z, ry });
 }
@@ -911,13 +717,11 @@ function collectVillaHedge(x, z, ry) {
 function buildAllVillaHedges() {
   if (_hedgeInstData.length === 0) return;
   const count = _hedgeInstData.length;
-  // Hedge segment geometry: 1m wide, 1.4m tall, variable length set via scale
   const geo = new THREE.BoxGeometry(1, 1.4, 1);
   const mat = new THREE.MeshStandardMaterial({
     color: 0x2d5a1e, roughness: 0.95, metalness: 0, envMapIntensity: 0.2
   });
 
-  // Each villa gets 6 hedge segments: 2 long sides + 2 short ends (with driveway gap)
   const SEGS_PER_VILLA = 6;
   const total = count * SEGS_PER_VILLA;
   const mesh = new THREE.InstancedMesh(geo, mat, total);
@@ -929,27 +733,18 @@ function buildAllVillaHedges() {
   let idx = 0;
 
   _hedgeInstData.forEach(({ x, z, ry }) => {
-    // Villa footprint: ~20m wide (x-local) × 16m deep (z-local)
     const W = 10.5, D = 8.5, H = 0.7, T = 0.55;
-    // Hedge sits just outside the villa footprint edge
     const segments = [
-      // Back hedge (full width — no gap needed at back)
       { lx: 0,     lz: -(D+T),  sx: W*2, sz: T },
-      // Front hedge left of driveway gap (2m gap centred)
       { lx: -(W*0.5+1), lz: D+T, sx: W-2, sz: T },
-      // Front hedge right of driveway gap
       { lx:  (W*0.5+1), lz: D+T, sx: W-2, sz: T },
-      // Left side hedge
       { lx: -(W+T),  lz: 0,   sx: T, sz: D*2 },
-      // Right side (back half — leave open near driveway for visibility)
       { lx:  (W+T),  lz: -D*0.3, sx: T, sz: D*1.4 },
-      // Right side (front segment)
       { lx:  (W+T),  lz:  D*0.7, sx: T, sz: D*0.6 },
     ];
 
     const cosR = Math.cos(ry), sinR = Math.sin(ry);
     segments.forEach(seg => {
-      // Rotate local offsets by villa rotation
       const wx = x + seg.lx * cosR - seg.lz * sinR;
       const wz = z + seg.lx * sinR + seg.lz * cosR;
       dummy.position.set(wx, H, wz);
@@ -960,12 +755,12 @@ function buildAllVillaHedges() {
     });
   });
 
-  mesh.count = idx; // trim to actual used count
+  mesh.count = idx; 
   mesh.instanceMatrix.needsUpdate = true;
   scene.add(mesh);
 }
 
-// ─── FIX 08: AO CONTACT SHADOWS ──────────────────────────────────────────────
+// ─── AO CONTACT SHADOWS ───────────────────────────────────────────────────────
 function addVillaContactShadow(x, z) {
   const aoMat = new THREE.MeshBasicMaterial({
     color: 0x000000, transparent: true, opacity: 0.22,
@@ -990,7 +785,7 @@ export function initScene(canvas) {
   renderer.shadowMap.enabled   = true;
   renderer.shadowMap.type      = THREE.PCFSoftShadowMap;
   renderer.toneMapping         = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.85; // sky handles exposure now
+  renderer.toneMappingExposure = 0.85; 
   renderer.outputColorSpace    = THREE.SRGBColorSpace;
 
   scene  = new THREE.Scene();
@@ -1000,37 +795,29 @@ export function initScene(canvas) {
 
   buildLighting();
 
-  // IMPROVEMENT 4: Atmospheric sky (replaces canvas gradient)
   const { skyObj, sun, skyUniforms } = createAtmosphericSky(scene, renderer);
   _skyObj = skyObj; _skySun = sun; _skyUniforms = skyUniforms;
   setSkyForTime(_skyUniforms, _skySun, sunLight, 'afternoon');
 
-  // Build PMREM environment map from sky AFTER first paint.
-  // This gives all GLB materials real IBL reflections (glass, metal, water).
-  // Deferred 2 frames so the sky texture is fully composited before capture.
   requestAnimationFrame(() => requestAnimationFrame(() => {
     buildEnvMapFromSky(renderer, scene, skyObj);
   }));
 
-  // IMPROVEMENT 10: Progressive loading
-  // Phase 1 — ground and field immediately (fast)
   addGround();
   addPoloField();
   addSafetyZone();
 
-  // Phase 2 — everything else deferred 1 frame so first paint is fast
   requestAnimationFrame(() => {
     addGrassRing();
     addYardMarkings();
     addRoads();
-    addLake();
+    addLake(); // Now uses Phase 2 Planar Water
     addEastLake();
     addClubhouse();
     addEstateSignage();
     addLandmarkHotspots();
-    addNightLighting(); // security lamps + building floodlights // Fix 04: floating 3D labels
+    addNightLighting(); 
 
-    // Phase 3 — heavy GLBs deferred another frame
     requestAnimationFrame(() => {
       loadHorseGLB();
       loadVillaGLB();
@@ -1039,7 +826,7 @@ export function initScene(canvas) {
       loadClubhouseGLB();
       loadStablesGLB();
       addVillaRing();
-      _buildVillaImpostors(); // Fix 01: build mid-distance instanced impostor after all villas placed
+      _buildVillaImpostors(); 
       addLoftTerraces();
       addWestCompound();
       addPaddock();
@@ -1048,8 +835,6 @@ export function initScene(canvas) {
       addServiceCompound();
       addLandscaping();
 
-      // NPC horses — all 8 paths, staggered with setTimeout so they don't
-      // all trigger a Draco decode at the same millisecond.
       requestAnimationFrame(() => {
         for (let i = 0; i < 8; i++) {
           setTimeout(() => spawnNPCHorse(i), i * 400);
@@ -1070,12 +855,10 @@ export function updateSkyForTime(timeName) {
     scene.fog.color.set(fogColors[timeName] || 0x8ab8cc);
   }
   setBloomForTime(timeName);
-  // Night / sunset: activate security lamp lights and building window glow
   updateNightLights(timeName);
   updateBuildingNightGlow(timeName);
 }
 
-// Keep updateSky for backwards compat with app.js time presets
 export function updateSky(top, hor, gnd) {
   // no-op: sky is now atmospheric, controlled via updateSkyForTime()
 }
@@ -1084,49 +867,38 @@ function buildLighting() {
   const perfS = PERF_SETTINGS[PERF_MODE];
   hemiLight = new THREE.HemisphereLight(0xd4e8ff, 0x4a6a30, 1.0);
   scene.add(hemiLight);
-  sunLight = new THREE.DirectionalLight(0xfff4e0, 2.8); // brighter sun
+  sunLight = new THREE.DirectionalLight(0xfff4e0, 2.8); 
   sunLight.position.set(-180, 180, 120);
-  sunLight.castShadow = true; // shadows in ALL modes — 1024px is fast enough
+  sunLight.castShadow = true; 
   sunLight.shadow.camera.left = sunLight.shadow.camera.bottom = -380;
   sunLight.shadow.camera.right = sunLight.shadow.camera.top   =  380;
   sunLight.shadow.camera.near  = 0.5;
   sunLight.shadow.camera.far   = 800;
   sunLight.shadow.mapSize.set(perfS.shadowMapSize, perfS.shadowMapSize);
-  sunLight.shadow.bias        = -0.00015; // tighter bias = sharper contact shadows
+  sunLight.shadow.bias        = -0.00015; 
   sunLight.shadow.normalBias  =  0.018;
-  sunLight.shadow.radius      =  2.5;    // sharper shadow edges (was 3.5)
+  sunLight.shadow.radius      =  2.5;    
   scene.add(sunLight);
 
-  // Fill light — warm bounce from ground (simulates GI)
   const fill = new THREE.DirectionalLight(0xd4b890, 0.55);
   fill.position.set(100, 60, -120); scene.add(fill);
 
-  // Ambient bounce — warm low sky light
   const ambient = new THREE.DirectionalLight(0xb8d0ff, 0.28);
   ambient.position.set(-80, 20, 80); scene.add(ambient);
 }
 
 // ─── NIGHT SECURITY LIGHTS ────────────────────────────────────────────────────
-// Warm amber point lights placed along roads and near buildings for night ambiance.
-// Added lazily after scene loads; toggled via updateNightLights().
 const _nightLights = [];
 let   _nightLightsActive = false;
 
 function buildNightLights() {
-  if (_nightLights.length > 0) return; // already built
-  // Road lamp posts along main perimeter roads
+  if (_nightLights.length > 0) return; 
   const lampPositions = [
-    // West road lamps
     [-155,0,-80],[-155,0,-40],[-155,0,0],[-155,0,40],[-155,0,80],
-    // East road lamps
     [155,0,-80],[155,0,-40],[155,0,0],[155,0,40],[155,0,80],
-    // South entrance boulevard
     [-120,0,215],[-60,0,215],[0,0,215],[60,0,215],[120,0,215],
-    // North crossroad
     [-80,0,-105],[-20,0,-105],[40,0,-105],[100,0,-105],
-    // Clubhouse surrounds
     [-40,0,108],[0,0,108],[40,0,108],
-    // Stables area
     [-360,0,80],[-375,0,60],[-390,0,40],
   ];
 
@@ -1137,20 +909,17 @@ function buildNightLights() {
   });
 
   lampPositions.forEach(([x, , z]) => {
-    // Lamp post
     const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08,0.10,5,6), postMat);
     post.position.set(x, 2.5, z);
     post.castShadow = false;
     scene.add(post);
 
-    // Lamp globe (emissive sphere)
     const globe = new THREE.Mesh(new THREE.SphereGeometry(0.22,8,6), globeMat);
     globe.position.set(x, 5.25, z);
     scene.add(globe);
     _nightLights.push({ post, globe });
 
-    // Warm point light — low range to keep GPU load manageable
-    const pt = new THREE.PointLight(0xffaa44, 0, 22, 1.8); // intensity 0 by default
+    const pt = new THREE.PointLight(0xffaa44, 0, 22, 1.8); 
     pt.position.set(x, 5.0, z);
     scene.add(pt);
     _nightLights.push({ pt });
@@ -1161,12 +930,10 @@ export function updateNightLights(timeName) {
   const isNight = (timeName === 'night');
   const isSunset = (timeName === 'sunset');
 
-  // Build lamp geometry once on first night trigger
   if (isNight || isSunset) buildNightLights();
 
   _nightLights.forEach(item => {
     if (item.pt) {
-      // Night: full brightness; sunset: half; day: off
       item.pt.intensity = isNight ? 2.8 : isSunset ? 1.2 : 0;
     }
     if (item.globe) {
@@ -1177,7 +944,6 @@ export function updateNightLights(timeName) {
   _nightLightsActive = isNight;
 }
 
-// Window glow for villas at night — set emissiveIntensity on glass materials
 export function updateBuildingNightGlow(timeName) {
   if (!scene) return;
   const isNight = timeName === 'night';
@@ -1228,22 +994,7 @@ const MATS = {
   plotReserved:()=>new THREE.MeshStandardMaterial({color:0xff4444,transparent:true,opacity:0,depthWrite:false}),
 };
 
-// ─── ENVIRONMENT ──────────────────────────────────────────────────────────────
-// Fix 03: PBR texture calls wrapped in try/catch with solid-colour fallbacks.
-// If assets/textures/* don't exist in the repo, PBR.grass() etc. return a broken
-// material. These wrappers catch that silently and fall back to a matching solid colour.
-function _safePBR(pbrFn, fallbackColor, roughness=0.9) {
-  try {
-    return pbrFn();
-  } catch(e) {
-    console.warn('[XIX] PBR texture missing, using solid fallback:', e.message);
-    return new THREE.MeshStandardMaterial({ color: fallbackColor, roughness });
-  }
-}
-
 function addGround(){
-  // Polish: ground uses a micro-variation canvas texture so it reads as organic,
-  // not a flat colour, even without real PBR assets.
   const dirtMat = _makeMicroTexture(0x7a5a38, 0x6a4a28, 900, 700);
   const grassMat = _makeMicroTexture(0x3d7028, 0x4a8035, 500, 400);
 
@@ -1256,8 +1007,6 @@ function addGround(){
   s(plane(200,280,MATS.lawnGreen(),[-310,.01,30]));
 }
 
-// Micro-texture: a canvas with subtle noise baked in, repeated across large planes.
-// Gives organic ground variation without any external asset dependency.
 function _makeMicroTexture(col1, col2, planeW, planeD) {
   const c = document.createElement('canvas'); c.width = 256; c.height = 256;
   const ctx = c.getContext('2d');
@@ -1275,19 +1024,16 @@ function _makeMicroTexture(col1, col2, planeW, planeD) {
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  // Repeat so each pixel of texture covers ~1m of world
   tex.repeat.set(planeW/4, planeD/4);
   return new THREE.MeshStandardMaterial({ map: tex, roughness: 0.92, metalness: 0 });
 }
 
 function addGrassRing(){
   const count = PERF_MODE==='fast' ? 80 : 200;
-  // Collect all grass card definitions (raw data, not meshes)
   const allCards = [
     ...addGrassField(0,-115,140,12,count), ...addGrassField(0,115,140,12,count),
     ...addGrassField(-165,0,12,90,count/2), ...addGrassField(165,0,12,90,count/2),
   ];
-  // Commit as single InstancedMesh — ~4x fewer draw calls than individual PlaneGeometry meshes
   commitGrass(scene, allCards);
 }
 
@@ -1316,7 +1062,6 @@ function addYardMarkings(){
   const lm=new THREE.MeshStandardMaterial({color:0xf8f5e0,roughness:.4});
   for(const side of[-1,1]) for(const d of[27.4,36.6,54.9])
     s(box(.5,.05,146,lm,[side*(137-d),.14,0],0,false));
-  // IMPROVEMENT 1: fence posts as instanced mesh
   const postPositions=[];
   for(const gx of[-137,137]) for(const pz of[0,-7.3,7.3]) postPositions.push([gx,1.5,pz]);
   buildInstancedFencePosts(postPositions);
@@ -1335,10 +1080,10 @@ function addRoads(){
   s(plane(55,8,am,[215,Y,120]));
 }
 
+// ─── PHASE 2 PLANAR WATER ─────────────────────────────────────────────────────
 function addLake(){
   const wm = createWaterMat();
   
-  // Real-time Planar Mirror Lake for the 200m Crescent Centerpiece
   const waterGeo = new THREE.PlaneGeometry(195, 22);
   const lakeReflection = new Water(waterGeo, {
     textureWidth: window.innerWidth * Math.min(window.devicePixelRatio || 1, 2) * 0.5,
@@ -1354,14 +1099,12 @@ function addLake(){
     fog: scene.fog !== undefined
   });
   
-  // Height = 0.16 (center) + 0.175 (half height) = 0.335
   lakeReflection.position.set(30, 0.335, -115);
   lakeReflection.rotation.x = -Math.PI / 2;
   lakeReflection.userData.isPlanarWater = true;
   scene.add(lakeReflection);
   waterMeshes.push(lakeReflection);
 
-  // End-caps: flat CylinderGeometry discs
   for(const ex of [-68, 128]){
     const ep=new THREE.Mesh(new THREE.CylinderGeometry(11,11,.35,32),wm);
     ep.position.set(ex,.16,-115); 
@@ -1519,8 +1262,8 @@ function addVillaRing(){
     const plotKey=`${Math.round(x)},${Math.round(z)}`;
     registerVillaFootprint(x,z);
     placeVillaGLBWithLOD(x,z,ry,plotKey);
-    addVillaContactShadow(x,z); // IMPROVEMENT 8
-    collectVillaHedge(x,z,ry); // hedge ring around this villa
+    addVillaContactShadow(x,z); 
+    collectVillaHedge(x,z,ry); 
     const fx=Math.sin(ry)*(-9),fz=Math.cos(ry)*(-9),rx=Math.cos(ry)*8,rz=-Math.sin(ry)*8;
     if(!isInNoBuildZone(x+rx+fx,z+rz+fz)) cypressPositions.push([x+rx+fx,z+rz+fz]);
     if(!isInNoBuildZone(x-rx+fx,z-rz+fz)) cypressPositions.push([x-rx+fx,z-rz+fz]);
@@ -1533,9 +1276,7 @@ function addVillaRing(){
     placeV(x,-132-bow,0);
   });
   for(const side of[-1,1]) [65,93,121].forEach(xa=>{placeV(side*xa,105+xa*.04,0);});
-  // IMPROVEMENT 1: instanced cypress instead of individual meshes
   buildInstancedCypress(cypressPositions);
-  // Build all villa hedges as single InstancedMesh
   buildAllVillaHedges();
 }
 
@@ -1556,7 +1297,7 @@ function addPaddock(){
   const postPos=[];
   for(let fz=-19;fz<=19;fz+=4){postPos.push([198,.8,fz]);postPos.push([238,.8,fz]);}
   for(let fx=198;fx<=238;fx+=4){postPos.push([fx,.8,-19]);postPos.push([fx,.8,19]);}
-  buildInstancedFencePosts(postPos); // IMPROVEMENT 1
+  buildInstancedFencePosts(postPos); 
   const rm=MATS.railWhite();
   s(box(.08,.1,38,rm,[198,1.0,0],0,false)); s(box(.08,.1,38,rm,[238,1.0,0],0,false));
   s(box(40,.1,.08,rm,[218,1.0,-19],0,false)); s(box(40,.1,.08,rm,[218,1.0,19],0,false));
@@ -1582,8 +1323,6 @@ function addServiceCompound(){
 }
 
 function addLandscaping(){
-  // Collect all palm positions as data — buildPalmInstances creates 2 InstancedMesh
-  // objects total (one per cross-plane orientation) instead of 120+ individual meshes
   const palmDefs=[];
   function queuePalm(x,y,z,scale=1){
     if(isInNoBuildZone(x,z)) return;
@@ -1618,40 +1357,37 @@ function _createFlatBlock(x,z){
 
 // ─── TICK ─────────────────────────────────────────────────────────────────────
 let _tickFrame=0;
+let _prevElapsed=0;
+
 export function tickScene(elapsed, camera){
   _tickFrame++;
+  
   tickWater(waterMeshes, elapsed);
   
-  // Update Planar Water Time Uniform
   waterMeshes.forEach(m => {
-    if (m.userData.isPlanarWater && m.material.uniforms) {
+    if (m.userData.isPlanarWater && m.material.uniforms && m.material.uniforms['time']) {
       m.material.uniforms['time'].value += 1.0 / 60.0;
     }
   });
 
   tickGrass(camera);
+  
   const palmDiv = PERF_SETTINGS[PERF_MODE].palmTickDiv;
   if (_tickFrame % palmDiv === 0) {
     tickPalms(camera);
   }
+  
   tickHotspots(elapsed);
+  
   const _frameDelta = Math.min(elapsed - (_prevElapsed || 0), 0.033);
   _prevElapsed = elapsed;
+  
   tickNPCHorses(_frameDelta);
   if (_tourActive) tickTour(_frameDelta, camera);
 }
-  // Delta since last tick — compute ONCE, use for both NPC and tour
-  const _frameDelta = Math.min(elapsed - (_prevElapsed || 0), 0.033);
-  _prevElapsed = elapsed;
-  tickNPCHorses(_frameDelta);
-  if (_tourActive) tickTour(_frameDelta, camera);
-}
-let _prevElapsed = 0;
 
 export function getRenderer()   { return renderer;   }
 export function getScene()      { return scene;      }
 export function getCamera()     { return camera;     }
 export function getClock()      { return clock;      }
 export function getHorseGroup() { return horseGroup; }
-
-// Export audio init so app.js can call it on first user gesture
