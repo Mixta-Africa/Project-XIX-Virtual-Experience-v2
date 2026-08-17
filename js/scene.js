@@ -816,7 +816,6 @@ export function initScene(canvas) {
     addClubhouse();
     addEstateSignage();
     addLandmarkHotspots();
-    addNightLighting(); 
 
     requestAnimationFrame(() => {
       loadHorseGLB();
