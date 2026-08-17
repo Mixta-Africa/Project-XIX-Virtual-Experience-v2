@@ -414,14 +414,17 @@ export function tickPalms(camera) {
 }
 
 // ─── MAT_ EXPORTS ────────────────────────────────────────────────────────────
-export function MAT_GRASS_FIELD(){return new THREE.MeshStandardMaterial({color:0x4a8038,roughness:.90,envMapIntensity:.3});}
-export function MAT_DIRT()        {return new THREE.MeshStandardMaterial({color:0x7a5a38,roughness:.95,envMapIntensity:.2});}
-export function MAT_ASPHALT()     {return new THREE.MeshStandardMaterial({color:0x1c2018,roughness:.90,envMapIntensity:.3});}
-export function MAT_BRICK()       {return new THREE.MeshStandardMaterial({color:0xC4A882,roughness:.85,envMapIntensity:.5});}
-export function MAT_CONCRETE()    {return new THREE.MeshStandardMaterial({color:0xb8b0a0,roughness:.82,envMapIntensity:.4});}
-export function MAT_TIMBER()      {return new THREE.MeshStandardMaterial({color:0x9a6a3a,roughness:.68,envMapIntensity:.6});}
-export function MAT_STONE()       {return new THREE.MeshStandardMaterial({color:0x8a8078,roughness:.88,envMapIntensity:.5});}
-export function MAT_TILE_ROOF()   {return new THREE.MeshStandardMaterial({color:0xC9A84C,roughness:.78,metalness:.04,envMapIntensity:.8});}
+// Route all environment materials through the high-end PBR texture factory
+export function MAT_GRASS_FIELD() { return PBR.grass(); }
+export function MAT_DIRT()        { return PBR.dirt(); }
+export function MAT_ASPHALT()     { return PBR.asphalt(); }
+export function MAT_BRICK()       { return PBR.brick(); }
+export function MAT_CONCRETE()    { return PBR.concrete(); }
+export function MAT_TIMBER()      { return PBR.timber(); }
+export function MAT_STONE()       { return PBR.stone(); }
+export function MAT_TILE_ROOF()   { return PBR.tileRoof(); }
+
+// Keep structural/architectural elements crisp and procedural
 export function MAT_GLASS(op=.45){return new THREE.MeshStandardMaterial({color:0x9ac8e8,roughness:.04,metalness:.06,transparent:true,opacity:op,envMapIntensity:3.5});}
 export function MAT_GLASS_WARM(op=.45){return new THREE.MeshStandardMaterial({color:0xd4c090,roughness:.04,metalness:.05,transparent:true,opacity:op,envMapIntensity:3.2});}
 export function MAT_WHITE_TRIM() {return new THREE.MeshStandardMaterial({color:0xfcfaf8,roughness:.55,envMapIntensity:.6});}
