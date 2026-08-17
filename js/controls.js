@@ -207,7 +207,19 @@ export function updateControls(delta) {
 
   // Phase 3: Matterport-style Exponential Decay Smoothing (Framerate Independent)
   const decay = 1 - Math.exp(-18 * delta);
-  currentYaw += (targetYaw - currentYaw) * decay;
+
+  // PREVENT CRASH: Wrap angles to prevent floating-point overflow on infinite spinning
+  if (Math.abs(targetYaw) > 1000) {
+    targetYaw %= (Math.PI * 2);
+    currentYaw %= (Math.PI * 2);
+  }
+
+  // Calculate shortest-path difference to prevent 360-degree snapbacks
+  let yawDiff = targetYaw - currentYaw;
+  while (yawDiff > Math.PI) yawDiff -= Math.PI * 2;
+  while (yawDiff < -Math.PI) yawDiff += Math.PI * 2;
+
+  currentYaw += yawDiff * decay;
   currentPitch += (targetPitch - currentPitch) * decay;
 
   const speed   = (keys.has('shift') || touchSprint || window.__touchSprint) ? SPRINT : WALK;
