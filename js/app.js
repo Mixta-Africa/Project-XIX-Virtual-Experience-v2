@@ -70,74 +70,6 @@ function tickDayCycle(elapsed) {
   if (window._updateDayClock) window._updateDayClock(hr24, mins, name);
 }
 
-let currentViewKey = "field_centre";
-let animFrameId    = null;
-let composer       = null;
-let aerialOrbit    = false;
-let aerialAngle    = 0, aerialYawOffset = 0;
-let aerialPitch    = -0.685;
-let aerialDragging = false, aerialLastX = 0, aerialLastY = 0;
-const AERIAL_RADIUS = 340, AERIAL_HEIGHT = 280, AERIAL_SPEED = 0.12;
-
-// Movement mode: 'walk' = free roam on foot, 'aerial' = drone
-let moveMode = 'walk'; // Removed 'ride'
-let _prevCamX = 0, _prevCamZ = 0;
-let _targetEyeY = FOOT_EYE_HEIGHT;  
-let _currentEyeY = FOOT_EYE_HEIGHT;
-
-window.setMoveMode = function(mode) {
-  if (mode === 'aerial') {
-    if (!aerialOrbit) toggleAerial(null);
-    return;
-  }
-  if (aerialOrbit) {
-    aerialOrbit = false;         
-    unbindAerialPointer();       
-    const cam = getCamera();
-    if (cam) { cam.fov = 65; cam.far = 1200; cam.updateProjectionMatrix(); }
-    const sc = getScene();
-    if (sc && sc.fog) sc.fog.density = _fogEnabled ? _currentFogD : 0.000001;
-    if (typeof setAerialMode === 'function') setAerialMode(false);
-  }
-  
-  moveMode = 'walk'; // Hard lock to Walk
-  setYOwner('controls');
-  _targetEyeY = (typeof FOOT_EYE_HEIGHT !== 'undefined' ? FOOT_EYE_HEIGHT : 1.72);
-  _currentEyeY = _targetEyeY;
-
-  activate();
-  document.querySelectorAll('.move-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === 'walk'));
-// ── AUTO DAY CYCLE & WEATHER (Linear 12-Hour) ──────────────────────────────────
-const DAY_CYCLE_DURATION = 5 * 60; // 5 minutes real-time per full day loop
-let   _dayAutoRun  = true;   
-let   _dayPauseEnd = 0;      
-let   _lastDayApplied = '';  
-let   _currentWeather = 'clear';
-
-function tickDayCycle(elapsed) {
-  if (!_dayAutoRun) return;
-  if (performance.now() < _dayPauseEnd) return;
-
-  const phase = (elapsed % DAY_CYCLE_DURATION) / DAY_CYCLE_DURATION; 
-  // Map 0.0 -> 1.0 phase smoothly from 6:00 AM to 6:00 AM the next day
-  const currentHourDec = 6 + (phase * 24);
-  const hr24 = Math.floor(currentHourDec) % 24;
-  const mins = Math.floor((currentHourDec % 1) * 60);
-
-  let name = 'afternoon';
-  if (hr24 >= 6 && hr24 < 10) name = 'morning';
-  else if (hr24 >= 10 && hr24 < 17) name = 'afternoon';
-  else if (hr24 >= 17 && hr24 < 19) name = 'sunset';
-  else name = 'night';
-
-  if (name !== _lastDayApplied) {
-    _lastDayApplied = name;
-    applyTimePreset(name, true);
-  }
-
-  if (window._updateDayClock) window._updateDayClock(hr24, mins, name);
-}
-
 const TIME_PRESETS = {
   morning:   { sky:["#1e3a5a","#7aaac8","#4a7a38"], sunCol:0xffd080, sunInt:1.8, sunPos:[-80,55,-80],   fog:"#8ab8cc", fogD:0.00018, exp:0.92 },
   afternoon: { sky:["#1a3a6a","#5a9acc","#3a6a30"], sunCol:0xffe8b0, sunInt:2.2, sunPos:[-160,160,100], fog:"#8ab8cc", fogD:0.00014, exp:1.02 },
@@ -173,7 +105,7 @@ function applyTimePreset(name, fromWeather = false) {
   const _sun = typeof getSunLight === 'function' ? getSunLight() : null;
   if (_sun) {
     _sun.color.setHex(p.sunCol);
-    _sun.intensity = p.sunInt * sunMult; // Real-world dimming
+    _sun.intensity = p.sunInt * sunMult; 
     _sun.position.set(...p.sunPos);
   }
   const r = getRenderer();
@@ -185,12 +117,12 @@ function applyWeather(w) {
   document.querySelectorAll(".wx-weather-btn").forEach(b => b.classList.toggle("active", b.dataset.weather === w));
   
   let bloomMult = 1;
-  if (w === 'clear')  bloomMult = 0.2; // 80% Glare Reduction
+  if (w === 'clear')  bloomMult = 0.2; 
   if (w === 'cloudy') bloomMult = 0.5;
   if (w === 'rain')   bloomMult = 0.1;
 
   if (typeof setWeatherBloomModifier === 'function') setWeatherBloomModifier(bloomMult);
-  if (_lastDayApplied) applyTimePreset(_lastDayApplied, true);
+  if (_lastDayApplied) applyTimePreset(_lastDayApplied, true); 
 }
 
 window.applyTimePreset = applyTimePreset;
@@ -223,6 +155,7 @@ window.rotateVillaGLB = function(degrees) {
   console.log('[XIX] Villa GLB rotated', degrees, 'deg');
 };
 
+// ── DAY CLOCK: 12-Hour format & Line Art ──────────────────────────────────────
 // ── DAY CLOCK: 12-Hour format & Line Art ──────────────────────────────────────
 function injectDayClock() {
   if (document.getElementById('day-clock')) return;
@@ -260,7 +193,7 @@ function injectDayClock() {
   };
 }
 
-// ── MODE TOGGLE: Walk / Aerial (Ride Removed) ────────────────────────────────
+// ── MODE TOGGLE: Walk / Aerial ─────────────────────────────────────────
 function injectModeToggle() {
   if (document.getElementById('mode-toggle-bar')) return;
   const style = document.createElement('style');
@@ -307,7 +240,7 @@ window.setMoveMode = function(mode) {
     if (typeof setAerialMode === 'function') setAerialMode(false);
   }
 
-  moveMode = 'walk'; // Hard lock to Walk
+  moveMode = 'walk'; 
   if (typeof setYOwner === 'function') setYOwner('controls');
   _targetEyeY = (typeof FOOT_EYE_HEIGHT !== 'undefined' ? FOOT_EYE_HEIGHT : 1.72);
   _currentEyeY = _targetEyeY;
@@ -1402,12 +1335,10 @@ function openPropertyPanel(key) {
 }
 
 function _showPropertyPanel(data, propKey) {
-  // Remove any existing panel
   document.getElementById('xix-prop-panel')?.remove();
 
   const panel = document.createElement('div');
   panel.id = 'xix-prop-panel';
-  // Strict vertical layout, 380px wide, locked to the right side
   panel.style.cssText = `
     position:fixed; top:0; right:0; bottom:0; width:min(380px,100vw);
     background:rgba(6,14,8,0.92); backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
@@ -1467,13 +1398,71 @@ function _showPropertyPanel(data, propKey) {
   document.getElementById('world-overlay')?.appendChild(panel);
   requestAnimationFrame(() => panel.style.transform = 'translateX(0)');
 
-  // Close functionality
   panel.querySelector('#pp-close-btn')?.addEventListener('click', () => {
     panel.style.transform = 'translateX(100%)';
     if (typeof setInteriorDOF === 'function') setInteriorDOF(false);
     setTimeout(() => panel.remove(), 400);
     if (typeof _stopPlotHighlightPulse === 'function') _stopPlotHighlightPulse();
   });
+
+  panel.querySelectorAll('.pp-vp-btn').forEach(b => {
+    b.addEventListener('mouseenter', () => b.style.background = 'rgba(201,168,76,0.1)');
+    b.addEventListener('mouseleave', () => b.style.background = 'rgba(255,255,255,0.04)');
+  });
+
+  panel.querySelectorAll('.pp-vp-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.dataset.vpidx, 10);
+      const vp = interior[idx];
+      if (!vp) return;
+
+      try {
+        if (typeof setView === 'function') setView(vp.pos, vp.yaw || 0, vp.pitch || 0);
+        if (typeof setCaption === 'function') setCaption(vp.caption || vp.label);
+        
+        if (typeof moveMode !== 'undefined' && (moveMode === 'ride' || typeof aerialOrbit !== 'undefined' && aerialOrbit)) {
+            if (typeof window.setMoveMode === 'function') window.setMoveMode('walk');
+        }
+        
+        if (typeof setInteriorDOF === 'function') setInteriorDOF(true, 3.5);
+
+        panel.style.transform = 'translateX(100%)';
+
+        const exitBtn = document.createElement('button');
+        exitBtn.innerHTML = `Exit ${data.title} Walkthrough`;
+        exitBtn.style.cssText = `
+          position:fixed; bottom:120px; left:50%; transform:translateX(-50%);
+          background:rgba(201,168,76,0.95); color:#061208; border:none; padding:14px 28px;
+          border-radius:30px; font-size:14px; font-weight:600; font-family:Inter,sans-serif;
+          cursor:pointer; z-index:2500; box-shadow:0 8px 24px rgba(0,0,0,0.5);
+          transition: transform 0.2s;
+        `;
+        exitBtn.addEventListener('mouseenter', () => exitBtn.style.transform = 'translateX(-50%) scale(1.05)');
+        exitBtn.addEventListener('mouseleave', () => exitBtn.style.transform = 'translateX(-50%) scale(1)');
+        
+        document.getElementById('world-overlay')?.appendChild(exitBtn);
+
+        exitBtn.addEventListener('click', () => {
+          exitBtn.remove();
+          if (typeof setInteriorDOF === 'function') setInteriorDOF(false);
+          panel.style.transform = 'translateX(0)';
+          if (typeof setView === 'function') setView([vp.pos[0], 1.72, vp.pos[2] + 15], 0, 0); 
+        });
+
+      } catch(e) { console.warn('[XIX] Walkthrough teleport error:', e); }
+    });
+  });
+
+  panel.querySelector('#pp-reserve-btn')?.addEventListener('click', () => {
+    const reserveSection = panel.querySelector('#pp-reserve-btn').parentNode;
+    reserveSection.innerHTML = `
+      <div style="background:rgba(30,80,30,0.25);border:1px solid rgba(100,200,80,0.3);border-radius:4px;padding:16px;text-align:center;">
+        <div style="color:#8cde6a;font-size:24px;margin-bottom:8px;">✓</div>
+        <div style="color:#f0ece0;font-weight:600;margin-bottom:4px;">Interest Registered</div>
+        <div style="color:rgba(240,236,224,0.6);font-size:12px;">Our team will contact you within 24 hours.</div>
+      </div>`;
+  });
+}
 
   // Hover states for walkthrough buttons
   panel.querySelectorAll('.pp-vp-btn').forEach(b => {
