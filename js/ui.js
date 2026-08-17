@@ -160,13 +160,13 @@ export function updateMinimap(worldX, worldZ, yawRad) {
 //           VIEWPOINT STRIP                                                                                                                                                                               
 
 const viewpointIcons = {
-  pitch:    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="8" width="18" height="10" rx="1"/><line x1="12" y1="8" x2="12" y2="18"/></svg>`,
-  clubhouse:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="11" width="18" height="8"/><path d="M2 11L12 4l10 7"/></svg>`,
-  lake:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 14c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/><path d="M2 18c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/></svg>`,
-  villa:    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="4" y="10" width="16" height="10"/><path d="M2 10L12 3l10 7"/><rect x="9" y="14" width="6" height="6"/></svg>`,
-  loft:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="8" width="20" height="13"/><line x1="7" y1="8" x2="7" y2="21"/><line x1="14" y1="8" x2="14" y2="21"/></svg>`,
-  stables:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 20V10l8-6 8 6v10"/><path d="M10 20v-5h4v5"/></svg>`,
-  aerial:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="12" cy="12" r="9"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>`,
+  pitch:    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M12 6v12M2 12h5M22 12h-5"/></svg>`,
+  clubhouse:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 21h18M5 21V8l7-5 7 5v13M9 21v-5h6v5"/></svg>`,
+  lake:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12c2-2 4-2 6 0s4 2 6 0 4-2 6 0M2 18c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/></svg>`,
+  villa:    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 21h18M4 21V9l8-6 8 6v12M10 21v-4h4v4M8 12h8"/></svg>`,
+  loft:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 21h16M4 21v-8l8-4 8 4v8M8 21v-6h8v6M12 9V3M9 3h6"/></svg>`,
+  stables:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 21h18M5 21v-8M19 21v-8M5 13l7-4 7 4M12 9v12M8 17h8"/></svg>`,
+  aerial:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M6.5 6.5l2 2M17.5 17.5l-2-2M17.5 6.5l-2 2M6.5 17.5l2-2"/></svg>`,
 };
 
 export function buildViewpointStrip(container, onSelect) {
