@@ -156,7 +156,6 @@ window.rotateVillaGLB = function(degrees) {
 };
 
 // ── DAY CLOCK: 12-Hour format & Line Art ──────────────────────────────────────
-// ── DAY CLOCK: 12-Hour format & Line Art ──────────────────────────────────────
 function injectDayClock() {
   if (document.getElementById('day-clock')) return;
   const s = document.createElement('style');
@@ -248,72 +247,11 @@ window.setMoveMode = function(mode) {
   if (typeof activate === 'function') activate();
   document.querySelectorAll('.move-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === 'walk'));
 };
-  if (document.getElementById('day-clock')) return;
-  const s = document.createElement('style');
-  s.textContent = `
-    #day-clock {
-      position: absolute;
-      top: 54px;
-      left: 50%;
-      transform: translateX(-50%);
-      z-index: 200;
-      background: rgba(8,18,10,0.72);
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
-      border: 1px solid rgba(201,168,76,0.25);
-      border-radius: 20px;
-      padding: 5px 16px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-family: Inter, sans-serif;
-      font-size: 12px;
-      color: rgba(240,236,224,0.85);
-      pointer-events: none;
-      transition: opacity .4s;
-      white-space: nowrap;
-    }
-    #day-clock .clock-icon { display: flex; align-items: center; }
-    #day-clock .clock-time { font-variant-numeric: tabular-nums; letter-spacing:.05em; }
-    #day-clock .clock-label { color: rgba(201,168,76,0.75); font-size:10px; letter-spacing:.1em; }
-    @media(max-width:640px){ #day-clock { top: 48px; font-size:10px; padding:4px 12px; } }
-  `;
-  document.head.appendChild(s);
-
-  const el = document.createElement('div');
-  el.id = 'day-clock';
-  el.innerHTML = '<span class="clock-icon"></span><span class="clock-time">12:00 PM</span><span class="clock-label">AFTERNOON</span>';
-  document.getElementById('world-overlay')?.appendChild(el);
-
-  // Elegant 1.5px Stroke Line Art SVGs
-  const lineIcons = {
-    morning: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"/><circle cx="12" cy="12" r="4"/></svg>',
-    afternoon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="5"/><path d="M12 2v2M12 20v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M2 12h2M20 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></svg>',
-    sunset: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 8a4 4 0 0 1 4 4H8a4 4 0 0 1 4-4zM2 16h20M12 2v2M4.2 4.2l1.4 1.4M19.8 4.2l-1.4 1.4"/></svg>',
-    night: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>'
-  };
-
-  // Maps the linear time back to a clean 12-hour UI readout
-  window._updateDayClock = function(hr24, mins, phaseName) {
-    if (!el) return;
-    const isPM = hr24 >= 12;
-    const hr12 = (hr24 % 12) || 12; // Converts 0 (midnight) to 12
-    const timeStr = `${hr12}:${mins.toString().padStart(2, '0')} ${isPM ? 'PM' : 'AM'}`;
-    
-    const ico = el.querySelector('.clock-icon');
-    const tim = el.querySelector('.clock-time');
-    const lbl = el.querySelector('.clock-label');
-    
-    if (ico) ico.innerHTML = lineIcons[phaseName] || lineIcons.afternoon;
-    if (tim) tim.textContent = timeStr;
-    if (lbl) lbl.textContent = (phaseName || '').toUpperCase();
-  };
-}
+  if (typeof activate === 'function') activate();
+  document.querySelectorAll('.move-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === 'walk'));
+};
 
 // ── FIX: Topbar dropdowns — reliable on desktop and touch ──────────────────────
-// Root cause of unresponsiveness was duplicate listeners (one with capture:true +
-// stopPropagation blocking the second). This version uses a single delegated
-// listener per wrapper with class-toggle state and no stopPropagation conflicts.
 function fixTopbarDropdowns() {
   // Inject styles once
   const styleId = 'topbar-dropdown-fix';
