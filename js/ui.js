@@ -205,8 +205,6 @@ export function buildViewpointStrip(container, onSelect) {
         sbtn.className   = "vp-dropdown-item";
         sbtn.textContent = sv.label;
         sbtn.addEventListener("click", e => {
-          e.preventDefault();   // Prevent default behavior
-          e.stopPropagation();  // STOP the click from bubbling up to the main button
           
           document.querySelectorAll(".vp-btn").forEach(b=>b.classList.remove("active"));
           btn.classList.add("active");
