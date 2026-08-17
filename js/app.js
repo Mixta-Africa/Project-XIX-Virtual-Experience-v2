@@ -21,7 +21,7 @@ import {
   setHorsePosition, getThirdPersonCameraOffset, setAerialMode,
   getSunLight, getHorseGroup, updateNightLights, updateBuildingNightGlow,
 } from "./scene.js";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics } from "./graphics.js";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF } from "./graphics.js";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
@@ -667,21 +667,81 @@ function bindMasterplan() {
   zoneLayer.appendChild(svg);
 }
 
+// ─── PHASE 4: PERSISTENT VILLA AVAILABILITY OVERLAYS ─────────────────────────
+function buildVillaStatusOverlays() {
+  const sc = getScene();
+  if (!sc) return;
+
+  plotRegistry.forEach((plot, plotKey) => {
+    if (document.getElementById(`plot-badge-${plotKey}`)) return;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 160; canvas.height = 48;
+    const ctx = canvas.getContext('2d');
+
+    const isAvail = plot.status === 'available';
+
+    // Badge Pill Background
+    ctx.fillStyle = isAvail ? 'rgba(6,18,8,0.88)' : 'rgba(28,10,10,0.88)';
+    ctx.beginPath();
+    ctx.roundRect(2, 2, 156, 44, 10);
+    ctx.fill();
+
+    // Border
+    ctx.strokeStyle = isAvail ? '#C9A84C' : 'rgba(220,70,70,0.6)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Status Text
+    ctx.fillStyle = isAvail ? '#C9A84C' : '#ff6666';
+    ctx.font = 'bold 15px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(isAvail ? 'AVAILABLE' : 'RESERVED', 80, 24);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const mat = new THREE.SpriteMaterial({
+      map: tex, transparent: true, opacity: 0.9, depthWrite: false, sizeAttenuation: true
+    });
+    const sprite = new THREE.Sprite(mat);
+
+    // Position sprite above the villa roof level
+    sprite.scale.set(6, 1.8, 1);
+    sprite.position.set(plot.x, 9.5, plot.z);
+    sprite.userData = { isPlotBadge: true, plotKey };
+
+    sc.add(sprite);
+  });
+}
+
 //           PLOT SYSTEM
 function bindPlotSystem() {
-  const canvas=document.getElementById("world-canvas");
-  if(!canvas) return;
+  const canvas = document.getElementById("world-canvas");
+  if (!canvas) return;
   canvas.addEventListener("click", e => {
-    if(!document.getElementById("world-overlay")?.classList.contains("open")) return;
-    const rect=canvas.getBoundingClientRect();
-    const mouse=new THREE.Vector2(
-      ((e.clientX-rect.left)/rect.width)*2-1,
-     -((e.clientY-rect.top)/rect.height)*2+1
+    if (!document.getElementById("world-overlay")?.classList.contains("open")) return;
+    const rect = canvas.getBoundingClientRect();
+    const mouse = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+     -((e.clientY - rect.top) / rect.height) * 2 + 1
     );
-    const raycaster=new THREE.Raycaster();
-    raycaster.setFromCamera(mouse,getCamera());
-    const plotKey=getPlotAtRay(raycaster);
-    if(plotKey) showPlotPanel(plotKey);
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(mouse, getCamera());
+
+    // 1. Check for floating availability badges first
+    const badgeHits = raycaster.intersectObjects(getScene().children, false)
+      .filter(h => h.object.userData?.isPlotBadge);
+
+    if (badgeHits.length > 0) {
+      const key = badgeHits[0].object.userData.plotKey;
+      showPlotPanel(key);
+      return;
+    }
+
+    // 2. Fallback to ground plot overlays
+    const plotKey = getPlotAtRay(raycaster);
+    if (plotKey) showPlotPanel(plotKey);
   });
 }
 
@@ -835,6 +895,9 @@ async function openWorldAt(viewKey) {
   injectDayClock();     // On-screen time-of-day clock
   resizeWorld();
   window.addEventListener("resize",resizeWorld);
+
+  // Phase 4: Mount persistent sales badges once the world opens
+  setTimeout(() => buildVillaStatusOverlays(), 100);
 
   // Always open at field_centre — walk mode, ground level, facing north
   const _fieldVp = VIEWPOINTS['field_centre'];
@@ -1237,10 +1300,10 @@ function openPropertyPanel(key) {
   const data = PROPERTY_DATA[propKey];
   if (!data) { console.warn('[XIX] No property data for', key); return; }
   _showPropertyPanel(data, propKey);
-  
-  // Activate Interior Bokeh DOF when viewing residential/clubhouse details
+
+  // Activate Bokeh DOF for interior or residence detail inspection
   if (['villas', 'lofts', 'clubhouse'].includes(propKey)) {
-    setInteriorDOF(true, 3.5);
+    if (typeof setInteriorDOF === 'function') setInteriorDOF(true, 3.5);
   }
 }
 
@@ -1337,14 +1400,12 @@ function _showPropertyPanel(data, propKey) {
   // Animate in
   requestAnimationFrame(() => panel.style.transform = 'translateX(0)');
 
-  // Close button handler inside _showPropertyPanel
+  // Close
   panel.querySelector('#pp-close-btn')?.addEventListener('click', () => {
     panel.style.transform = 'translateX(100%)';
     
     // Reset DOF back to global free-roam clarity when panel closes
-    if (typeof setInteriorDOF === 'function') {
-      setInteriorDOF(false);
-    }
+    if (typeof setInteriorDOF === 'function') setInteriorDOF(false);
 
     setTimeout(() => panel.remove(), 340);
     _stopPlotHighlightPulse?.();
