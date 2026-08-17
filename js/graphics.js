@@ -1,6 +1,6 @@
 /**
  * Project XIX -- Graphics Engine v7 (Phase 1 Luxury Production Pass)
- * Upgrades: SAO Ground Occlusion, Sunset God Rays, Interior Bokeh DOF, Brand LUT
+ * Upgrades: GTAO Ground Occlusion, Sunset God Rays, Interior Bokeh DOF, Brand LUT
  * Preserved: Instanced Grass, Instanced Palms, PBR Factory, Water Tick, MAT_ Exports
  */
 
@@ -10,11 +10,10 @@ import { RenderPass }      from "https://cdn.jsdelivr.net/npm/three@0.165.0/exam
 import { UnrealBloomPass } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass }      from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/postprocessing/OutputPass.js";
 import { SMAAPass }        from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/postprocessing/SMAAPass.js";
-import { SAOPass }         from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/postprocessing/SAOPass.js";
-import { GTAOPass } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/postprocessing/GTAOPass.js";
-import { BokehPass } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/postprocessing/BokehPass.js";
-import { LUTPass } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/postprocessing/LUTPass.js";
-import { LUTCubeLoader } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/LUTCubeLoader.js";
+import { GTAOPass }        from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/postprocessing/GTAOPass.js";
+import { BokehPass }       from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/postprocessing/BokehPass.js";
+import { LUTPass }         from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/postprocessing/LUTPass.js";
+import { LUTCubeLoader }   from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/LUTCubeLoader.js";
 import { Sky }             from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/objects/Sky.js";
 import { RoomEnvironment } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/environments/RoomEnvironment.js";
 
@@ -150,7 +149,8 @@ export function resizeComposer(w, h) {
   if (!composer) return;
   composer.setSize(w, h);
   if (bloomPass) bloomPass.resolution.set(w, h);
-  if (saoPass) saoPass.setSize(w, h);
+  if (gtaoPass && gtaoPass.setSize) gtaoPass.setSize(w, h);
+  if (bokehPass && bokehPass.setSize) bokehPass.setSize(w, h);
 }
 
 export function renderFrame() {
@@ -279,14 +279,14 @@ export function pbrMat({ color, normal, rough, repeat = 4, roughVal = 0.8, metal
   });
 }
 export const PBR = {
-  grass:   () => pbrMat({ color: "grass",  normal: "grass",  rough: "grass",  repeat: 14, roughVal: 0.90, normalScale: 0.8 }),
-  dirt:    () => pbrMat({ color: "dirt",   normal: "dirt",   rough: "dirt",   repeat: 18, roughVal: 0.95, normalScale: 1.0 }),
-  asphalt: () => pbrMat({ color: "asphalt",normal: "asphalt",rough: "asphalt",repeat: 8,  roughVal: 0.88, normalScale: 0.9 }),
+  grass:   () => pbrMat({ color: "grass",   normal: "grass",   rough: "grass",   repeat: 14, roughVal: 0.90, normalScale: 0.8 }),
+  dirt:    () => pbrMat({ color: "dirt",    normal: "dirt",    rough: "dirt",    repeat: 18, roughVal: 0.95, normalScale: 1.0 }),
+  asphalt: () => pbrMat({ color: "asphalt", normal: "asphalt", rough: "asphalt", repeat: 8,  roughVal: 0.88, normalScale: 0.9 }),
   concrete:() => pbrMat({ color: "concrete",normal: "concrete",rough: "concrete",repeat: 4, roughVal: 0.80, normalScale: 0.8 }),
-  brick:   () => pbrMat({ color: "brick",  normal: "brick",  rough: "brick",  repeat: 6,  roughVal: 0.82, normalScale: 1.8 }),
-  timber:  () => pbrMat({ color: "timber", normal: "timber", rough: "timber", repeat: 3,  roughVal: 0.68, normalScale: 1.2 }),
-  stone:   () => pbrMat({ color: "stone",  normal: "stone",  rough: "stone",  repeat: 3,  roughVal: 0.88, normalScale: 1.6 }),
-  tileRoof:() => pbrMat({ color: "tile",   normal: "tile",   rough: "tile",   repeat: 6,  roughVal: 0.78, normalScale: 1.1 }),
+  brick:   () => pbrMat({ color: "brick",   normal: "brick",   rough: "brick",   repeat: 6,  roughVal: 0.82, normalScale: 1.8 }),
+  timber:  () => pbrMat({ color: "timber",  normal: "timber",  rough: "timber",  repeat: 3,  roughVal: 0.68, normalScale: 1.2 }),
+  stone:   () => pbrMat({ color: "stone",   normal: "stone",   rough: "stone",   repeat: 3,  roughVal: 0.88, normalScale: 1.6 }),
+  tileRoof:() => pbrMat({ color: "tile",    normal: "tile",    rough: "tile",    repeat: 6,  roughVal: 0.78, normalScale: 1.1 }),
 };
 
 // ─── WATER ────────────────────────────────────────────────────────────────────
@@ -415,13 +415,13 @@ export function tickPalms(camera) {
 
 // ─── MAT_ EXPORTS ────────────────────────────────────────────────────────────
 export function MAT_GRASS_FIELD(){return new THREE.MeshStandardMaterial({color:0x4a8038,roughness:.90,envMapIntensity:.3});}
-export function MAT_DIRT()       {return new THREE.MeshStandardMaterial({color:0x7a5a38,roughness:.95,envMapIntensity:.2});}
-export function MAT_ASPHALT()    {return new THREE.MeshStandardMaterial({color:0x1c2018,roughness:.90,envMapIntensity:.3});}
-export function MAT_BRICK()      {return new THREE.MeshStandardMaterial({color:0xC4A882,roughness:.85,envMapIntensity:.5});}
-export function MAT_CONCRETE()   {return new THREE.MeshStandardMaterial({color:0xb8b0a0,roughness:.82,envMapIntensity:.4});}
-export function MAT_TIMBER()     {return new THREE.MeshStandardMaterial({color:0x9a6a3a,roughness:.68,envMapIntensity:.6});}
-export function MAT_STONE()      {return new THREE.MeshStandardMaterial({color:0x8a8078,roughness:.88,envMapIntensity:.5});}
-export function MAT_TILE_ROOF()  {return new THREE.MeshStandardMaterial({color:0xC9A84C,roughness:.78,metalness:.04,envMapIntensity:.8});}
+export function MAT_DIRT()        {return new THREE.MeshStandardMaterial({color:0x7a5a38,roughness:.95,envMapIntensity:.2});}
+export function MAT_ASPHALT()     {return new THREE.MeshStandardMaterial({color:0x1c2018,roughness:.90,envMapIntensity:.3});}
+export function MAT_BRICK()       {return new THREE.MeshStandardMaterial({color:0xC4A882,roughness:.85,envMapIntensity:.5});}
+export function MAT_CONCRETE()    {return new THREE.MeshStandardMaterial({color:0xb8b0a0,roughness:.82,envMapIntensity:.4});}
+export function MAT_TIMBER()      {return new THREE.MeshStandardMaterial({color:0x9a6a3a,roughness:.68,envMapIntensity:.6});}
+export function MAT_STONE()       {return new THREE.MeshStandardMaterial({color:0x8a8078,roughness:.88,envMapIntensity:.5});}
+export function MAT_TILE_ROOF()   {return new THREE.MeshStandardMaterial({color:0xC9A84C,roughness:.78,metalness:.04,envMapIntensity:.8});}
 export function MAT_GLASS(op=.45){return new THREE.MeshStandardMaterial({color:0x9ac8e8,roughness:.04,metalness:.06,transparent:true,opacity:op,envMapIntensity:3.5});}
 export function MAT_GLASS_WARM(op=.45){return new THREE.MeshStandardMaterial({color:0xd4c090,roughness:.04,metalness:.05,transparent:true,opacity:op,envMapIntensity:3.2});}
 export function MAT_WHITE_TRIM() {return new THREE.MeshStandardMaterial({color:0xfcfaf8,roughness:.55,envMapIntensity:.6});}
