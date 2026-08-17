@@ -35,9 +35,31 @@ import {
 } from "./ui.js";
 
 //           STATE
-let sceneReady     = false;
-let villaScene     = null, villaRenderer = null;
-let introPlaying   = false;
+let sceneReady      = false;
+let villaScene      = null, villaRenderer = null;
+let introPlaying    = false;
+let currentViewKey  = 'field_centre';
+let animFrameId     = null;
+let composer        = null;
+let moveMode        = 'walk';
+
+// Aerial orbit state
+let aerialOrbit     = false;
+let aerialAngle     = 0;
+let aerialYawOffset = 0;
+let aerialPitch     = -0.685;
+let aerialDragging  = false;
+let aerialLastX     = 0;
+let aerialLastY     = 0;
+const AERIAL_SPEED  = 0.08; // radians/sec
+
+// Eye-height smoothing (ride mode only)
+let _currentEyeY    = 1.72;
+let _targetEyeY     = 1.72;
+
+// Previous camera position (for horse animation)
+let _prevCamX       = 0;
+let _prevCamZ       = 0;
 
 // ── AUTO DAY CYCLE & WEATHER (Linear 12-Hour) ──────────────────────────────────
 const DAY_CYCLE_DURATION = 5 * 60; // 5 minutes real-time per full day loop
@@ -292,6 +314,22 @@ window.switchPerfMode = function(mode) {
   setPerfModeGraphics(mode);  // updates graphics pipeline (bloom, SMAA, direct render)
   document.querySelectorAll('.perf-btn').forEach(b =>
     b.classList.toggle('active', b.dataset.mode === mode));
+};
+
+window.setMoveMode = function(mode) {
+  if (mode === 'aerial') {
+    if (!aerialOrbit) toggleAerial(null);
+    return;
+  }
+  // Exiting aerial
+  if (aerialOrbit) toggleAerial(null);
+  moveMode = mode;
+  document.querySelectorAll('.move-mode-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.mode === mode)
+  );
+  const eyeY = (mode === 'ride') ? 3.10 : 1.72;
+  _targetEyeY = eyeY;
+  if (typeof setYOwner === 'function') setYOwner(mode === 'ride' ? 'app' : 'controls');
 };
 
 //           BOOT
@@ -1219,6 +1257,9 @@ function teleportTo(key, vp){
     console.error('[XIX] teleportTo error:', err);
   }
 }
+
+function injectPerfToggle() { /* wired via ui.js or topbar.js */ }
+function fixTopbarDropdowns() { /* touch fix — no-op if handled in HTML */ }
 
 //           EXIT
 function bindExitButton(){
