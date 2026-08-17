@@ -20,7 +20,7 @@ import {
   setHorsePosition, getThirdPersonCameraOffset, setAerialMode,
   getSunLight, getHorseGroup, updateNightLights, updateBuildingNightGlow,
 } from "./scene.js";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF } from "./graphics.js";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier } from "./graphics.js";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
@@ -39,143 +39,129 @@ let sceneReady     = false;
 let villaScene     = null, villaRenderer = null;
 let introPlaying   = false;
 
-// ── AUTO DAY CYCLE ─────────────────────────────────────────────────────────────
-// 5-minute full day cycle (morning→afternoon→sunset→night→morning).
-// Pauses for 120s when user manually selects a time preset.
-const DAY_CYCLE_DURATION = 5 * 60; // 5 minutes per full cycle in seconds
-let   _dayAutoRun  = true;   // false when user manually picks a time
-let   _dayPauseEnd = 0;      // performance.now() timestamp when auto-run resumes
-let   _lastDayApplied = '';  // prevent calling applyTimePreset every frame
-
-const DAY_STOPS = [
-  { t: 0.00, name: 'morning'   },  // 0%  — 0:00
-  { t: 0.30, name: 'afternoon' },  // 30% — 1:30
-  { t: 0.65, name: 'sunset'    },  // 65% — 3:15
-  { t: 0.80, name: 'night'     },  // 80% — 4:00
-  { t: 1.00, name: 'morning'   },  // wraps back
-];
+// ── AUTO DAY CYCLE & WEATHER (Linear 12-Hour) ──────────────────────────────────
+const DAY_CYCLE_DURATION = 5 * 60; // 5 minutes real-time per full day loop
+let   _dayAutoRun  = true;   
+let   _dayPauseEnd = 0;      
+let   _lastDayApplied = '';  
+let   _currentWeather = 'clear';
 
 function tickDayCycle(elapsed) {
   if (!_dayAutoRun) return;
   if (performance.now() < _dayPauseEnd) return;
-  // Determine current phase within 5-min cycle
-  const phase = (elapsed % DAY_CYCLE_DURATION) / DAY_CYCLE_DURATION; // 0.0-1.0
-  // Find which named stop we're in
+
+  const phase = (elapsed % DAY_CYCLE_DURATION) / DAY_CYCLE_DURATION; 
+  // Map 0.0 -> 1.0 phase smoothly from 6:00 AM to 6:00 AM the next day
+  const currentHourDec = 6 + (phase * 24);
+  const hr24 = Math.floor(currentHourDec) % 24;
+  const mins = Math.floor((currentHourDec % 1) * 60);
+
   let name = 'afternoon';
-  for (let i = 0; i < DAY_STOPS.length - 1; i++) {
-    if (phase >= DAY_STOPS[i].t && phase < DAY_STOPS[i+1].t) {
-      name = DAY_STOPS[i].name; break;
-    }
-  }
+  if (hr24 >= 6 && hr24 < 10) name = 'morning';
+  else if (hr24 >= 10 && hr24 < 17) name = 'afternoon';
+  else if (hr24 >= 17 && hr24 < 19) name = 'sunset';
+  else name = 'night';
+
   if (name !== _lastDayApplied) {
     _lastDayApplied = name;
-    applyTimePreset(name);
+    applyTimePreset(name, true);
   }
+
+  if (window._updateDayClock) window._updateDayClock(hr24, mins, name);
 }
 
-// Patch applyTimePreset: when user clicks, pause auto-cycle for 2 minutes
-const _origApplyTimePreset = applyTimePreset;
-function applyTimePresetWithPause(name) {
-  _dayPauseEnd = performance.now() + 120_000; // pause 2 min
-  _origApplyTimePreset(name);
-}
-window.applyTimePreset = applyTimePresetWithPause;
 let currentViewKey = "field_centre";
 let animFrameId    = null;
 let composer       = null;
 let aerialOrbit    = false;
 let aerialAngle    = 0, aerialYawOffset = 0;
-// Correct depression: camera at R=340 x=0, y=280 → atan(280/340) ≈ 0.685 rad
 let aerialPitch    = -0.685;
 let aerialDragging = false, aerialLastX = 0, aerialLastY = 0;
 const AERIAL_RADIUS = 340, AERIAL_HEIGHT = 280, AERIAL_SPEED = 0.12;
 
-// Movement mode: 'walk' = free roam on foot (default), 'ride' = mounted horse
-let moveMode = 'walk'; // 'walk' | 'ride'
+// Movement mode: 'walk' = free roam on foot, 'aerial' = drone
+let moveMode = 'walk'; // Removed 'ride'
 let _prevCamX = 0, _prevCamZ = 0;
-let _targetEyeY = FOOT_EYE_HEIGHT;  // walk is default
+let _targetEyeY = FOOT_EYE_HEIGHT;  
 let _currentEyeY = FOOT_EYE_HEIGHT;
 
-// Expose toggle for the mode button
 window.setMoveMode = function(mode) {
   if (mode === 'aerial') {
-    // Only enter aerial if not already in it
     if (!aerialOrbit) toggleAerial(null);
     return;
   }
-
-  // CRITICAL: If we're in aerial, fully tear it down first before switching to ground mode.
-  // Without this, aerialOrbit stays true and the aerial render branch keeps running.
   if (aerialOrbit) {
-    aerialOrbit = false;         // flip state first so toggleAerial exit branch runs
-    unbindAerialPointer();       // remove aerial touch/mouse listeners
+    aerialOrbit = false;         
+    unbindAerialPointer();       
     const cam = getCamera();
     if (cam) { cam.fov = 65; cam.far = 1200; cam.updateProjectionMatrix(); }
     const sc = getScene();
     if (sc && sc.fog) sc.fog.density = _fogEnabled ? _currentFogD : 0.000001;
     if (typeof setAerialMode === 'function') setAerialMode(false);
-    document.querySelectorAll('.move-mode-btn').forEach(b => b.classList.remove('active'));
+  }
+  
+  moveMode = 'walk'; // Hard lock to Walk
+  setYOwner('controls');
+  _targetEyeY = (typeof FOOT_EYE_HEIGHT !== 'undefined' ? FOOT_EYE_HEIGHT : 1.72);
+  _currentEyeY = _targetEyeY;
+
+  activate();
+  document.querySelectorAll('.move-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === 'walk'));
+};
+
+const TIME_PRESETS = {
+  morning:   { sky:["#1e3a5a","#7aaac8","#4a7a38"], sunCol:0xffd080, sunInt:1.8, sunPos:[-80,55,-80],   fog:"#8ab8cc", fogD:0.00018, exp:0.92 },
+  afternoon: { sky:["#1a3a6a","#5a9acc","#3a6a30"], sunCol:0xffe8b0, sunInt:2.2, sunPos:[-160,160,100], fog:"#8ab8cc", fogD:0.00014, exp:1.02 },
+  sunset:    { sky:["#0a1830","#c84818","#4a2a10"], sunCol:0xff8030, sunInt:1.6, sunPos:[-100,28,60],   fog:"#c06040", fogD:0.00022, exp:1.05 },
+  night:     { sky:["#000508","#020a14","#050a08"], sunCol:0x304870, sunInt:0.12,sunPos:[0,40,-80],     fog:"#020810", fogD:0.00035, exp:0.55 },
+};
+
+function applyTimePreset(name, fromWeather = false) {
+  const p = TIME_PRESETS[name]; if (!p) return;
+  if (!fromWeather) {
+    _dayPauseEnd = performance.now() + 120_000;
+    document.querySelectorAll(".wx-time-btn").forEach(b => b.classList.toggle("active", b.dataset.time === name));
   }
 
-  moveMode = mode;
-  setYOwner(mode === 'ride' ? 'app' : 'controls');
-  _targetEyeY = (mode === 'ride')
-    ? (typeof RIDER_EYE_HEIGHT !== 'undefined' ? RIDER_EYE_HEIGHT : 3.1)
-    : (typeof FOOT_EYE_HEIGHT  !== 'undefined' ? FOOT_EYE_HEIGHT  : 1.72);
-  if (mode === 'walk') _currentEyeY = _targetEyeY;
+  // Calculate strict weather modifiers
+  let fogMult = 1, sunMult = 1;
+  if (_currentWeather === 'clear')  { fogMult = 0.05; sunMult = 1.0; } // Almost zero fog
+  if (_currentWeather === 'cloudy') { fogMult = 2.0;  sunMult = 0.5; }
+  if (_currentWeather === 'rain')   { fogMult = 5.0;  sunMult = 0.1; } // Heavy fog, dim sun
 
-  // Always re-engage controls after a mode switch — recovers from lost pointer lock
-  activate();
-
-  document.querySelectorAll('.move-mode-btn').forEach(b =>
-    b.classList.toggle('active', b.dataset.mode === mode)
-  );
-};
-
-//           TIME PRESETS
-const TIME_PRESETS = {
-  morning:   { sky:["#1e3a5a","#7aaac8","#4a7a38"], sunCol:0xffd080, sunInt:1.8, sunPos:[-80,55,-80],   fog:"#8ab8cc", fogD:0.00018, exp:0.92, hemiInt:0.9 },
-  afternoon: { sky:["#1a3a6a","#5a9acc","#3a6a30"], sunCol:0xffe8b0, sunInt:2.2, sunPos:[-160,160,100], fog:"#8ab8cc", fogD:0.00014, exp:1.02, hemiInt:1.2 },
-  sunset:    { sky:["#0a1830","#c84818","#4a2a10"], sunCol:0xff8030, sunInt:1.6, sunPos:[-100,28,60],   fog:"#c06040", fogD:0.00022, exp:1.05, hemiInt:0.8 },
-  night:     { sky:["#000508","#020a14","#050a08"], sunCol:0x304870, sunInt:0.12,sunPos:[0,40,-80],     fog:"#020810", fogD:0.00035, exp:0.55, hemiInt:0.15 },
-};
-
-function applyTimePreset(name) {
-  const p = TIME_PRESETS[name]; if (!p) return;
-  document.querySelectorAll(".wx-time-btn").forEach(b =>
-    b.classList.toggle("active", b.dataset.time === name));
-  if (window._updateDayClock) window._updateDayClock(name);
-  try {
-    // updateSkyForTime uses the atmospheric sky (Preetham scattering)
-    if (typeof updateSkyForTime === 'function') updateSkyForTime(name);
-    else if (typeof updateSky === 'function') updateSky(...(p.sky||[]));
-  } catch(e){ console.warn('[XIX] sky update:', e.message); }
+  try { if (typeof updateSkyForTime === 'function') updateSkyForTime(name); } catch(e){}
   try { setBloomForTime(name); } catch(e){}
-  // Night security lights and building glow — uses actual scene exports
   try { if (typeof updateNightLights === 'function') updateNightLights(name); } catch(e){}
   try { if (typeof updateBuildingNightGlow === 'function') updateBuildingNightGlow(name); } catch(e){}
+
   const sc = getScene();
   if (sc && sc.fog) {
     sc.fog.color.set(p.fog);
-    _currentFogD = p.fogD;
-    sc.fog.density = _fogEnabled ? p.fogD : 0.000001;
+    _currentFogD = p.fogD * fogMult;
+    sc.fog.density = _fogEnabled ? _currentFogD : 0.000001;
   }
-  // Update lights directly via cached refs — no scene.traverse
+  
   const _sun = typeof getSunLight === 'function' ? getSunLight() : null;
-  if (_sun) { _sun.color.setHex(p.sunCol); _sun.intensity = p.sunInt; _sun.position.set(...p.sunPos); }
+  if (_sun) {
+    _sun.color.setHex(p.sunCol);
+    _sun.intensity = p.sunInt * sunMult; // Real-world dimming
+    _sun.position.set(...p.sunPos);
+  }
   const r = getRenderer();
   if (r) r.toneMappingExposure = p.exp;
 }
 
 function applyWeather(w) {
-  document.querySelectorAll(".wx-weather-btn").forEach(b =>
-    b.classList.toggle("active", b.dataset.weather === w));
-  const sc = getScene();
-  if (!sc || !sc.fog) return;
-  if (w === "rain")        _currentFogD = _currentFogD * 3.5;
-  else if (w === "cloudy") _currentFogD = _currentFogD * 1.8;
-  // else "clear" — _currentFogD stays at the time preset value (set by applyTimePreset)
-  if (_fogEnabled) sc.fog.density = _currentFogD;
+  _currentWeather = w;
+  document.querySelectorAll(".wx-weather-btn").forEach(b => b.classList.toggle("active", b.dataset.weather === w));
+  
+  let bloomMult = 1;
+  if (w === 'clear')  bloomMult = 0.2; // 80% Glare Reduction
+  if (w === 'cloudy') bloomMult = 0.5;
+  if (w === 'rain')   bloomMult = 0.1;
+
+  if (typeof setWeatherBloomModifier === 'function') setWeatherBloomModifier(bloomMult);
+  if (_lastDayApplied) applyTimePreset(_lastDayApplied, true); // Re-trigger lighting updates
 }
 
 window.applyTimePreset = applyTimePreset;
@@ -209,6 +195,7 @@ window.rotateVillaGLB = function(degrees) {
 };
 
 // ── DAY CLOCK: on-screen time display synced to cycle ─────────────────────────
+// ── DAY CLOCK: on-screen time display synced to cycle ─────────────────────────
 function injectDayClock() {
   if (document.getElementById('day-clock')) return;
   const s = document.createElement('style');
@@ -235,7 +222,7 @@ function injectDayClock() {
       transition: opacity .4s;
       white-space: nowrap;
     }
-    #day-clock .clock-icon { font-size: 14px; }
+    #day-clock .clock-icon { display: flex; align-items: center; }
     #day-clock .clock-time { font-variant-numeric: tabular-nums; letter-spacing:.05em; }
     #day-clock .clock-label { color: rgba(201,168,76,0.75); font-size:10px; letter-spacing:.1em; }
     @media(max-width:640px){ #day-clock { top: 48px; font-size:10px; padding:4px 12px; } }
@@ -244,24 +231,32 @@ function injectDayClock() {
 
   const el = document.createElement('div');
   el.id = 'day-clock';
-  el.innerHTML = '<span class="clock-icon">☀️</span><span class="clock-time">12:00</span><span class="clock-label">AFTERNOON</span>';
+  el.innerHTML = '<span class="clock-icon"></span><span class="clock-time">12:00 PM</span><span class="clock-label">AFTERNOON</span>';
   document.getElementById('world-overlay')?.appendChild(el);
 
-  // Update every second
-  const icons = { morning:'🌅', afternoon:'☀️', sunset:'🌇', night:'🌙' };
-  const labels = { morning:'MORNING', afternoon:'AFTERNOON', sunset:'SUNSET', night:'NIGHT' };
-  // Map cycle phase → simulated clock time
-  const clockTimes = { morning:'07:30', afternoon:'13:00', sunset:'18:45', night:'22:00' };
+  // Elegant 1.5px Stroke Line Art SVGs
+  const lineIcons = {
+    morning: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"/><circle cx="12" cy="12" r="4"/></svg>',
+    afternoon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="5"/><path d="M12 2v2M12 20v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M2 12h2M20 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></svg>',
+    sunset: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 8a4 4 0 0 1 4 4H8a4 4 0 0 1 4-4zM2 16h20M12 2v2M4.2 4.2l1.4 1.4M19.8 4.2l-1.4 1.4"/></svg>',
+    night: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>'
+  };
 
-  window._updateDayClock = function(phaseName) {
+  // Maps the linear time back to a clean 12-hour UI readout
+  window._updateDayClock = function(hr24, mins, phaseName) {
+    if (!el) return;
+    const isPM = hr24 >= 12;
+    const hr12 = (hr24 % 12) || 12; // Converts 0 (midnight) to 12
+    const timeStr = `${hr12}:${mins.toString().padStart(2, '0')} ${isPM ? 'PM' : 'AM'}`;
+    
     const ico = el.querySelector('.clock-icon');
     const tim = el.querySelector('.clock-time');
     const lbl = el.querySelector('.clock-label');
-    if(ico) ico.textContent = icons[phaseName] || '☀️';
-    if(tim) tim.textContent = clockTimes[phaseName] || '12:00';
-    if(lbl) lbl.textContent = labels[phaseName] || 'DAY';
+    
+    if (ico) ico.innerHTML = lineIcons[phaseName] || lineIcons.afternoon;
+    if (tim) tim.textContent = timeStr;
+    if (lbl) lbl.textContent = (phaseName || '').toUpperCase();
   };
-  window._updateDayClock('afternoon');
 }
 
 // ── FIX: Topbar dropdowns — reliable on desktop and touch ──────────────────────
@@ -414,7 +409,7 @@ function injectPerfToggle() {
   document.getElementById('world-overlay')?.appendChild(bar);
 }
 
-// ── MODE TOGGLE: Walk / Ride / Aerial ─────────────────────────────────────────
+// ── MODE TOGGLE: Walk / Aerial ─────────────────────────────────────────
 function injectModeToggle() {
   if (document.getElementById('mode-toggle-bar')) return;
   const style = document.createElement('style');
@@ -422,13 +417,13 @@ function injectModeToggle() {
     /* ── Mode toggle: bottom-right, clear of joystick (bottom-left) ── */
     #mode-toggle-bar {
       position: absolute;
-      bottom: 90px;        /* above viewpoint strip */
+      bottom: 90px;        
       right: 12px;
       left: auto;
       transform: none;
       z-index: 210;
       display: flex;
-      flex-direction: column; /* stack vertically on mobile so it's narrow */
+      flex-direction: column; 
       align-items: stretch;
       gap: 2px;
       background: rgba(10,20,12,0.88);
@@ -478,20 +473,6 @@ function injectModeToggle() {
       .move-mode-btn { padding: 8px 16px; min-height: 38px; width: auto; }
     }
 
-    /* V key hint — desktop only */
-    #view-hint {
-      position: absolute;
-      bottom: 76px;
-      right: 16px;
-      z-index: 200;
-      font-size: 10px;
-      color: rgba(255,255,255,0.32);
-      letter-spacing: .06em;
-      pointer-events: none;
-      font-family: Inter, sans-serif;
-      transition: opacity 1s;
-    }
-
     /* Quality toggle — always visible, slightly smaller on mobile */
     @media (max-width: 640px) {
       #perf-toggle-bar { top: 6px; right: 6px; padding: 3px 6px; }
@@ -503,44 +484,24 @@ function injectModeToggle() {
 
   const bar = document.createElement('div');
   bar.id = 'mode-toggle-bar';
-  // Walk is default active
   bar.innerHTML = `
-    <button class="move-mode-btn" data-mode="ride"
-      onclick="window.setMoveMode('ride')" aria-label="Ride mode">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-        <path d="M4 17c1-2 3-3 5-3s3 1 4 2 3 2 5 1"/>
-        <circle cx="7" cy="11" r="2"/><path d="M9 11c1-3 4-5 7-4l2 1 1 3-2 1"/>
-      </svg>
-      Ride
-    </button>
-    <div class="mode-divider"></div>
     <button class="move-mode-btn active" data-mode="walk"
       onclick="window.setMoveMode('walk')" aria-label="Walk mode">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-        <circle cx="12" cy="5" r="1.5"/>
-        <path d="M9 19l1-5 2 3 2-3 1 5M8 12l1-3 3 2 3-2 1 3"/>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <circle cx="12" cy="5" r="2"/><path d="M12 7v7"/><path d="M9 19l3-5 3 5"/><path d="M8 10h8"/>
       </svg>
       Walk
     </button>
     <div class="mode-divider"></div>
     <button class="move-mode-btn" data-mode="aerial"
       onclick="window.setMoveMode('aerial')" aria-label="Aerial view">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-        <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M22 12A10 10 0 0 0 12 2a10 10 0 0 0 0 20 10 10 0 0 0 10-10z"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><path d="M2 12h20"/>
       </svg>
       Aerial
     </button>
   `;
   document.getElementById('world-overlay')?.appendChild(bar);
-
-  // V key hint — desktop only, fades after 8s
-  if (!('ontouchstart' in window) && navigator.maxTouchPoints === 0) {
-    const hint = document.createElement('div');
-    hint.id = 'view-hint';
-    hint.textContent = 'V — 1st / 3rd person';
-    document.getElementById('world-overlay')?.appendChild(hint);
-    setTimeout(() => { hint.style.opacity = '0'; }, 8000);
-  }
 }
 
 window.switchPerfMode = function(mode) {
