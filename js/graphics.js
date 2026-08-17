@@ -1,5 +1,5 @@
 /**
- * Project XIX -- Graphics Engine v7 (Phase 1 Luxury Production Pass)
+ * Project XIX — Graphics Engine v8 (Phase 1 Luxury Production Pass)
  * Upgrades: GTAO Ground Occlusion, Sunset God Rays, Interior Bokeh DOF, Brand LUT
  * Preserved: Instanced Grass, Instanced Palms, PBR Factory, Water Tick, MAT_ Exports
  */
@@ -23,6 +23,7 @@ let _renderer, _scene, _camera;
 let _perfMode = 'fast';
 let _envMap   = null;
 let _currentTimePreset = 'afternoon';
+window._weatherBloomMult = 1.0;
 
 // ─── POST-PROCESSING PIPELINE ────────────────────────────────────────────────
 export function initPostProcessing(renderer, scene, camera) {
@@ -36,41 +37,26 @@ export function initPostProcessing(renderer, scene, camera) {
   composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
 
-  // 1. Ground Truth Ambient Occlusion (GTAOPass)
   try {
     gtaoPass = new GTAOPass(scene, camera, w, h);
     gtaoPass.output = GTAOPass.OUTPUT.Denoise;
-    gtaoPass.updateGtaoMaterial({
-      radius: 0.8,            // 80cm occlusion radius for villa walls/hedges
-      distanceExponent: 1.2,
-      thickness: 1.0,
-      scale: 1.0,
-    });
+    gtaoPass.updateGtaoMaterial({ radius: 0.8, distanceExponent: 1.2, thickness: 1.0, scale: 1.0 });
     gtaoPass.enabled = (_perfMode !== 'fast');
     composer.addPass(gtaoPass);
   } catch(e) { console.warn('[XIX] GTAO init:', e.message); }
 
-  // 2. Cinematic Unreal Bloom
   try {
     bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.22, 0.55, 0.75);
     bloomPass.enabled = true;
     composer.addPass(bloomPass);
   } catch(e) { console.warn('[XIX] Bloom init:', e.message); }
 
-  // 3. Interior Depth of Field (BokehPass)
   try {
-    bokehPass = new BokehPass(scene, camera, {
-      focus: 3.5,
-      aperture: 0.012,
-      maxblur: 0.01,
-      width: w,
-      height: h
-    });
+    bokehPass = new BokehPass(scene, camera, { focus: 3.5, aperture: 0.012, maxblur: 0.01, width: w, height: h });
     bokehPass.enabled = false; 
     composer.addPass(bokehPass);
   } catch(e) { console.warn('[XIX] Bokeh init:', e.message); }
 
-  // 4. Signature Brand LUT
   try {
     lutPass = new LUTPass();
     lutPass.enabled = false;
@@ -83,7 +69,6 @@ export function initPostProcessing(renderer, scene, camera) {
     composer.addPass(lutPass);
   } catch(e) { console.warn('[XIX] LUT pass init:', e.message); }
 
-  // 5. SMAA
   try {
     smaaPass = new SMAAPass(w, h);
     smaaPass.enabled = false;
@@ -95,11 +80,6 @@ export function initPostProcessing(renderer, scene, camera) {
   return composer;
 }
 
-/**
- * Dynamically toggles Depth of Field for interior property inspection.
- * @param {boolean} active - Enable/disable the BokehPass
- * @param {number} [focusDistance=3.5] - Distance in world units to keep in focus
- */
 export function setInteriorDOF(active, focusDistance = 3.5) {
   if (!bokehPass) return;
   bokehPass.enabled = active;
@@ -108,14 +88,11 @@ export function setInteriorDOF(active, focusDistance = 3.5) {
   }
 }
 
-// ─── PERF MODE CONFIGURATION ──────────────────────────────────────────────────
 export function setPerfModeGraphics(mode) {
   _perfMode = mode;
   if (_renderer) {
     const dpr = window.devicePixelRatio || 1;
-    const r = mode === 'fast' ? Math.min(dpr, 1.5)
-            : mode === 'balanced' ? Math.min(dpr, 2.0)
-            : Math.min(dpr, 3.0);
+    const r = mode === 'fast' ? Math.min(dpr, 1.5) : mode === 'balanced' ? Math.min(dpr, 2.0) : Math.min(dpr, 3.0);
     _renderer.setPixelRatio(r);
 
     const maxAniso = _renderer.capabilities.getMaxAnisotropy();
@@ -134,13 +111,11 @@ export function setPerfModeGraphics(mode) {
     }
   }
 
-  // Apply Ground-Truth AO
   if (gtaoPass) gtaoPass.enabled = (mode !== 'fast');
 
   if (bloomPass) {
     bloomPass.enabled = true;
     if (smaaPass) smaaPass.enabled = (mode !== 'fast');
-    // Re-evaluates current time bloom so sunset god-rays survive quality switches
     setBloomForTime(_currentTimePreset);
   }
 }
@@ -166,26 +141,27 @@ export function setBloomForTime(name) {
   if (!bloomPass) return;
 
   let params;
-
   if (_perfMode === 'fast') {
-    // Mobile Fast Profile: lightweight bloom parameters
     params = { strength: 0.22, threshold: 0.75, radius: 0.55 };
   } else {
-    // Balanced / Rich Profile: time-of-day specific atmospheric tuning
     const timePresets = {
       morning:   { strength: 0.30, threshold: 0.78, radius: 0.50 },
       afternoon: { strength: 0.28, threshold: 0.72, radius: 0.58 },
-      sunset:    { strength: 0.72, threshold: 0.62, radius: 0.85 }, // Boosted halo effect for god-ray simulation
+      sunset:    { strength: 0.72, threshold: 0.62, radius: 0.85 },
       night:     { strength: 0.90, threshold: 0.52, radius: 0.80 },
     };
     params = timePresets[name] || { strength: 0.28, threshold: 0.72, radius: 0.58 };
   }
 
-  // Apply the weather dampening multiplier (1.0 for clear, 0.2 for rain, etc.)
   bloomPass.strength = params.strength * (window._weatherBloomMult || 1.0);
   bloomPass.threshold = params.threshold;
   bloomPass.radius = params.radius;
   bloomPass.enabled = true;
+}
+
+export function setWeatherBloomModifier(mult) {
+  window._weatherBloomMult = mult;
+  setBloomForTime(_currentTimePreset);
 }
 
 // ─── IBL ENV MAP & MATERIALS ──────────────────────────────────────────────────
@@ -307,30 +283,6 @@ export const PBR = {
   stone:   () => pbrMat({ color: "stone",   normal: "stone",   rough: "stone",   repeat: 3,  roughVal: 0.88, normalScale: 1.6 }),
   tileRoof:() => pbrMat({ color: "tile",    normal: "tile",    rough: "tile",    repeat: 6,  roughVal: 0.78, normalScale: 1.1 }),
 };
-
-window._weatherBloomMult = 1.0;
-export function setWeatherBloomModifier(mult) {
-  window._weatherBloomMult = mult;
-  setBloomForTime(_currentTimePreset);
-}
-
-export const PBR = {
-  grass:   () => pbrMat({ color: "grass",   normal: "grass",   rough: "grass",   repeat: 14, roughVal: 0.90, normalScale: 0.8 }),
-  dirt:    () => pbrMat({ color: "dirt",    normal: "dirt",    rough: "dirt",    repeat: 18, roughVal: 0.95, normalScale: 1.0 }),
-  asphalt: () => pbrMat({ color: "asphalt", normal: "asphalt", rough: "asphalt", repeat: 8,  roughVal: 0.88, normalScale: 0.9 }),
-  concrete:() => pbrMat({ color: "concrete",normal: "concrete",rough: "concrete",repeat: 4, roughVal: 0.80, normalScale: 0.8 }),
-  brick:   () => pbrMat({ color: "brick",   normal: "brick",   rough: "brick",   repeat: 6,  roughVal: 0.82, normalScale: 1.8 }),
-  timber:  () => pbrMat({ color: "timber",  normal: "timber",  rough: "timber",  repeat: 3,  roughVal: 0.68, normalScale: 1.2 }),
-  stone:   () => pbrMat({ color: "stone",   normal: "stone",   rough: "stone",   repeat: 3,  roughVal: 0.88, normalScale: 1.6 }),
-  tileRoof:() => pbrMat({ color: "tile",    normal: "tile",    rough: "tile",    repeat: 6,  roughVal: 0.78, normalScale: 1.1 }),
-};
-
-// Global weather modifier for bloom
-window._weatherBloomMult = 1.0;
-export function setWeatherBloomModifier(mult) {
-  window._weatherBloomMult = mult;
-  setBloomForTime(_currentTimePreset);
-}
 
 // ─── WATER ────────────────────────────────────────────────────────────────────
 export function createWaterMat() {
@@ -457,7 +409,6 @@ export function tickPalms(camera) {
 }
 
 // ─── MAT_ EXPORTS ────────────────────────────────────────────────────────────
-// Route all environment materials through the high-end PBR texture factory
 export function MAT_GRASS_FIELD() { return PBR.grass(); }
 export function MAT_DIRT()        { return PBR.dirt(); }
 export function MAT_ASPHALT()     { return PBR.asphalt(); }
@@ -467,7 +418,6 @@ export function MAT_TIMBER()      { return PBR.timber(); }
 export function MAT_STONE()       { return PBR.stone(); }
 export function MAT_TILE_ROOF()   { return PBR.tileRoof(); }
 
-// Keep structural/architectural elements crisp and procedural
 export function MAT_GLASS(op=.45){return new THREE.MeshStandardMaterial({color:0x9ac8e8,roughness:.04,metalness:.06,transparent:true,opacity:op,envMapIntensity:3.5});}
 export function MAT_GLASS_WARM(op=.45){return new THREE.MeshStandardMaterial({color:0xd4c090,roughness:.04,metalness:.05,transparent:true,opacity:op,envMapIntensity:3.2});}
 export function MAT_WHITE_TRIM() {return new THREE.MeshStandardMaterial({color:0xfcfaf8,roughness:.55,envMapIntensity:.6});}
