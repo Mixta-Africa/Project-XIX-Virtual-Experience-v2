@@ -267,7 +267,6 @@ export function setSkyForTime(skyUniforms, sun, sunLight, time) {
 // ─── PBR FACTORY & TEXTURE SAFETY ──────────────────────────────────────────────
 const tl = new THREE.TextureLoader(), T = "assets/textures/";
 
-// Mathematical 1x1 flat normal map fallback to prevent WebGL crashes if image is missing
 const _emptyCanvas = document.createElement('canvas');
 _emptyCanvas.width = 1; _emptyCanvas.height = 1;
 const _emptyCtx = _emptyCanvas.getContext('2d');
@@ -296,6 +295,23 @@ export function pbrMat({ color, normal, rough, repeat = 4, roughVal = 0.8, metal
     roughness: roughVal, metalness: metalVal, envMapIntensity: 1.2,
     ...(_envMap ? { envMap: _envMap } : {}),
   });
+}
+
+export const PBR = {
+  grass:   () => pbrMat({ color: "grass",   normal: "grass",   rough: "grass",   repeat: 14, roughVal: 0.90, normalScale: 0.8 }),
+  dirt:    () => pbrMat({ color: "dirt",    normal: "dirt",    rough: "dirt",    repeat: 18, roughVal: 0.95, normalScale: 1.0 }),
+  asphalt: () => pbrMat({ color: "asphalt", normal: "asphalt", rough: "asphalt", repeat: 8,  roughVal: 0.88, normalScale: 0.9 }),
+  concrete:() => pbrMat({ color: "concrete",normal: "concrete",rough: "concrete",repeat: 4, roughVal: 0.80, normalScale: 0.8 }),
+  brick:   () => pbrMat({ color: "brick",   normal: "brick",   rough: "brick",   repeat: 6,  roughVal: 0.82, normalScale: 1.8 }),
+  timber:  () => pbrMat({ color: "timber",  normal: "timber",  rough: "timber",  repeat: 3,  roughVal: 0.68, normalScale: 1.2 }),
+  stone:   () => pbrMat({ color: "stone",   normal: "stone",   rough: "stone",   repeat: 3,  roughVal: 0.88, normalScale: 1.6 }),
+  tileRoof:() => pbrMat({ color: "tile",    normal: "tile",    rough: "tile",    repeat: 6,  roughVal: 0.78, normalScale: 1.1 }),
+};
+
+window._weatherBloomMult = 1.0;
+export function setWeatherBloomModifier(mult) {
+  window._weatherBloomMult = mult;
+  setBloomForTime(_currentTimePreset);
 }
 
 export const PBR = {
