@@ -976,21 +976,21 @@ function cyl(rt,rb,h,seg,mat,pos=[0,0,0]){
 function s(...o){ o.forEach(x=>x&&scene.add(x)); }
 
 const MATS = {
-  villaRoof:  ()=>new THREE.MeshStandardMaterial({color:0xC9A84C,roughness:.65,metalness:.08}),
-  loftBody:   ()=>new THREE.MeshStandardMaterial({color:0xE8E0D0,roughness:.78}),
-  loftRoof:   ()=>new THREE.MeshStandardMaterial({color:0xD4622A,roughness:.7}),
-  flatGrey:   ()=>new THREE.MeshStandardMaterial({color:0xDDDDDD,roughness:.7}),
-  stableRoof: ()=>new THREE.MeshStandardMaterial({color:0x8B6914,roughness:.8}),
-  roadAsph:   ()=>new THREE.MeshStandardMaterial({color:0x1a1e1c,roughness:.88}),
-  safetyBrown:()=>new THREE.MeshStandardMaterial({color:0x8B4513,roughness:.95}),
-  grassGreen: ()=>new THREE.MeshStandardMaterial({color:0x3a7a28,roughness:.92}),
-  lawnGreen:  ()=>new THREE.MeshStandardMaterial({color:0x4a8a38,roughness:.9}),
-  hedgeGreen: ()=>new THREE.MeshStandardMaterial({color:0x2a5a20,roughness:.95}),
-  cobble:     ()=>new THREE.MeshStandardMaterial({color:0x9A7A5A,roughness:.9}),
-  concrete:   ()=>new THREE.MeshStandardMaterial({color:0xc8c0b0,roughness:.8}),
-  railWhite:  ()=>new THREE.MeshStandardMaterial({color:0xfcfaf8,roughness:.5}),
-  plotAvail:  ()=>new THREE.MeshStandardMaterial({color:0x00ff88,transparent:true,opacity:0,depthWrite:false}),
-  plotReserved:()=>new THREE.MeshStandardMaterial({color:0xff4444,transparent:true,opacity:0,depthWrite:false}),
+  villaRoof:  () => PBR.tileRoof(),
+  loftBody:   () => PBR.concrete(),
+  loftRoof:   () => PBR.timber(),
+  flatGrey:   () => PBR.concrete(),
+  stableRoof: () => PBR.timber(),
+  roadAsph:   () => PBR.asphalt(),
+  safetyBrown:() => PBR.dirt(),
+  grassGreen: () => PBR.grass(),
+  lawnGreen:  () => PBR.grass(),
+  hedgeGreen: () => new THREE.MeshStandardMaterial({color:0x2a5a20,roughness:.95}), // Hedges remain procedural
+  cobble:     () => PBR.stone(),
+  concrete:   () => PBR.concrete(),
+  railWhite:  () => new THREE.MeshStandardMaterial({color:0xfcfaf8,roughness:.5}),
+  plotAvail:  () => new THREE.MeshStandardMaterial({color:0x00ff88,transparent:true,opacity:0,depthWrite:false}),
+  plotReserved:()=> new THREE.MeshStandardMaterial({color:0xff4444,transparent:true,opacity:0,depthWrite:false}),
 };
 
 function addGround(){
