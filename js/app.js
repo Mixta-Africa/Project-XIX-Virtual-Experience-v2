@@ -107,7 +107,36 @@ window.setMoveMode = function(mode) {
 
   activate();
   document.querySelectorAll('.move-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === 'walk'));
-};
+// ── AUTO DAY CYCLE & WEATHER (Linear 12-Hour) ──────────────────────────────────
+const DAY_CYCLE_DURATION = 5 * 60; // 5 minutes real-time per full day loop
+let   _dayAutoRun  = true;   
+let   _dayPauseEnd = 0;      
+let   _lastDayApplied = '';  
+let   _currentWeather = 'clear';
+
+function tickDayCycle(elapsed) {
+  if (!_dayAutoRun) return;
+  if (performance.now() < _dayPauseEnd) return;
+
+  const phase = (elapsed % DAY_CYCLE_DURATION) / DAY_CYCLE_DURATION; 
+  // Map 0.0 -> 1.0 phase smoothly from 6:00 AM to 6:00 AM the next day
+  const currentHourDec = 6 + (phase * 24);
+  const hr24 = Math.floor(currentHourDec) % 24;
+  const mins = Math.floor((currentHourDec % 1) * 60);
+
+  let name = 'afternoon';
+  if (hr24 >= 6 && hr24 < 10) name = 'morning';
+  else if (hr24 >= 10 && hr24 < 17) name = 'afternoon';
+  else if (hr24 >= 17 && hr24 < 19) name = 'sunset';
+  else name = 'night';
+
+  if (name !== _lastDayApplied) {
+    _lastDayApplied = name;
+    applyTimePreset(name, true);
+  }
+
+  if (window._updateDayClock) window._updateDayClock(hr24, mins, name);
+}
 
 const TIME_PRESETS = {
   morning:   { sky:["#1e3a5a","#7aaac8","#4a7a38"], sunCol:0xffd080, sunInt:1.8, sunPos:[-80,55,-80],   fog:"#8ab8cc", fogD:0.00018, exp:0.92 },
@@ -161,7 +190,7 @@ function applyWeather(w) {
   if (w === 'rain')   bloomMult = 0.1;
 
   if (typeof setWeatherBloomModifier === 'function') setWeatherBloomModifier(bloomMult);
-  if (_lastDayApplied) applyTimePreset(_lastDayApplied, true); // Re-trigger lighting updates
+  if (_lastDayApplied) applyTimePreset(_lastDayApplied, true);
 }
 
 window.applyTimePreset = applyTimePreset;
@@ -194,9 +223,98 @@ window.rotateVillaGLB = function(degrees) {
   console.log('[XIX] Villa GLB rotated', degrees, 'deg');
 };
 
-// ── DAY CLOCK: on-screen time display synced to cycle ─────────────────────────
-// ── DAY CLOCK: on-screen time display synced to cycle ─────────────────────────
+// ── DAY CLOCK: 12-Hour format & Line Art ──────────────────────────────────────
 function injectDayClock() {
+  if (document.getElementById('day-clock')) return;
+  const s = document.createElement('style');
+  s.textContent = `
+    #day-clock { position: absolute; top: 54px; left: 50%; transform: translateX(-50%); z-index: 200; background: rgba(8,18,10,0.72); backdrop-filter: blur(8px); border: 1px solid rgba(201,168,76,0.25); border-radius: 20px; padding: 5px 16px; display: flex; align-items: center; gap: 8px; font-family: Inter, sans-serif; font-size: 12px; color: rgba(240,236,224,0.85); pointer-events: none; transition: opacity .4s; white-space: nowrap; }
+    #day-clock .clock-icon { display:flex; align-items:center; }
+    #day-clock .clock-time { font-variant-numeric: tabular-nums; letter-spacing:.05em; }
+    #day-clock .clock-label { color: rgba(201,168,76,0.75); font-size:10px; letter-spacing:.1em; }
+    @media(max-width:640px){ #day-clock { top: 48px; font-size:10px; padding:4px 12px; } }
+  `;
+  document.head.appendChild(s);
+
+  const el = document.createElement('div');
+  el.id = 'day-clock';
+  el.innerHTML = '<span class="clock-icon"></span><span class="clock-time">12:00 PM</span><span class="clock-label">AFTERNOON</span>';
+  document.getElementById('world-overlay')?.appendChild(el);
+
+  const lineIcons = {
+    morning: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"/><circle cx="12" cy="12" r="4"/></svg>',
+    afternoon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="5"/><path d="M12 2v2M12 20v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M2 12h2M20 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></svg>',
+    sunset: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 8a4 4 0 0 1 4 4H8a4 4 0 0 1 4-4zM2 16h20M12 2v2M4.2 4.2l1.4 1.4M19.8 4.2l-1.4 1.4"/></svg>',
+    night: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>'
+  };
+
+  window._updateDayClock = function(hr24, mins, phaseName) {
+    if (!el) return;
+    const isPM = hr24 >= 12;
+    const hr12 = (hr24 % 12) || 12; 
+    const timeStr = `${hr12}:${mins.toString().padStart(2, '0')} ${isPM ? 'PM' : 'AM'}`;
+    
+    el.querySelector('.clock-icon').innerHTML = lineIcons[phaseName] || lineIcons.afternoon;
+    el.querySelector('.clock-time').textContent = timeStr;
+    el.querySelector('.clock-label').textContent = (phaseName || '').toUpperCase();
+  };
+}
+
+// ── MODE TOGGLE: Walk / Aerial (Ride Removed) ────────────────────────────────
+function injectModeToggle() {
+  if (document.getElementById('mode-toggle-bar')) return;
+  const style = document.createElement('style');
+  style.textContent = `
+    #mode-toggle-bar { position: absolute; bottom: 90px; right: 12px; z-index: 210; display: flex; flex-direction: column; background: rgba(10,20,12,0.88); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid rgba(201,168,76,0.35); border-radius: 10px; overflow: hidden; pointer-events: all; min-width: 88px; }
+    .move-mode-btn { background: none; color: rgba(255,255,255,0.65); border: none; padding: 10px 16px; cursor: pointer; font-size: 12px; font-weight: 500; display: flex; align-items: center; justify-content: flex-start; gap: 7px; min-height: 40px; transition: background .15s, color .15s; width: 100%; -webkit-tap-highlight-color: transparent; }
+    .move-mode-btn.active { background: rgba(201,168,76,0.9); color: #0a1008; }
+    .move-mode-btn:hover:not(.active) { background: rgba(255,255,255,0.08); }
+    .mode-divider { height: 1px; background: rgba(201,168,76,0.18); width: 100%; }
+    @media (min-width: 641px) { #mode-toggle-bar { flex-direction: row; bottom: 28px; right: 16px; min-width: unset; } .mode-divider { height: auto; width: 1px; align-self: stretch; } .move-mode-btn { padding: 8px 16px; min-height: 38px; width: auto; } }
+  `;
+  document.head.appendChild(style);
+
+  const bar = document.createElement('div');
+  bar.id = 'mode-toggle-bar';
+  bar.innerHTML = `
+    <button class="move-mode-btn active" data-mode="walk" onclick="window.setMoveMode('walk')">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <circle cx="12" cy="5" r="2"/><path d="M12 7v7"/><path d="M9 19l3-5 3 5"/><path d="M8 10h8"/>
+      </svg> Walk
+    </button>
+    <div class="mode-divider"></div>
+    <button class="move-mode-btn" data-mode="aerial" onclick="window.setMoveMode('aerial')">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M22 12A10 10 0 0 0 12 2a10 10 0 0 0 0 20 10 10 0 0 0 10-10z"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><path d="M2 12h20"/>
+      </svg> Aerial
+    </button>
+  `;
+  document.getElementById('world-overlay')?.appendChild(bar);
+}
+
+window.setMoveMode = function(mode) {
+  if (mode === 'aerial') {
+    if (!aerialOrbit) toggleAerial(null);
+    return;
+  }
+  if (aerialOrbit) {
+    aerialOrbit = false;
+    if (typeof unbindAerialPointer === 'function') unbindAerialPointer();
+    const cam = getCamera();
+    if (cam) { cam.fov = 65; cam.far = 1200; cam.updateProjectionMatrix(); }
+    const sc = getScene();
+    if (sc && sc.fog) sc.fog.density = (typeof _fogEnabled !== 'undefined' && _fogEnabled) ? _currentFogD : 0.000001;
+    if (typeof setAerialMode === 'function') setAerialMode(false);
+  }
+
+  moveMode = 'walk'; // Hard lock to Walk
+  if (typeof setYOwner === 'function') setYOwner('controls');
+  _targetEyeY = (typeof FOOT_EYE_HEIGHT !== 'undefined' ? FOOT_EYE_HEIGHT : 1.72);
+  _currentEyeY = _targetEyeY;
+
+  if (typeof activate === 'function') activate();
+  document.querySelectorAll('.move-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === 'walk'));
+};
   if (document.getElementById('day-clock')) return;
   const s = document.createElement('style');
   s.textContent = `
