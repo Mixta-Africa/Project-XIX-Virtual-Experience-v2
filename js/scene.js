@@ -1083,11 +1083,10 @@ function addRoads(){
 function addLake(){
   const wm = createWaterMat();
   
-  // Generate a safe mathematical texture to prevent WebGL crash if image is slow/missing
   const safeCanvas = document.createElement('canvas');
   safeCanvas.width = 2; safeCanvas.height = 2;
   const safeCtx = safeCanvas.getContext('2d');
-  safeCtx.fillStyle = '#8080ff'; // Flat normal map color
+  safeCtx.fillStyle = '#8080ff'; 
   safeCtx.fillRect(0,0,2,2);
   const safeTex = new THREE.CanvasTexture(safeCanvas);
   safeTex.wrapS = safeTex.wrapT = THREE.RepeatWrapping;
@@ -1096,7 +1095,7 @@ function addLake(){
   const lakeReflection = new Water(waterGeo, {
     textureWidth: window.innerWidth * Math.min(window.devicePixelRatio || 1, 2) * 0.5,
     textureHeight: window.innerHeight * Math.min(window.devicePixelRatio || 1, 2) * 0.5,
-    waterNormals: safeTex, // Start with safe texture so it doesn't crash
+    waterNormals: safeTex, 
     sunDirection: new THREE.Vector3(-180, 180, 120).normalize(),
     sunColor: 0xfff4e0,
     waterColor: 0x1a6a98,
@@ -1104,15 +1103,12 @@ function addLake(){
     fog: scene.fog !== undefined
   });
   
-  // Load actual texture asynchronously in the background
   new THREE.TextureLoader().load('assets/textures/stone-normal.png', (tex) => {
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
     tex.repeat.set(6, 6);
     if (lakeReflection.material.uniforms['normalSampler']) {
       lakeReflection.material.uniforms['normalSampler'].value = tex;
     }
-  }, undefined, () => {
-    console.warn('[XIX] stone-normal.png missing, continuing with safe fallback.');
   });
   
   lakeReflection.position.set(30, 0.335, -115);
