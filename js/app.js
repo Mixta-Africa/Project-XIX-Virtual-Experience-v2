@@ -247,9 +247,6 @@ window.setMoveMode = function(mode) {
   if (typeof activate === 'function') activate();
   document.querySelectorAll('.move-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === 'walk'));
 };
-  if (typeof activate === 'function') activate();
-  document.querySelectorAll('.move-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === 'walk'));
-};
 
 // ── FIX: Topbar dropdowns — reliable on desktop and touch ──────────────────────
 function fixTopbarDropdowns() {
