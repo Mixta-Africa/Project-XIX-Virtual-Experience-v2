@@ -135,9 +135,8 @@ export function setPerfModeGraphics(mode) {
     }
   }
 
-  // Pass 1 upgrade check: Use Ground-Truth AO if instantiated, fallback gracefully to SAO
-  const aoPass = gtaoPass || saoPass;
-  if (aoPass) aoPass.enabled = (mode !== 'fast');
+  // Apply Ground-Truth AO
+  if (gtaoPass) gtaoPass.enabled = (mode !== 'fast');
 
   if (bloomPass) {
     bloomPass.enabled = true;
