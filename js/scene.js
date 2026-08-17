@@ -423,21 +423,78 @@ function tickTour(delta, cam) {
   }
 }
 
-// ─── IMPROVEMENT 2: AMBIENT SOUND ─────────────────────────────────────────────
-let _audioCtx = null, _windGain = null, _birdsGain = null, _hoovesGain = null;
+// ─── IMPROVEMENT 2: 3D SPATIAL AMBIENT SOUND (PANNER NODES) ───────────────────
+let _audioCtx = null;
+let _windGain = null, _birdsGain = null;
+let _hoovesPanner = null, _lakePanner = null, _clubPanner = null;
+let _hoovesGain = null;
 
 export function initAmbientAudio() {
-  // Called on first user gesture (from app.js enableAudio)
   if (_audioCtx) return;
   try {
     _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    _windGain  = _makeNoise('wind');
+    
+    // Set up global listener (the player's ears)
+    if (_audioCtx.listener.upX) {
+      _audioCtx.listener.upX.value = 0;
+      _audioCtx.listener.upY.value = 1;
+      _audioCtx.listener.upZ.value = 0;
+    }
+
+    _windGain  = _makeNoise('wind', 0.012);
     _birdsGain = _makeBirds();
-    _hoovesGain= _makeHooves();
-  } catch(e) { console.warn('Audio init failed:', e); }
+    
+    // 3D Positional Sources
+    const hoovesSetup = _makeHooves();
+    _hoovesPanner = hoovesSetup.panner;
+    _hoovesGain = hoovesSetup.gain;
+
+    _lakePanner = _makePositionalNoise('water', 30, -115); // Crescent Lake
+    _clubPanner = _makePositionalNoise('murmur', 0, 108);  // Clubhouse
+  } catch(e) { console.warn('[XIX] Audio init failed:', e); }
 }
 
-function _makeNoise(type) {
+function _createPanner(x, z, refDist = 20, maxDist = 150) {
+  const panner = _audioCtx.createPanner();
+  panner.panningModel = 'HRTF';
+  panner.distanceModel = 'exponential';
+  panner.refDistance = refDist;
+  panner.maxDistance = maxDist;
+  panner.rolloffFactor = 1.2;
+  panner.positionX.value = x;
+  panner.positionY.value = 1.72;
+  panner.positionZ.value = z;
+  return panner;
+}
+
+function _makePositionalNoise(type, x, z) {
+  if (!_audioCtx) return null;
+  const panner = _createPanner(x, z, 30, 200);
+  const bufSize = _audioCtx.sampleRate * 2;
+  const buf = _audioCtx.createBuffer(1, bufSize, _audioCtx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < bufSize; i++) data[i] = (Math.random() * 2 - 1);
+
+  const source = _audioCtx.createBufferSource();
+  source.buffer = buf; 
+  source.loop = true;
+
+  const filter = _audioCtx.createBiquadFilter();
+  filter.type = type === 'water' ? 'lowpass' : 'bandpass';
+  filter.frequency.value = type === 'water' ? 400 : 600;
+
+  const gain = _audioCtx.createGain();
+  gain.gain.value = type === 'water' ? 0.015 : 0.005;
+
+  source.connect(filter); 
+  filter.connect(gain); 
+  gain.connect(panner); 
+  panner.connect(_audioCtx.destination);
+  source.start();
+  return panner;
+}
+
+function _makeNoise(type, vol) {
   if (!_audioCtx) return null;
   const bufSize = _audioCtx.sampleRate * 2;
   const buf = _audioCtx.createBuffer(1, bufSize, _audioCtx.sampleRate);
@@ -453,7 +510,7 @@ function _makeNoise(type) {
   filter.Q.value = 0.5;
 
   const gain = _audioCtx.createGain();
-  gain.gain.value = type === 'wind' ? 0.012 : 0.005;
+  gain.gain.value = vol;
 
   source.connect(filter); filter.connect(gain); gain.connect(_audioCtx.destination);
   source.start();
@@ -465,7 +522,6 @@ function _makeBirds() {
   const gain = _audioCtx.createGain();
   gain.gain.value = 0.0;
   gain.connect(_audioCtx.destination);
-  // Chirp every 1.5-4 seconds
   function chirp() {
     if (!_audioCtx) return;
     const osc = _audioCtx.createOscillator();
@@ -488,7 +544,12 @@ function _makeHooves() {
   if (!_audioCtx) return null;
   const gain = _audioCtx.createGain();
   gain.gain.value = 0;
-  gain.connect(_audioCtx.destination);
+  
+  // Attach hooves to a moving panner
+  const panner = _createPanner(0, 0, 5, 50);
+  gain.connect(panner);
+  panner.connect(_audioCtx.destination);
+
   function clop() {
     if (!_audioCtx || gain.gain.value < 0.001) { setTimeout(clop, 400); return; }
     const osc = _audioCtx.createOscillator();
@@ -502,21 +563,38 @@ function _makeHooves() {
     setTimeout(clop, 280 + Math.random() * 120);
   }
   setTimeout(clop, 1200);
-  return gain;
+  return { panner, gain };
 }
 
 export function updateAudioForMovement(isMoving, worldX, worldZ) {
   if (!_audioCtx) return;
+
+  // 1. Update Listener (Player) Position in 3D Space
+  const listener = _audioCtx.listener;
+  if (listener.positionX) {
+    listener.positionX.setTargetAtTime(worldX, _audioCtx.currentTime, 0.1);
+    listener.positionY.setTargetAtTime(1.72, _audioCtx.currentTime, 0.1);
+    listener.positionZ.setTargetAtTime(worldZ, _audioCtx.currentTime, 0.1);
+  }
+
+  // 2. Attach Hoof Panner to Player Position
+  if (_hoovesPanner) {
+    _hoovesPanner.positionX.setTargetAtTime(worldX, _audioCtx.currentTime, 0.1);
+    _hoovesPanner.positionZ.setTargetAtTime(worldZ, _audioCtx.currentTime, 0.1);
+  }
+
   // Wind varies near perimeter
   if (_windGain) {
     const edge = Math.min(Math.abs(worldZ + 220), Math.abs(worldZ - 215));
     const windVal = 0.008 + (1 - Math.min(edge / 80, 1)) * 0.018;
     _windGain.gain.setTargetAtTime(windVal, _audioCtx.currentTime, 0.4);
   }
+  
   // Hooves only when moving
   if (_hoovesGain) {
     _hoovesGain.gain.setTargetAtTime(isMoving ? 0.6 : 0, _audioCtx.currentTime, 0.3);
   }
+  
   // Birds quieter when moving fast
   if (_birdsGain) {
     _birdsGain.gain.setTargetAtTime(isMoving ? 0 : 0.8, _audioCtx.currentTime, 0.8);
