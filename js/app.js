@@ -38,7 +38,7 @@ import {
 let sceneReady      = false;
 let villaScene      = null, villaRenderer = null;
 let introPlaying    = false;
-let currentViewKey  = 'field_centre';
+window.currentViewKey = 'field_centre'; // Exposed globally
 let animFrameId     = null;
 let composer        = null;
 let moveMode        = 'walk';
@@ -342,9 +342,12 @@ document.addEventListener("DOMContentLoaded", () => {
   bindPlotSystem();
   bindVillaInteriorBtn();
   initAudio();
+    window.openWorldAt = openWorldAt; // Allows HTML buttons to trigger world entry
+
   window.__moduleReady = Object.assign(window.__moduleReady || {}, {
     applyTimePreset, applyWeather, toggleAerial, rotateVillaGLB: window.rotateVillaGLB,
     switchPerfMode: window.switchPerfMode,
+    openWorldAt, // Available to other modules
     // showProductPanel: wired below once product-panel module loads
   });
   
@@ -651,7 +654,7 @@ function bindNav() {
 
 //           WORLD ENTRY
 async function openWorldAt(viewKey) {
-  currentViewKey=viewKey;
+  window.currentViewKey = viewKey; // Update the global variable
   const vp=VIEWPOINTS[viewKey]||VIEWPOINTS.field_centre;
   showLoading(); setLoadingProgress(10);
 
