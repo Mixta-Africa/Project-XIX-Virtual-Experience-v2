@@ -565,16 +565,32 @@ document.addEventListener("DOMContentLoaded", () => {
     switchPerfMode: window.switchPerfMode,
     // showProductPanel: wired below once product-panel module loads
   });
+  
   // Wire our in-world property panel as the showProductPanel handler
   // This is called by ui.js buildViewpointStrip when a bottom button is clicked
   window.__moduleReady.showProductPanel = (key) => {
     try { openPropertyPanel(key); } catch(e) { console.error('[XIX] property panel:', e); }
   };
   window.showProductPanel = window.__moduleReady.showProductPanel;
+  
   (window._pendingCalls || []).forEach(({fn,args}) => {
     if(window.__moduleReady[fn]) window.__moduleReady[fn](...args);
   });
   window._pendingCalls = [];
+
+  // ─── MASTER UI CLOSER ───────────────────────────────────────────────────────
+  // Guarantees topbar and viewpoint dropdowns close when clicking outside
+  document.addEventListener('pointerdown', (e) => {
+    // If the click is NOT inside a topbar dropdown, close all topbar menus
+    if (!e.target.closest('.topbar-dropdown')) {
+      document.querySelectorAll('.topbar-dropdown-menu').forEach(m => m.classList.remove('open'));
+    }
+    // If the click is NOT inside the viewpoint strip wrapper, close all viewpoint dropdowns
+    if (!e.target.closest('.vp-wrapper')) {
+      document.querySelectorAll('.vp-dropdown').forEach(m => m.style.display = 'none');
+      document.querySelectorAll('.vp-chevron').forEach(ch => ch.innerHTML = '&#9652;');
+    }
+  }, { passive: true });
 });
 
 //           HERO CANVAS
@@ -1312,130 +1328,135 @@ function _showPropertyPanel(data, propKey) {
 
   const panel = document.createElement('div');
   panel.id = 'xix-prop-panel';
+  // Strict vertical layout, 380px wide, locked to the right side
   panel.style.cssText = `
-    position:fixed; top:0; right:0; bottom:0; width:min(480px,100vw);
-    background:rgba(6,14,8,0.97); backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
+    position:fixed; top:0; right:0; bottom:0; width:min(380px,100vw);
+    background:rgba(6,14,8,0.92); backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
     border-left:1px solid rgba(201,168,76,0.3); z-index:2000;
     display:flex; flex-direction:column; overflow:hidden;
-    transform:translateX(100%); transition:transform .32s cubic-bezier(.22,.61,.36,1);
+    transform:translateX(100%); transition:transform .4s cubic-bezier(0.16, 1, 0.3, 1);
     font-family:Inter,sans-serif;
   `;
 
-  // Interior viewpoint index
-  let _intIdx = 0;
   const interior = data.interior || [];
 
   panel.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 20px 14px;border-bottom:1px solid rgba(201,168,76,0.15);flex-shrink:0;">
-      <div>
-        <div style="font-size:10px;color:rgba(201,168,76,0.7);letter-spacing:.12em;text-transform:uppercase;margin-bottom:4px;">${data.type}</div>
-        <div style="font-size:1.25rem;font-weight:500;color:#f0ece0;font-family:'Cormorant Garamond',serif;">${data.title}</div>
+    <div style="display:flex; flex-direction:column; padding:24px; border-bottom:1px solid rgba(201,168,76,0.15); position:relative; flex-shrink:0;">
+      <button id="pp-close-btn" style="position:absolute; top:16px; right:16px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:50%; width:32px; height:32px; color:rgba(255,255,255,0.6); cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:16px; transition:all 0.2s;">✕</button>
+      <div style="font-size:10px; color:rgba(201,168,76,0.8); letter-spacing:.15em; text-transform:uppercase; margin-bottom:6px;">${data.type}</div>
+      <h2 style="font-size:1.8rem; font-weight:300; color:#f0ece0; font-family:'Cormorant Garamond',serif; margin:0 0 16px 0; line-height:1.1;">${data.title}</h2>
+      <div style="display:flex; gap:24px;">
+        <div><div style="font-size:9px; color:rgba(240,236,224,0.5); text-transform:uppercase; letter-spacing:.1em; margin-bottom:2px;">Area</div><div style="font-size:14px; color:#f0ece0; font-weight:500;">${data.area}</div></div>
+        <div><div style="font-size:9px; color:rgba(240,236,224,0.5); text-transform:uppercase; letter-spacing:.1em; margin-bottom:2px;">Pricing</div><div style="font-size:14px; color:#c9a84c;">${data.price}</div></div>
       </div>
-      <button id="pp-close-btn" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:50%;width:36px;height:36px;color:rgba(255,255,255,0.6);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">✕</button>
     </div>
-    <div style="overflow-y:auto;-webkit-overflow-scrolling:touch;flex:1;padding:0 0 40px;">
-      <!-- Interior walkthrough section -->
+    <div style="flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:24px;">
+      <p style="font-size:13px; color:rgba(240,236,224,0.7); line-height:1.6; margin-bottom:24px; margin-top:0;">${data.description}</p>
+      
+      <div style="margin-bottom:24px;">
+        <h4 style="font-size:10px; color:rgba(201,168,76,0.8); text-transform:uppercase; letter-spacing:.1em; border-bottom:1px solid rgba(201,168,76,0.2); padding-bottom:6px; margin:0 0 12px 0;">Key Features</h4>
+        <ul style="list-style:none; padding:0; margin:0;">
+          ${data.features.map(f => `<li style="font-size:13px; color:rgba(240,236,224,0.8); margin-bottom:8px; display:flex; gap:8px; align-items:flex-start;"><span style="color:#c9a84c; margin-top:2px;">◆</span> ${f}</li>`).join('')}
+        </ul>
+      </div>
+
       ${interior.length > 0 ? `
-      <div style="background:rgba(201,168,76,0.06);border-bottom:1px solid rgba(201,168,76,0.12);padding:14px 20px;">
-        <div style="font-size:10px;color:rgba(201,168,76,0.6);letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px;">Immersive Walkthrough</div>
-        <div style="font-size:13px;color:rgba(240,236,224,0.75);margin-bottom:10px;">Experience each viewpoint in the 3D world</div>
-        <div style="display:flex;flex-wrap:wrap;gap:6px;">
-          ${interior.map((vp,i)=>`
-            <button data-vpidx="${i}" class="pp-vp-btn" style="
-              background:rgba(255,255,255,0.05);border:1px solid rgba(201,168,76,0.25);
-              border-radius:5px;padding:7px 12px;color:rgba(240,236,224,0.85);
-              cursor:pointer;font-size:11px;font-family:Inter,sans-serif;
-              transition:all .12s;-webkit-tap-highlight-color:transparent;min-height:36px;">
-              ${vp.label}
+      <div>
+        <h4 style="font-size:10px; color:rgba(201,168,76,0.8); text-transform:uppercase; letter-spacing:.1em; border-bottom:1px solid rgba(201,168,76,0.2); padding-bottom:6px; margin:0 0 12px 0;">Interior Walkthrough</h4>
+        <div style="font-size:12px;color:rgba(240,236,224,0.6);margin-bottom:10px;">Select a room to step inside.</div>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          ${interior.map((vp,i) => `
+            <button data-vpidx="${i}" class="pp-vp-btn" style="background:rgba(255,255,255,0.04); border:1px solid rgba(201,168,76,0.2); border-radius:4px; padding:12px; color:rgba(240,236,224,0.9); cursor:pointer; font-size:12px; font-family:Inter,sans-serif; text-align:left; transition:all 0.2s; display:flex; justify-content:space-between; align-items:center;">
+              ${vp.label} <span style="color:#c9a84c; font-size:10px;">▶</span>
             </button>
           `).join('')}
         </div>
       </div>` : ''}
-      <!-- Specs -->
-      <div style="padding:16px 20px;border-bottom:1px solid rgba(255,255,255,0.05);">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
-          <div><div style="font-size:10px;color:rgba(201,168,76,0.6);text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px;">Area</div><div style="font-size:15px;color:#f0ece0;font-weight:500;">${data.area}</div></div>
-          <div><div style="font-size:10px;color:rgba(201,168,76,0.6);text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px;">Pricing</div><div style="font-size:13px;color:#f0ece0;">${data.price}</div></div>
-        </div>
-        <p style="font-size:13px;color:rgba(240,236,224,0.7);line-height:1.7;margin:0;">${data.description}</p>
-      </div>
-      <!-- Features -->
-      <div style="padding:14px 20px;border-bottom:1px solid rgba(255,255,255,0.05);">
-        <div style="font-size:10px;color:rgba(201,168,76,0.6);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px;">Key Features</div>
-        ${data.features.map(f=>`
-          <div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:7px;">
-            <span style="color:#c9a84c;font-size:12px;margin-top:2px;flex-shrink:0;">◆</span>
-            <span style="font-size:13px;color:rgba(240,236,224,0.75);">${f}</span>
-          </div>
-        `).join('')}
-      </div>
-      <!-- CTA -->
-      ${data.canReserve ? `
-      <div style="padding:16px 20px;">
-        <div style="font-size:10px;color:rgba(201,168,76,0.6);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px;">Reserve Your Plot</div>
-        <button id="pp-reserve-btn" style="
-          width:100%;background:rgba(201,168,76,0.88);color:#061208;border:none;
-          border-radius:6px;padding:14px;font-size:14px;font-weight:600;cursor:pointer;
-          font-family:Inter,sans-serif;letter-spacing:.04em;transition:background .15s;margin-bottom:10px;">
-          Register Interest
-        </button>
-        <a href="mailto:o.olasunkanmi@mixtafrica.com?subject=Project XIX — ${encodeURIComponent(data.title)} Enquiry" style="
-          display:block;text-align:center;padding:12px;border:1px solid rgba(201,168,76,0.3);
-          border-radius:6px;color:rgba(201,168,76,0.8);font-size:13px;letter-spacing:.04em;text-decoration:none;">
-          Email the Project Team
-        </a>
-      </div>` : `
-      <div style="padding:16px 20px;">
-        <a href="mailto:o.olasunkanmi@mixtafrica.com?subject=Project XIX — ${encodeURIComponent(data.title)} Enquiry" style="
-          display:block;text-align:center;padding:14px;background:rgba(201,168,76,0.88);
-          border-radius:6px;color:#061208;font-size:14px;font-weight:600;letter-spacing:.04em;text-decoration:none;">
-          Make an Enquiry
-        </a>
-      </div>`}
     </div>
+
+    ${data.canReserve ? `
+    <div style="padding:20px 24px; border-top:1px solid rgba(201,168,76,0.15); background:rgba(6,18,8,0.95); flex-shrink:0;">
+      <div style="font-size:10px;color:rgba(201,168,76,0.6);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px;">Reserve Your Plot</div>
+      <button id="pp-reserve-btn" style="width:100%; background:var(--gold-500, #c9a84c); color:#061208; border:none; padding:14px; font-size:14px; font-weight:600; cursor:pointer; border-radius:4px; transition:opacity 0.2s; margin-bottom:10px;">Register Interest</button>
+      <a href="mailto:o.olasunkanmi@mixtafrica.com?subject=Project XIX — ${encodeURIComponent(data.title)} Enquiry" style="display:block; text-align:center; padding:12px; border:1px solid rgba(201,168,76,0.3); border-radius:4px; color:rgba(201,168,76,0.8); font-size:13px; text-decoration:none;">Email the Project Team</a>
+    </div>` : `
+    <div style="padding:20px 24px; border-top:1px solid rgba(201,168,76,0.15); background:rgba(6,18,8,0.95); flex-shrink:0;">
+      <a href="mailto:o.olasunkanmi@mixtafrica.com?subject=Project XIX — ${encodeURIComponent(data.title)} Enquiry" style="display:block; text-align:center; padding:14px; background:rgba(201,168,76,0.88); border-radius:4px; color:#061208; font-size:14px; font-weight:600; text-decoration:none;">Make an Enquiry</a>
+    </div>`}
   `;
 
   document.getElementById('world-overlay')?.appendChild(panel);
-  // Animate in
   requestAnimationFrame(() => panel.style.transform = 'translateX(0)');
 
-  // Close
+  // Close functionality
   panel.querySelector('#pp-close-btn')?.addEventListener('click', () => {
     panel.style.transform = 'translateX(100%)';
-    
-    // Reset DOF back to global free-roam clarity when panel closes
     if (typeof setInteriorDOF === 'function') setInteriorDOF(false);
-
-    setTimeout(() => panel.remove(), 340);
-    _stopPlotHighlightPulse?.();
+    setTimeout(() => panel.remove(), 400);
+    if (typeof _stopPlotHighlightPulse === 'function') _stopPlotHighlightPulse();
   });
 
-  // Interior viewpoint buttons — teleport camera to each position
+  // Hover states for walkthrough buttons
+  panel.querySelectorAll('.pp-vp-btn').forEach(b => {
+    b.addEventListener('mouseenter', () => b.style.background = 'rgba(201,168,76,0.1)');
+    b.addEventListener('mouseleave', () => b.style.background = 'rgba(255,255,255,0.04)');
+  });
+
+  // Walkthrough Logic: Teleports inside the exterior model and minimizes the UI
   panel.querySelectorAll('.pp-vp-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const idx = parseInt(btn.dataset.vpidx, 10);
       const vp = interior[idx];
       if (!vp) return;
-      // Highlight active
-      panel.querySelectorAll('.pp-vp-btn').forEach(b => b.style.borderColor = 'rgba(201,168,76,0.25)');
-      btn.style.borderColor = '#c9a84c';
-      btn.style.color = '#c9a84c';
-      // Teleport to interior position
+
       try {
-        setView(vp.pos, vp.yaw || 0, vp.pitch || 0);
-        setCaption(vp.caption || vp.label);
+        if (typeof setView === 'function') setView(vp.pos, vp.yaw || 0, vp.pitch || 0);
+        if (typeof setCaption === 'function') setCaption(vp.caption || vp.label);
+        
         // Ensure walk mode for interior exploration
-        if (moveMode === 'ride' || aerialOrbit) window.setMoveMode('walk');
-      } catch(e) { console.warn('[XIX] Interior teleport:', e); }
+        if (typeof moveMode !== 'undefined' && (moveMode === 'ride' || typeof aerialOrbit !== 'undefined' && aerialOrbit)) {
+            if (typeof window.setMoveMode === 'function') window.setMoveMode('walk');
+        }
+        
+        if (typeof setInteriorDOF === 'function') setInteriorDOF(true, 3.5);
+
+        // Slide the main panel away so they can see the view
+        panel.style.transform = 'translateX(100%)';
+
+        // Spawn a minimal "Exit Walkthrough" button floating at the bottom
+        const exitBtn = document.createElement('button');
+        exitBtn.innerHTML = `Exit ${data.title} Walkthrough`;
+        exitBtn.style.cssText = `
+          position:fixed; bottom:120px; left:50%; transform:translateX(-50%);
+          background:rgba(201,168,76,0.95); color:#061208; border:none; padding:14px 28px;
+          border-radius:30px; font-size:14px; font-weight:600; font-family:Inter,sans-serif;
+          cursor:pointer; z-index:2500; box-shadow:0 8px 24px rgba(0,0,0,0.5);
+          transition: transform 0.2s;
+        `;
+        exitBtn.addEventListener('mouseenter', () => exitBtn.style.transform = 'translateX(-50%) scale(1.05)');
+        exitBtn.addEventListener('mouseleave', () => exitBtn.style.transform = 'translateX(-50%) scale(1)');
+        
+        document.getElementById('world-overlay')?.appendChild(exitBtn);
+
+        exitBtn.addEventListener('click', () => {
+          exitBtn.remove();
+          // Reset DOF and bring the panel back
+          if (typeof setInteriorDOF === 'function') setInteriorDOF(false);
+          panel.style.transform = 'translateX(0)';
+          // Teleport camera back outside to the street
+          if (typeof setView === 'function') setView([vp.pos[0], 1.72, vp.pos[2] + 15], 0, 0); 
+        });
+
+      } catch(e) { console.warn('[XIX] Walkthrough teleport error:', e); }
     });
   });
 
-  // Reserve button
+  // Reserve button success state
   panel.querySelector('#pp-reserve-btn')?.addEventListener('click', () => {
     const reserveSection = panel.querySelector('#pp-reserve-btn').parentNode;
     reserveSection.innerHTML = `
-      <div style="background:rgba(30,80,30,0.25);border:1px solid rgba(100,200,80,0.3);border-radius:6px;padding:16px;text-align:center;">
-        <div style="color:#8cde6a;font-size:20px;margin-bottom:8px;">✓</div>
+      <div style="background:rgba(30,80,30,0.25);border:1px solid rgba(100,200,80,0.3);border-radius:4px;padding:16px;text-align:center;">
+        <div style="color:#8cde6a;font-size:24px;margin-bottom:8px;">✓</div>
         <div style="color:#f0ece0;font-weight:600;margin-bottom:4px;">Interest Registered</div>
         <div style="color:rgba(240,236,224,0.6);font-size:12px;">Our team will contact you within 24 hours.</div>
       </div>`;
