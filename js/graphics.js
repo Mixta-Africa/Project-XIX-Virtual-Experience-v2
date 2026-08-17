@@ -181,7 +181,8 @@ export function setBloomForTime(name) {
     params = timePresets[name] || { strength: 0.28, threshold: 0.72, radius: 0.58 };
   }
 
-  bloomPass.strength = params.strength;
+  // Apply the weather dampening multiplier (1.0 for clear, 0.2 for rain, etc.)
+  bloomPass.strength = params.strength * (window._weatherBloomMult || 1.0);
   bloomPass.threshold = params.threshold;
   bloomPass.radius = params.radius;
   bloomPass.enabled = true;
@@ -263,21 +264,40 @@ export function setSkyForTime(skyUniforms, sun, sunLight, time) {
   return p.exp;
 }
 
-// ─── PBR FACTORY ──────────────────────────────────────────────────────────────
+// ─── PBR FACTORY & TEXTURE SAFETY ──────────────────────────────────────────────
 const tl = new THREE.TextureLoader(), T = "assets/textures/";
+
+// Mathematical 1x1 flat normal map fallback to prevent WebGL crashes if image is missing
+const _emptyCanvas = document.createElement('canvas');
+_emptyCanvas.width = 1; _emptyCanvas.height = 1;
+const _emptyCtx = _emptyCanvas.getContext('2d');
+_emptyCtx.fillStyle = '#8080FF'; 
+_emptyCtx.fillRect(0,0,1,1);
+
 function loadTex(name, repeat, sRGB = true) {
-  const t = tl.load(T + name); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(repeat, repeat);
-  if (sRGB) t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t;
+  const t = tl.load(T + name, undefined, undefined, () => {
+    console.warn('[XIX] Texture missing, using safe fallback:', name);
+    t.image = _emptyCanvas; 
+    t.needsUpdate = true;
+  });
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; 
+  t.repeat.set(repeat, repeat);
+  if (sRGB) t.colorSpace = THREE.SRGBColorSpace; 
+  t.anisotropy = 4; 
+  return t;
 }
+
 export function pbrMat({ color, normal, rough, repeat = 4, roughVal = 0.8, metalVal = 0, normalScale = 1.2 }) {
   return new THREE.MeshStandardMaterial({
-    map: loadTex(color + "-color.png", repeat), normalMap: loadTex(normal + "-normal.png", repeat, false),
+    map: loadTex(color + "-color.png", repeat), 
+    normalMap: loadTex(normal + "-normal.png", repeat, false),
     roughnessMap: loadTex(rough + "-roughness.png", repeat, false),
     normalScale: new THREE.Vector2(normalScale, normalScale),
     roughness: roughVal, metalness: metalVal, envMapIntensity: 1.2,
     ...(_envMap ? { envMap: _envMap } : {}),
   });
 }
+
 export const PBR = {
   grass:   () => pbrMat({ color: "grass",   normal: "grass",   rough: "grass",   repeat: 14, roughVal: 0.90, normalScale: 0.8 }),
   dirt:    () => pbrMat({ color: "dirt",    normal: "dirt",    rough: "dirt",    repeat: 18, roughVal: 0.95, normalScale: 1.0 }),
@@ -288,6 +308,13 @@ export const PBR = {
   stone:   () => pbrMat({ color: "stone",   normal: "stone",   rough: "stone",   repeat: 3,  roughVal: 0.88, normalScale: 1.6 }),
   tileRoof:() => pbrMat({ color: "tile",    normal: "tile",    rough: "tile",    repeat: 6,  roughVal: 0.78, normalScale: 1.1 }),
 };
+
+// Global weather modifier for bloom
+window._weatherBloomMult = 1.0;
+export function setWeatherBloomModifier(mult) {
+  window._weatherBloomMult = mult;
+  setBloomForTime(_currentTimePreset);
+}
 
 // ─── WATER ────────────────────────────────────────────────────────────────────
 export function createWaterMat() {
