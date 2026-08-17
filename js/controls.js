@@ -1,7 +1,7 @@
 /**
- * Project XIX -- Controls
- * Optimized for Mobile/Tablet: Joystick locked to specific touch target.
- * 100% of the remaining canvas acts as camera look.
+ * Project XIX -- Controls v6 (Phase 3 Luxury Production Pass)
+ * Upgrades: Exponential Decay Look Smoothing, Cadence-Synced Head-Bob & Trot Pitch
+ * Preserved: Mobile Joystick, WebXR, Gyro, App Y-Ownership Logic
  */
 
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
@@ -16,12 +16,16 @@ const M_SENS  = 0.0024;
 const T_SENS  = 0.0028;
 
 let camera, renderer;
-let yaw = Math.PI, pitch = 0;
+
+// Phase 3: Target angles (input) vs Current angles (smoothed output)
+let targetYaw = Math.PI, targetPitch = 0;
+let currentYaw = Math.PI, currentPitch = 0;
+let walkTime = 0;
+
 let active = false, locked = false;
 const keys = new Set();
 
 // When true, app.js owns camera.position.y — controls.js must NOT touch it.
-// Call setYOwner('controls') for walk mode, setYOwner('app') for ride mode.
 let _appOwnsY = true;   // ride mode by default
 export function setYOwner(owner) { _appOwnsY = (owner === 'app'); }
 
@@ -63,11 +67,11 @@ export function initControls(cam, ren) {
 
   document.addEventListener('mousemove', e => {
     if (!active || !locked) return;
-    yaw   -= e.movementX * M_SENS;
-    pitch  = clamp(pitch - e.movementY * M_SENS, P_MIN, P_MAX);
+    // Input modifies the TARGET, not the camera directly
+    targetYaw   -= e.movementX * M_SENS;
+    targetPitch  = clamp(targetPitch - e.movementY * M_SENS, P_MIN, P_MAX);
   });
 
-  // Attach touch listeners to the document so they don't miss quick swipes
   document.addEventListener('touchstart',  onTouchStart,  { passive: false });
   document.addEventListener('touchmove',   onTouchMove,   { passive: false });
   document.addEventListener('touchend',    onTouchEnd,    { passive: false });
@@ -91,16 +95,13 @@ function buildJoystickUI() {
 
   joystickEl = document.createElement('div');
   joystickEl.className = 'vj-base';
-  joystickEl.style.pointerEvents = 'auto'; // CRITICAL: Makes the joystick a physical touch target
+  joystickEl.style.pointerEvents = 'auto'; 
   overlay.appendChild(joystickEl);
 
   joystickDotEl = document.createElement('div');
   joystickDotEl.className = 'vj-dot';
   joystickDotEl.style.pointerEvents = 'none';
   joystickEl.appendChild(joystickDotEl);
-
-  // Sprint button is now part of the joystick overlay HTML, not injected here.
-  // See ui.js / index.html for the sprint button layout.
 }
 
 function updateJoystickDot() {
@@ -126,18 +127,14 @@ function onTouchStart(e) {
   const screenW = window.innerWidth;
 
   for (const t of e.changedTouches) {
-    // Explicit joystick element touched — always joystick
     if (isJoystick && !joyOrigin) {
       joyOrigin = { x: t.clientX, y: t.clientY, id: t.identifier };
       joyDelta  = { x: 0, y: 0 };
       if (joystickEl) joystickEl.style.opacity = '1';
     }
-    // Canvas touched — zone split: left 45% = joystick, right 55% = camera look
-    // This catches thumb touches that narrowly miss the joystick element
     else if (isCanvas) {
       const inLeftZone = t.clientX < screenW * 0.45;
       if (inLeftZone && !joyOrigin) {
-        // Treat as joystick from wherever the thumb landed
         joyOrigin = { x: t.clientX, y: t.clientY, id: t.identifier };
         joyDelta  = { x: 0, y: 0 };
         if (joystickEl) joystickEl.style.opacity = '1';
@@ -168,8 +165,9 @@ function onTouchMove(e) {
     }
     if (lookTouch && t.identifier === lookTouch.id && lookLast) {
       e.preventDefault();
-      yaw   -= (t.clientX - lookLast.x) * T_SENS;
-      pitch  = clamp(pitch - (t.clientY - lookLast.y) * T_SENS, P_MIN, P_MAX);
+      // Touch modifies the TARGET
+      targetYaw   -= (t.clientX - lookLast.x) * T_SENS;
+      targetPitch  = clamp(targetPitch - (t.clientY - lookLast.y) * T_SENS, P_MIN, P_MAX);
       lookLast = { x: t.clientX, y: t.clientY };
     }
   }
@@ -199,47 +197,68 @@ export async function requestGyro() {
 
 function onGyro(e) {
   if (!active || locked) return;
-  yaw   = -(e.alpha || 0) * (Math.PI / 180);
-  pitch  = clamp(((e.beta || 0) - 30) * (Math.PI / 180), P_MIN, P_MAX);
+  // Gyro modifies the TARGET (smoothing removes gyro hand-jitter instantly)
+  targetYaw   = -(e.alpha || 0) * (Math.PI / 180);
+  targetPitch  = clamp(((e.beta || 0) - 30) * (Math.PI / 180), P_MIN, P_MAX);
 }
 
 export function updateControls(delta) {
   if (!active || !camera) return;
 
+  // Phase 3: Matterport-style Exponential Decay Smoothing (Framerate Independent)
+  const decay = 1 - Math.exp(-18 * delta);
+  currentYaw += (targetYaw - currentYaw) * decay;
+  currentPitch += (targetPitch - currentPitch) * decay;
+
   const speed   = (keys.has('shift') || touchSprint || window.__touchSprint) ? SPRINT : WALK;
-  const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
-  const right   = new THREE.Vector3( Math.cos(yaw), 0, -Math.sin(yaw));
+  // Movement follows the smoothed current camera direction
+  const forward = new THREE.Vector3(-Math.sin(currentYaw), 0, -Math.cos(currentYaw));
+  const right   = new THREE.Vector3( Math.cos(currentYaw), 0, -Math.sin(currentYaw));
   const move    = new THREE.Vector3();
 
-  // Keyboard
   if (keys.has('w') || keys.has('arrowup'))    move.addScaledVector(forward,  1);
   if (keys.has('s') || keys.has('arrowdown'))  move.addScaledVector(forward, -1);
   if (keys.has('d') || keys.has('arrowright')) move.addScaledVector(right,    1);
   if (keys.has('a') || keys.has('arrowleft'))  move.addScaledVector(right,   -1);
 
-  // Joystick
   if (joyOrigin) {
     move.addScaledVector(right,    joyDelta.x);
     move.addScaledVector(forward, -joyDelta.y);
   }
 
-  // Apply movement
-  if (move.lengthSq() > 0.0001) {
+  const isMoving = move.lengthSq() > 0.0001;
+
+  if (isMoving) {
     move.normalize().multiplyScalar(speed * delta);
     camera.position.add(move);
+    walkTime += delta * (speed === SPRINT ? 15.0 : 10.0); // Advance cadence tracker
   }
 
-  // Clamp to world bounds
   camera.position.x = clamp(camera.position.x, WORLD.xMin || -320, WORLD.xMax || 320);
   camera.position.z = clamp(camera.position.z, WORLD.zMin || -260, WORLD.zMax || 235);
-  // Only set Y when controls.js owns it (walk mode).
-  // In ride mode app.js calls camera.position.y = _currentEyeY — we must not fight it.
-  if (!_appOwnsY) camera.position.y = EYE_H;
 
-  // Apply rotation
+  let finalPitch = currentPitch;
+
+  // Phase 3: Head-Bob and Trot Synchronization
+  if (!_appOwnsY) {
+    // Walk Mode: controls.js owns Y. Apply footstep Y-axis bobbing.
+    if (isMoving) {
+      camera.position.y = EYE_H + Math.sin(walkTime) * 0.012;
+    } else {
+      // Gently settle back to standing height using framerate-independent decay
+      camera.position.y += (EYE_H - camera.position.y) * (1 - Math.exp(-10 * delta));
+    }
+  } else {
+    // Ride Mode: app.js owns Y. Apply a rhythmic horse-trot pitch oscillation instead.
+    if (isMoving) {
+      finalPitch += Math.sin(walkTime * 1.1) * 0.0035; 
+    }
+  }
+
+  // Apply final smoothed rotation
   camera.rotation.order = 'YXZ';
-  camera.rotation.y = yaw;
-  camera.rotation.x = pitch;
+  camera.rotation.y = currentYaw;
+  camera.rotation.x = finalPitch;
 }
 
 export function activate()   {
@@ -251,6 +270,7 @@ export function activate()   {
     if (joystickEl) joystickEl.style.opacity = '0.35';
   }
 }
+
 export function deactivate() {
   active = false; keys.clear();
   joyOrigin = null; joyDelta = { x:0, y:0 };
@@ -260,15 +280,21 @@ export function deactivate() {
   const overlay = document.getElementById('joystick-overlay');
   if (overlay) overlay.style.display = 'none';
 }
+
 export function setView(pos, newYaw = Math.PI, newPitch = 0) {
   if (!camera) return;
   camera.position.set(...pos);
-  yaw = newYaw; pitch = newPitch;
+  // Snap BOTH target and current to prevent sweeping transition on teleport
+  targetYaw = newYaw; currentYaw = newYaw;
+  targetPitch = newPitch; currentPitch = newPitch;
+  
   camera.rotation.order = 'YXZ';
-  camera.rotation.y = yaw;
-  camera.rotation.x = pitch;
+  camera.rotation.y = currentYaw;
+  camera.rotation.x = currentPitch;
 }
-export function getYaw() { return yaw; }
+
+export function getYaw() { return currentYaw; }
+
 export function isMobile() {
   return /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.innerWidth < 768;
 }
