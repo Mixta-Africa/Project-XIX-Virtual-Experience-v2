@@ -10,6 +10,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
+import { setInteriorDOF } from "./graphics.js";
 import { VIEWPOINTS, ZONES, WORLD } from "./data.js";
 import { buildVillaInterior, VILLA_VIEWPOINTS } from "./villa-interior.js";
 import {
@@ -928,30 +929,102 @@ async function openWorldAt(viewKey) {
 }
 
 async function cinematicIntro(){
-  introPlaying=true;
-  const introVp=VIEWPOINTS.intro;
-  setView(introVp.pos,introVp.yaw,introVp.pitch);
-  setCaption(introVp.caption);
-  const targetVp=VIEWPOINTS.field_centre;
-  const startPos=[...introVp.pos], endPos=targetVp.pos;
-  const duration=3800, start=performance.now();
-  await new Promise(resolve=>{
-    function ease(t){return t<0.5?2*t*t:-1+(4-2*t)*t;}
-    function step(now){
-      const t=Math.min((now-start)/duration,1), e=ease(t);
-      const cam=getCamera();
-      cam.position.x=startPos[0]+(endPos[0]-startPos[0])*e;
-      cam.position.y=startPos[1]+(endPos[1]-startPos[1])*e;
-      cam.position.z=startPos[2]+(endPos[2]-startPos[2])*e;
-      cam.rotation.order="YXZ";
-      cam.rotation.x=introVp.pitch+(0-introVp.pitch)*e;
-      cam.rotation.y=introVp.yaw+(targetVp.yaw-introVp.yaw)*e;
-      if(t<1) requestAnimationFrame(step); else resolve();
+  introPlaying = true;
+  const targetVp = VIEWPOINTS.field_centre;
+  const cam = getCamera();
+  
+  // Lock controls so user cannot interrupt the cinematic camera movement
+  if (typeof deactivate === 'function') deactivate(); 
+
+  // 1. Inject Title Overlay Card with Luxury Vignette
+  const titleCard = document.createElement('div');
+  titleCard.id = 'cinematic-title-card';
+  titleCard.style.cssText = `
+    position: fixed; inset: 0; z-index: 3000;
+    background: radial-gradient(circle, rgba(6,18,8,0.4) 0%, rgba(6,18,8,0.98) 100%);
+    background-color: rgba(6,18,8,0.90);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: #f0ece0; font-family: 'Cormorant Garamond', serif; pointer-events: none;
+    opacity: 1; transition: opacity 1.5s ease;
+  `;
+  titleCard.innerHTML = `
+    <h1 style="font-size: 2.8rem; font-weight: 300; letter-spacing: 0.15em; color: #C9A84C; margin: 0 0 8px 0; text-shadow: 0 4px 12px rgba(0,0,0,0.5);">PROJECT XIX</h1>
+    <p style="font-size: 1rem; font-family: Inter, sans-serif; letter-spacing: 0.2em; color: rgba(240,236,224,0.7); text-transform: uppercase;">Lakowe, Ibeju-Lekki</p>
+  `;
+  document.body.appendChild(titleCard);
+
+  // 2. Play Procedural Warm Piano Stinger (Web Audio API)
+  if (window.AudioContext || window.webkitAudioContext) {
+    try {
+      const actx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = actx.createOscillator();
+      const gain = actx.createGain();
+      osc.type = 'sine'; // Pure, warm tone
+      osc.frequency.value = 432; 
+      gain.gain.setValueAtTime(0, actx.currentTime);
+      gain.gain.linearRampToValueAtTime(0.4, actx.currentTime + 0.1);
+      gain.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 4.0);
+      osc.connect(gain);
+      gain.connect(actx.destination);
+      osc.start();
+      osc.stop(actx.currentTime + 4.0);
+    } catch(e) { console.warn('[XIX] Audio stinger skipped:', e); }
+  }
+
+  // 3. Setup Bezier Drone Path
+  const endPos = targetVp.pos; // [0, 1.72, 0]
+  // P0: Start 300m high, 180m back
+  const p0 = [0, 300, 180];
+  // P1: Control Point pulls the camera to drop sharply first, then skim forward
+  const p1 = [0, 10, 180]; 
+  // P2: End Position (Polo Field Centre)
+  const p2 = endPos;
+
+  const startPitch = -Math.PI / 2; // Looking straight down
+  const endPitch = targetVp.pitch || 0;
+  const targetYaw = targetVp.yaw || 0;
+  
+  cam.position.set(...p0);
+  cam.rotation.set(startPitch, targetYaw, 0, "YXZ");
+
+  // 4. Execute 4.5s Sequence (1.5s Hold + 3.0s Swoop)
+  await new Promise(resolve => setTimeout(resolve, 1500));
+  
+  // Fade out title card while descent begins
+  titleCard.style.opacity = '0';
+  setTimeout(() => titleCard.remove(), 1500);
+
+  const duration = 3000;
+  const start = performance.now();
+
+  await new Promise(resolve => {
+    // Smooth cubic ease-in-out for the velocity of the camera
+    function ease(t) { return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
+    
+    function step(now) {
+      const t = Math.min((now - start) / duration, 1);
+      const e = ease(t);
+      
+      // Quadratic Bezier interpolation for a curved spatial arc
+      const mt = 1 - e;
+      cam.position.x = mt*mt*p0[0] + 2*mt*e*p1[0] + e*e*p2[0];
+      cam.position.y = mt*mt*p0[1] + 2*mt*e*p1[1] + e*e*p2[1];
+      cam.position.z = mt*mt*p0[2] + 2*mt*e*p1[2] + e*e*p2[2];
+      
+      // Linear interpolation for the camera tilting up as it lands
+      cam.rotation.x = startPitch + (endPitch - startPitch) * e;
+      
+      if(t < 1) requestAnimationFrame(step);
+      else resolve();
     }
     requestAnimationFrame(step);
   });
-  setView(endPos,targetVp.yaw,0);
+
+  // Re-engage normal estate controls
+  if (typeof activate === 'function') activate();
+  setView(endPos, targetYaw, endPitch);
   setCaption(targetVp.caption);
+  introPlaying = false;
 }
 
 function toggleAerial(btn){
@@ -1164,6 +1237,11 @@ function openPropertyPanel(key) {
   const data = PROPERTY_DATA[propKey];
   if (!data) { console.warn('[XIX] No property data for', key); return; }
   _showPropertyPanel(data, propKey);
+  
+  // Activate Interior Bokeh DOF when viewing residential/clubhouse details
+  if (['villas', 'lofts', 'clubhouse'].includes(propKey)) {
+    setInteriorDOF(true, 3.5);
+  }
 }
 
 function _showPropertyPanel(data, propKey) {
@@ -1259,9 +1337,15 @@ function _showPropertyPanel(data, propKey) {
   // Animate in
   requestAnimationFrame(() => panel.style.transform = 'translateX(0)');
 
-  // Close
+  // Close button handler inside _showPropertyPanel
   panel.querySelector('#pp-close-btn')?.addEventListener('click', () => {
     panel.style.transform = 'translateX(100%)';
+    
+    // Reset DOF back to global free-roam clarity when panel closes
+    if (typeof setInteriorDOF === 'function') {
+      setInteriorDOF(false);
+    }
+
     setTimeout(() => panel.remove(), 340);
     _stopPlotHighlightPulse?.();
   });
@@ -1327,6 +1411,9 @@ function bindExitButton(){
   document.getElementById("btn-close-world")?.addEventListener("click",closeWorld,{capture:true});
   document.addEventListener("keydown",e=>{
     if(e.key==="Escape"&&document.getElementById("world-overlay")?.classList.contains("open")){
+      // Safeguard: Reset DOF to crisp focus when hitting Escape
+      if (typeof setInteriorDOF === 'function') setInteriorDOF(false);
+
       if(document.pointerLockElement) document.exitPointerLock();
       else closeWorld();
     }
@@ -1334,6 +1421,9 @@ function bindExitButton(){
 }
 
 function closeWorld(){
+  // Safeguard: Reset DOF when fully exiting the 3D overlay
+  if (typeof setInteriorDOF === 'function') setInteriorDOF(false);
+
   deactivate(); hideJoystick();
   document.getElementById("world-overlay")?.classList.remove("open");
   document.getElementById("plot-panel")?.classList.remove("visible");
