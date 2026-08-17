@@ -10,7 +10,6 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
-import { setInteriorDOF } from "./graphics.js";
 import { VIEWPOINTS, ZONES, WORLD } from "./data.js";
 import { buildVillaInterior, VILLA_VIEWPOINTS } from "./villa-interior.js";
 import {
