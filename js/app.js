@@ -767,12 +767,6 @@ async function openWorldAt(viewKey) {
   resizeWorld();
   window.addEventListener("resize", resizeWorld);
 
-  // EXECUTIVE MODE: Auto-start in Aerial Orbit
-  const aerialBtn = document.getElementById('btn-aerial');
-  if (typeof toggleAerial === 'function' && !window.aerialOrbit) {
-    toggleAerial(aerialBtn);
-  }
-
   // Phase 4: Mount persistent sales badges once the world opens
   setTimeout(() => buildVillaStatusOverlays(), 100);
 
@@ -864,6 +858,12 @@ async function openWorldAt(viewKey) {
         }
       }, { passive:true, once:true });
     }
+  }
+
+  // EXECUTIVE MODE: Auto-start in Aerial Orbit
+  const aerialBtn = document.getElementById('btn-aerial');
+  if (typeof toggleAerial === 'function' && !window.aerialOrbit) {
+    toggleAerial(aerialBtn);
   }
   
   enableAudio();
