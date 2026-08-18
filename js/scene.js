@@ -1358,9 +1358,15 @@ function addLoftTerraces(){
   placeLoftGLB(-220,-40,-Math.PI/2);placeLoftGLB(-220,40,-Math.PI/2);
 }
 
-function addWestCompound(){
-  s(plane(120,185,MATS.safetyBrown(),[-390,.06,0])); s(plane(100,160,MAT_GRASS_FIELD(),[-390,.10,0]));
-  placeAptGLB(-248,-25,Math.PI/2); placeAptGLB(-248,55,Math.PI/2);
+function addWestCompound() {
+  // 1. Training Field (Aligned symmetrically at Z=0, moved flush against the west road)
+  s(plane(120, 185, MATS.safetyBrown(), [-320, .06, 0])); 
+  s(plane(100, 160, MAT_GRASS_FIELD(), [-320, .10, 0]));
+  
+  // 2. Block of Flats (Sandwiched between Main Field and Training Field)
+  // Placed symmetrically across the center horizontal axis
+  placeAptGLB(-220, -45, Math.PI / 2); 
+  placeAptGLB(-220, 45, Math.PI / 2);
 }
 
 function addPaddock(){
