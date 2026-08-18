@@ -10,6 +10,8 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
+window.plotRegistry = plotRegistry;
+
 import { VIEWPOINTS, ZONES, WORLD } from "./data.js";
 import { buildVillaInterior, VILLA_VIEWPOINTS } from "./villa-interior.js";
 import {
@@ -781,7 +783,7 @@ function showNotification(msg) {
 }
 
 // ─── RESERVATION MODAL LOGIC ──────────────────────────────────────────────────
-const GOOGLE_SCRIPT_URL = "https://script.google.com/a/macros/mixtafrica.com/s/AKfycbw0wMc4vyoUvPnxmaoSHW6mOYPNZ1F3qQzB0UaY2KJAJkV1VFfbF_yLsHYuZ-AZN3-b/exec";
+const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwR4JKertI953T1GDB90RGgCwNNZvh2CCruaR4MAb_ViViVZ3Pd4OZG3qEmwjA-axSf/exec";
 
 window.openReservationModal = function(propertyName, plotId = "") {
   const modal = document.getElementById('reservation-modal');
