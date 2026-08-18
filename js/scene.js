@@ -62,7 +62,7 @@ let aptGLBScene = null, pendingApts = [];
 const APT_SCALE = 31.18;
 
 let loftGLBScene = null, pendingLofts = [];
-const LOFT_SCALE = 20.0;
+const LOFT_SCALE = 28.5;
 
 export const plotRegistry = new Map();
 export let onPlotSelected = null;
@@ -1311,7 +1311,7 @@ export function highlightPlot(plotKey){
   });
 }
 
-export function reservePlot(plotKey){
+export function reservePlot(plotKey) {
   const plot = plotRegistry.get(plotKey); 
   if (!plot || plot.status === "reserved") return false;
   plot.status = "reserved";
@@ -1319,11 +1319,9 @@ export function reservePlot(plotKey){
   if (plot.villaClone) {
     plot.villaClone.traverse(c => {
       if (c.isMesh) {
+        if (!c.userData.origMat) c.userData.origMat = c.material;
         c.material = new THREE.MeshBasicMaterial({
-          color: 0xff2222,
-          transparent: true,
-          opacity: 0.45,
-          wireframe: true
+          color: 0xff2222, transparent: true, opacity: 0.5, wireframe: true
         });
       }
     });
@@ -1335,9 +1333,30 @@ export function reservePlot(plotKey){
   }
   
   plotRegistry.set(plotKey, plot); 
+  if (typeof window.updatePlotBadge === 'function') window.updatePlotBadge(plotKey, "RESERVED");
+  return true;
+}
+
+export function unreservePlot(plotKey) {
+  const plot = plotRegistry.get(plotKey);
+  if (!plot || plot.status !== "reserved") return false;
+  plot.status = "available";
   
-  if (typeof window.updatePlotBadge === 'function') window.updatePlotBadge(plotKey);
+  if (plot.villaClone) {
+    plot.villaClone.traverse(c => {
+      if (c.isMesh && c.userData.origMat) {
+        c.material = c.userData.origMat;
+      }
+    });
+  }
   
+  if (plot.overlay) {
+    plot.overlay.material.color.set(0x00ff88);
+    plot.overlay.material.opacity = 0;
+  }
+  
+  plotRegistry.set(plotKey, plot);
+  if (typeof window.updatePlotBadge === 'function') window.updatePlotBadge(plotKey, "AVAILABLE");
   return true;
 }
 
