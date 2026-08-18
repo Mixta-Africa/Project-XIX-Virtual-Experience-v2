@@ -566,98 +566,106 @@ window.updatePlotBadge = function(plotKey, status) {
     }
   }
 };
-//           PLOT SYSTEM
+//           PLOT SYSTEM (INFINITY MODEL)
 function bindPlotSystem() {
   const canvas = document.getElementById("world-canvas");
   if (!canvas) return;
 
-  let startX = 0, startY = 0;
-  let lastHoverTime = 0;
+  let _isDragging = false;
+  let _dragStartX = 0;
+  let _dragStartY = 0;
+  let _lastHoverTime = 0;
 
-  // 1. Hover State (Green Hologram Effect)
+  canvas.addEventListener("pointerdown", e => { 
+    _isDragging = false;
+    _dragStartX = e.clientX; 
+    _dragStartY = e.clientY; 
+  });
+
+  // 1. Hover State (Disabled safely during drag/swipe)
   canvas.addEventListener("pointermove", e => {
-    // Limit raycasting to 20fps so it doesn't slow down the browser
-    if (Date.now() - lastHoverTime < 50) return; 
-    lastHoverTime = Date.now();
-    
-    if (!document.getElementById("world-overlay")?.classList.contains("open")) return;
-    if (document.pointerLockElement) return; // Skip if actively walking around
-
-    const rect = canvas.getBoundingClientRect();
-    const mouse = new THREE.Vector2(
-      ((e.clientX - rect.left) / rect.width) * 2 - 1,
-     -((e.clientY - rect.top) / rect.height) * 2 + 1
-    );
-    
-    const raycaster = new THREE.Raycaster();
-    const cam = typeof getCamera === 'function' ? getCamera() : null;
-    if (!cam) return;
-    raycaster.setFromCamera(mouse, cam);
-
-    const sc = typeof getScene === 'function' ? getScene() : null;
-    if (!sc) return;
-
-    // Check for floating badges or ground plots
-    const badgeHits = raycaster.intersectObjects(sc.children, false).filter(h => h.object.userData?.isPlotBadge);
-    let plotKey = null;
-    
-    if (badgeHits.length > 0) {
-      plotKey = badgeHits[0].object.userData.plotKey;
-    } else if (typeof getPlotAtRay === 'function') {
-      plotKey = getPlotAtRay(raycaster);
+    // If finger moves more than 6px, lock into camera pan mode
+    if (Math.abs(e.clientX - _dragStartX) > 6 || Math.abs(e.clientY - _dragStartY) > 6) {
+      _isDragging = true;
     }
 
-    // Send the signal to scene.js to light up the building
-    if (typeof window.setHoveredPlot === 'function') {
-      window.setHoveredPlot(plotKey);
+    // Throttle raycasting, and NEVER run it while dragging
+    const now = performance.now();
+    if (!_isDragging && (now - _lastHoverTime > 50)) {
+      _lastHoverTime = now;
+      
+      if (!document.getElementById("world-overlay")?.classList.contains("open")) return;
+      if (document.pointerLockElement) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const mouse = new THREE.Vector2(
+        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+       -((e.clientY - rect.top) / rect.height) * 2 + 1
+      );
+      
+      const raycaster = new THREE.Raycaster();
+      const cam = typeof getCamera === 'function' ? getCamera() : null;
+      if (!cam) return;
+      raycaster.setFromCamera(mouse, cam);
+
+      const sc = typeof getScene === 'function' ? getScene() : null;
+      if (!sc) return;
+
+      const badgeHits = raycaster.intersectObjects(sc.children, false).filter(h => h.object.userData?.isPlotBadge);
+      let plotKey = null;
+      
+      if (badgeHits.length > 0) {
+        plotKey = badgeHits[0].object.userData.plotKey;
+      } else if (typeof getPlotAtRay === 'function') {
+        plotKey = getPlotAtRay(raycaster);
+      }
+
+      if (typeof window.setHoveredPlot === 'function') {
+        window.setHoveredPlot(plotKey);
+      }
     }
   });
 
-  // 2. Click to Select
-  canvas.addEventListener("pointerdown", e => { startX = e.clientX; startY = e.clientY; });
-
+  // 2. Click to Select (Only fires on clean taps)
   canvas.addEventListener("pointerup", e => {
     if (!document.getElementById("world-overlay")?.classList.contains("open")) return;
 
-    // Smart Interaction: Ignore click if user was dragging/panning
-    const dragDist = Math.abs(e.clientX - startX) + Math.abs(e.clientY - startY);
-    if (dragDist > 5) return;
-
-    const rect = canvas.getBoundingClientRect();
-    const mouse = new THREE.Vector2(
-      ((e.clientX - rect.left) / rect.width) * 2 - 1,
-     -((e.clientY - rect.top) / rect.height) * 2 + 1
-    );
-    
-    const raycaster = new THREE.Raycaster();
-    const cam = typeof getCamera === 'function' ? getCamera() : null;
-    if (!cam) return;
-    raycaster.setFromCamera(mouse, cam);
-
-    const sc = typeof getScene === 'function' ? getScene() : null;
-    if (!sc) return;
-
-    const badgeHits = raycaster.intersectObjects(sc.children, false).filter(h => h.object.userData?.isPlotBadge);
-    let plotKey = null;
-    
-    if (badgeHits.length > 0) {
-      plotKey = badgeHits[0].object.userData.plotKey;
-    } else if (typeof getPlotAtRay === 'function') {
-      plotKey = getPlotAtRay(raycaster);
-    }
-
-    if (plotKey) {
-      if (document.pointerLockElement) document.exitPointerLock();
-      const plot = typeof plotRegistry !== 'undefined' ? plotRegistry.get(plotKey) : null;
+    if (!_isDragging) {
+      const rect = canvas.getBoundingClientRect();
+      const mouse = new THREE.Vector2(
+        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+       -((e.clientY - rect.top) / rect.height) * 2 + 1
+      );
       
-      if (plot && plot.status === "reserved") {
-        if (typeof showNotification === 'function') {
-          showNotification("This has been Reserved, please choose another property.");
+      const raycaster = new THREE.Raycaster();
+      const cam = typeof getCamera === 'function' ? getCamera() : null;
+      if (!cam) return;
+      raycaster.setFromCamera(mouse, cam);
+
+      const sc = typeof getScene === 'function' ? getScene() : null;
+      if (!sc) return;
+
+      const badgeHits = raycaster.intersectObjects(sc.children, false).filter(h => h.object.userData?.isPlotBadge);
+      let plotKey = null;
+      
+      if (badgeHits.length > 0) {
+        plotKey = badgeHits[0].object.userData.plotKey;
+      } else if (typeof getPlotAtRay === 'function') {
+        plotKey = getPlotAtRay(raycaster);
+      }
+
+      if (plotKey) {
+        if (document.pointerLockElement) document.exitPointerLock();
+        const plot = typeof plotRegistry !== 'undefined' ? plotRegistry.get(plotKey) : null;
+        
+        if (plot && plot.status === "reserved") {
+          if (typeof showNotification === 'function') showNotification("This has been Reserved, please choose another property.");
+        } else {
+          showPlotPanel(plotKey);
         }
-      } else {
-        showPlotPanel(plotKey);
       }
     }
+    _isDragging = false; // Reset state
   });
 }
 
@@ -1830,6 +1838,14 @@ function buildVillaStrip(){
 function injectPropertyDirectory() {
   if (document.getElementById('xix-property-directory')) return;
 
+  // BLACK RECTANGLE FIX: CSS Safeguard against empty HTML containers
+  if (!document.getElementById('xix-safe-css')) {
+    const safeCss = document.createElement('style');
+    safeCss.id = 'xix-safe-css';
+    safeCss.textContent = `#dir-dropdown-panel:empty, .xix-tooltip:empty { display: none !important; }`;
+    document.head.appendChild(safeCss);
+  }
+
   const dirContainer = document.createElement('div');
   dirContainer.id = 'xix-property-directory';
   dirContainer.style.cssText = `
@@ -1878,7 +1894,6 @@ function injectPropertyDirectory() {
 
     if (typeof plotRegistry === 'undefined') return;
 
-    // Sort keys sequentially (1 to 223)
     const sortedKeys = Array.from(plotRegistry.keys()).sort((a, b) => Number(a) - Number(b));
 
     sortedKeys.forEach(key => {
@@ -1906,15 +1921,11 @@ function injectPropertyDirectory() {
           
         `;
 
-        // Click to fly to unit
         item.addEventListener('click', () => {
           panel.style.display = 'none';
-          
           if (plot.isApt) {
-             // For apartments, we just fly to the block for now
              if (typeof setView === 'function') setView([-245, 40, 0], Math.PI/2, -0.4);
           } else {
-             // Fly to specific Villa/Loft
              if (typeof setView === 'function') setView([plot.x, 30, plot.z + 40], 0, -0.6);
              if (typeof showPlotPanel === 'function') showPlotPanel(key);
           }
