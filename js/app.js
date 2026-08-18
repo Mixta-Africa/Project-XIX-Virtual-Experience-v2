@@ -744,40 +744,34 @@ async function openWorldAt(viewKey) {
   showLoading(); setLoadingProgress(10);
 
   if(!sceneReady){
-    const canvas3d=document.getElementById("world-canvas");
+    const canvas3d = document.getElementById("world-canvas");
     initScene(canvas3d);
     setLoadingProgress(40);
-    initControls(getCamera(),getRenderer());
+    initControls(getCamera(), getRenderer());
     setLoadingProgress(70);
     initMinimap("assets/plan-2d.png");
     setLoadingProgress(85);
     resizeWorld();
-    composer=initPostProcessing(getRenderer(),getScene(),getCamera());
+    composer = initPostProcessing(getRenderer(), getScene(), getCamera());
     setPerfModeGraphics('fast');
     setLoadingProgress(90);
-    buildViewpointStrip(document.getElementById("viewpoint-strip"),(key,vp)=>teleportTo(key,vp));
-    sceneReady=true; setLoadingProgress(100);
+    buildViewpointStrip(document.getElementById("viewpoint-strip"), (key, vp) => teleportTo(key, vp));
+    sceneReady = true; setLoadingProgress(100);
   }
 
-  await new Promise(r=>setTimeout(r,300));
+  await new Promise(r => setTimeout(r, 300));
   hideLoading();
-  const overlay=document.getElementById("world-overlay");
+  const overlay = document.getElementById("world-overlay");
   overlay.classList.add("open");
-  document.body.style.overflow="hidden";
+  document.body.style.overflow = "hidden";
   resizeWorld();
-  window.addEventListener("resize",resizeWorld);
-
-  setTimeout(() => buildVillaStatusOverlays(), 100);
+  window.addEventListener("resize", resizeWorld);
 
   // EXECUTIVE MODE: Auto-start in Aerial Orbit
   const aerialBtn = document.getElementById('btn-aerial');
   if (typeof toggleAerial === 'function' && !window.aerialOrbit) {
     toggleAerial(aerialBtn);
   }
-
-  enableAudio();
-  startRenderLoop();
-}
 
   // Phase 4: Mount persistent sales badges once the world opens
   setTimeout(() => buildVillaStatusOverlays(), 100);
@@ -795,6 +789,7 @@ async function openWorldAt(viewKey) {
   _targetEyeY  = startY;
   if (typeof setYOwner === 'function') setYOwner(moveMode === 'ride' ? 'app' : 'controls');
   activate();
+  
   if(isMobile()){
     showJoystick();
     // Inject sprint button above the joystick — clean position, not floating
@@ -870,6 +865,7 @@ async function openWorldAt(viewKey) {
       }, { passive:true, once:true });
     }
   }
+  
   enableAudio();
   startRenderLoop();
 }
