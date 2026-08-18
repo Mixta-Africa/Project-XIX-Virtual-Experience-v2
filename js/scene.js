@@ -1330,28 +1330,58 @@ function addWestCompound() {
   placeAptGLB(-220, 45, Math.PI / 2);
 }
 
-function addPaddock(){
-  s(plane(40,38,MAT_GRASS_FIELD(),[218,.07,0]));
-  const postPos=[];
-  for(let fz=-19;fz<=19;fz+=4){postPos.push([198,.8,fz]);postPos.push([238,.8,fz]);}
-  for(let fx=198;fx<=238;fx+=4){postPos.push([fx,.8,-19]);postPos.push([fx,.8,19]);}
+function addPaddock() {
+  // 1. Paddock Ground (Centered on X: 240, placed North at Z: -30)
+  s(plane(70, 60, MAT_GRASS_FIELD(), [240, 0.07, -30]));
+  
+  // 2. Post-and-Rail Fencing (Perfectly outlines the 70x60 grass plane)
+  const postPos = [];
+  const xMin = 205, xMax = 275, zMin = -60, zMax = 0;
+  
+  for(let fz = zMin; fz <= zMax; fz += 5) { 
+    postPos.push([xMin, 0.8, fz]); 
+    postPos.push([xMax, 0.8, fz]); 
+  }
+  for(let fx = xMin; fx <= xMax; fx += 5) { 
+    postPos.push([fx, 0.8, zMin]); 
+    postPos.push([fx, 0.8, zMax]); 
+  }
   buildInstancedFencePosts(postPos); 
-  const rm=MATS.railWhite();
-  s(box(.08,.1,38,rm,[198,1.0,0],0,false)); s(box(.08,.1,38,rm,[238,1.0,0],0,false));
-  s(box(40,.1,.08,rm,[218,1.0,-19],0,false)); s(box(40,.1,.08,rm,[218,1.0,19],0,false));
-  s(plane(60,60,MATS.grassGreen(),[255,.06,-58]));
+
+  // 3. Horizontal Rails
+  const rm = MATS.railWhite();
+  s(box(0.08, 0.1, 60, rm, [xMin, 1.0, -30], 0, false)); // West rail
+  s(box(0.08, 0.1, 60, rm, [xMax, 1.0, -30], 0, false)); // East rail
+  s(box(70, 0.1, 0.08, rm, [240, 1.0, zMin], 0, false)); // North rail
+  s(box(70, 0.1, 0.08, rm, [240, 1.0, zMax], 0, false)); // South rail
 }
 
-function addGamePark(){
-  s(plane(54,44,MAT_GRASS_FIELD(),[218,.07,52]));
-  const cols=[0xe8602a,0x2a88c8,0xe8c82a,0x4ac84a];
-  for(let i=0;i<5;i++){const h=2.6+i*.4;s(box(3.2,h,3.2,new THREE.MeshStandardMaterial({color:cols[i%4],roughness:.6}),[203+i*7,h/2,50+(i%2)*8]));}
+function addGamePark() {
+  // 1. Game Park Ground (Centered on X: 240, placed Mid at Z: 40)
+  s(plane(70, 60, MAT_GRASS_FIELD(), [240, 0.07, 40]));
+  
+  // 2. Playground Abstract Blocks (Distributed symmetrically within the park)
+  const cols = [0xe8602a, 0x2a88c8, 0xe8c82a, 0x4ac84a];
+  for(let i = 0; i < 5; i++) {
+    const h = 2.6 + i * 0.4;
+    const mat = new THREE.MeshStandardMaterial({ color: cols[i % 4], roughness: 0.6 });
+    // Neatly spaced along X, staggered on Z for a playful but organized look
+    s(box(3.2, h, 3.2, mat, [220 + i * 10, h / 2, 40 + (i % 2 === 0 ? -10 : 10)]));
+  }
 }
 
-function addCommercialBlock(){
-  const g=new THREE.Group(); g.position.set(270,0,65);
-  g.add(box(42,9,26,MATS.flatGrey(),[0,4.5,0]));
-  g.add(box(.4,8.5,22,MAT_GLASS(.5),[-21.2,4.5,0]));
+function addCommercialBlock() {
+  // Centered exactly in line with the Paddock and Game Park (X: 240)
+  // Sitting at the South end (Z: 110) aligned with the Clubhouse
+  const g = new THREE.Group(); 
+  g.position.set(240, 0, 110);
+  
+  // Main Building
+  g.add(box(42, 9, 26, MATS.flatGrey(), [0, 4.5, 0]));
+  
+  // Glass Facade (facing West toward the polo field)
+  g.add(box(0.4, 8.5, 22, MAT_GLASS(0.5), [-21.2, 4.5, 0]));
+  
   scene.add(g);
 }
 
