@@ -1057,17 +1057,66 @@ function addYardMarkings(){
   buildInstancedFencePosts(postPositions);
 }
 
-function addRoads(){
-  const am=new THREE.MeshStandardMaterial({color:0x1a1e1c,roughness:.88}); const Y=.13;
-  s(plane(700,30,am,[0,Y,215])); s(plane(700,4,MATS.grassGreen(),[0,Y+.01,215]));
-  s(plane(8,220,am,[-155,Y,0])); s(plane(8,220,am,[155,Y,0]));
-  s(plane(320,8,am,[0,Y,-104])); s(plane(320,8,am,[0,Y,104]));
-  s(plane(8,220,am,[-177,Y,-5])); s(plane(8,220,am,[177,Y,-5]));
-  s(plane(320,7,am,[30,Y,-118]));
-  s(plane(400,8,am,[0,Y,128])); s(plane(130,35,am,[0,Y,148]));
-  s(plane(8,280,am,[-270,Y,20])); s(plane(8,200,am,[-230,Y,10]));
-  s(plane(150,8,am,[-310,Y,145])); s(plane(8,250,am,[200,Y,10]));
-  s(plane(55,8,am,[215,Y,120]));
+function addRoads() {
+  // 1. Premium Asphalt with Z-Fighting Protection
+  // 'polygonOffset' gently nudges the road forward in the rendering buffer 
+  // so the overlapping intersections never glitch or flicker.
+  const am = new THREE.MeshStandardMaterial({
+    color: 0x1a1e1c, 
+    roughness: 0.88,
+    polygonOffset: true,
+    polygonOffsetFactor: -1, 
+    polygonOffsetUnits: -1
+  }); 
+  const Y = 0.13;
+  
+  // 2. The South Boulevard (Main Entrance)
+  s(plane(700, 30, am, [0, Y, 215])); 
+  s(plane(700, 4, MATS.grassGreen(), [0, Y + 0.01, 215])); // Green median
+  
+  // 3. The Polo Ring (Straight Edges)
+  s(plane(8, 220, am, [-155, Y, 0])); // West Vertical
+  s(plane(8, 220, am, [ 155, Y, 0])); // East Vertical
+  s(plane(320, 8, am, [0, Y, 104]));  // South Horizontal
+  s(plane(240, 8, am, [0, Y, -104])); // North Horizontal (Shortened for curve)
+  
+  // 4. Outer Avenues
+  s(plane(8, 220, am, [-177, Y, -5])); // Outer West
+  s(plane(8, 220, am, [ 177, Y, -5])); // Outer East
+  
+  // 5. Equestrian & Training Quarter Roads (West)
+  s(plane(8, 280, am, [-270, Y, 20])); 
+  s(plane(8, 200, am, [-230, Y, 10]));
+  s(plane(150, 8, am, [-310, Y, 145]));
+  
+  // 6. East Precinct Roads (Commercial/Paddock)
+  s(plane(8, 250, am, [ 200, Y, 10]));
+  s(plane(55, 8, am, [ 215, Y, 120]));
+  
+  // 7. Clubhouse Driveways
+  s(plane(400, 8, am, [0, Y, 128])); 
+  s(plane(130, 35, am, [0, Y, 148]));
+
+  // 8. THE CRESCENT ROAD (Beautiful sweeping curve)
+  const cShape = new THREE.Shape();
+  // Start near the North-West corner
+  cShape.moveTo(-160, 104);
+  cShape.lineTo(-120, 104);
+  // Sweep the road up and perfectly around the back of the 10 crescent villas
+  cShape.quadraticCurveTo(0, 148, 120, 104);
+  cShape.lineTo(160, 104);
+  // Draw the thickness (8m wide) back to the start
+  cShape.lineTo(160, 112);
+  cShape.quadraticCurveTo(0, 158, -120, 112);
+  cShape.lineTo(-160, 112);
+  cShape.lineTo(-160, 104);
+
+  const cGeo = new THREE.ShapeGeometry(cShape, 64);
+  const cMesh = new THREE.Mesh(cGeo, am);
+  cMesh.rotation.x = -Math.PI / 2; // Lay it flat on the ground
+  cMesh.position.set(0, Y, 0);
+  cMesh.receiveShadow = true;
+  scene.add(cMesh);
 }
 
 function addLake() {
