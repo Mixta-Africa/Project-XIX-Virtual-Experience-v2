@@ -522,6 +522,33 @@ function buildVillaStatusOverlays() {
   });
 }
 
+window.updatePlotBadge = function(plotKey) {
+  const sc = typeof getScene === 'function' ? getScene() : null;
+  if (!sc) return;
+  
+  sc.traverse(obj => {
+    if (obj.userData?.isPlotBadge && obj.userData?.plotKey === plotKey) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 160; canvas.height = 48;
+      const ctx = canvas.getContext('2d');
+      
+      ctx.fillStyle = 'rgba(28,10,10,0.88)';
+      ctx.beginPath(); ctx.roundRect(2, 2, 156, 44, 10); ctx.fill();
+      ctx.strokeStyle = 'rgba(220,70,70,0.6)'; ctx.lineWidth = 2; ctx.stroke();
+      
+      ctx.fillStyle = '#ff6666'; ctx.font = 'bold 15px Inter, sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('RESERVED', 80, 24);
+      
+      if (obj.material.map) obj.material.map.dispose();
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      obj.material.map = tex;
+      obj.material.needsUpdate = true;
+    }
+  });
+};
+
 //           PLOT SYSTEM
 function bindPlotSystem() {
   const canvas = document.getElementById("world-canvas");
@@ -680,7 +707,8 @@ document.getElementById('reservation-form')?.addEventListener('submit', async (e
     await fetch(GOOGLE_SCRIPT_URL, {
       method: "POST",
       mode: "no-cors", 
-      headers: { "Content-Type": "application/json" },
+      // 'text/plain' completely bypasses Google's strict CORS block
+      headers: { "Content-Type": "text/plain;charset=utf-8" }, 
       body: JSON.stringify(payload)
     });
 
