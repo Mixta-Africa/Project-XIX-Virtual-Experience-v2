@@ -1499,11 +1499,11 @@ function addWestCompound() {
   s(plane(120, 185, MATS.safetyBrown(), [-320, .06, 0])); 
   s(plane(100, 160, MAT_GRASS_FIELD(), [-320, .10, 0]));
   
-  // 2. Block of Flats (Middle Layer, sandwiched between Lofts and Training Field)
+  // 2. Block of Flats (Middle Layer)
   placeAptGLB(-245, -45, Math.PI / 2); 
   placeAptGLB(-245, 45, Math.PI / 2);
 
-  // 3. Register Individual Apartment Units into the Global Database sequentially
+  // 3. Register Individual Apartment Units sequentially
   // 24x 1 Bed Maisonette
   for (let i = 0; i < 24; i++) {
     const key = String(window._nextUnitId++);
