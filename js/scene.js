@@ -534,17 +534,6 @@ function placeVillaGLBWithLOD(x, z, ry, plotKey) {
   scene.add(lod);
   if (plotKey) addPlotOverlay(x, z, ry, plotKey, lod);
   _villaInstData.push({ x, z, ry });
-  // We check the global variable _aerialModeActive that tracks if the user is in the sky
-  if (_aerialModeActive) {
-    // We lock the LOD system so it stops trying to calculate distance
-    lod.autoUpdate = false;
-    
-    // We loop through the 3 detail levels (High, Medium, Invisible)
-    lod.levels.forEach((lv, i) => {
-      // We force ONLY the highest detail level (index 0) to be visible
-      lv.object.visible = (i === 0);
-    });
-  }
 }
 
 let _aerialModeActive = false;
@@ -553,22 +542,9 @@ export function setAerialMode(on) {
   _aerialModeActive = on;
   if (!scene) return;
 
-  scene.traverse(obj => {
-    if (!(obj instanceof THREE.LOD)) return;
-    if (!obj.userData.isVillaGLB) return;
-
-    if (on) {
-      obj.autoUpdate = false;
-      obj.levels.forEach((lv, i) => {
-        lv.object.visible = (i === 0); 
-      });
-    } else {
-      obj.autoUpdate = true;
-      obj.levels.forEach(lv => { lv.object.visible = true; });
-    }
-  });
-
-  if (_impostorMesh) _impostorMesh.visible = !on;
+  // We remove the LOD locking so the engine can natively swap to 
+  // the highly optimized 1-draw-call impostor mesh when high in the sky.
+  if (_impostorMesh) _impostorMesh.visible = true; 
 }
 
 function _buildVillaImpostors() {
