@@ -555,17 +555,54 @@ function bindPlotSystem() {
   if (!canvas) return;
 
   let startX = 0, startY = 0;
+  let lastHoverTime = 0;
 
-  // Record where the mouse/finger started
-  canvas.addEventListener("pointerdown", e => {
-    startX = e.clientX; startY = e.clientY;
+  // 1. Hover State (Green Hologram Effect)
+  canvas.addEventListener("pointermove", e => {
+    // Limit raycasting to 20fps so it doesn't slow down the browser
+    if (Date.now() - lastHoverTime < 50) return; 
+    lastHoverTime = Date.now();
+    
+    if (!document.getElementById("world-overlay")?.classList.contains("open")) return;
+    if (document.pointerLockElement) return; // Skip if actively walking around
+
+    const rect = canvas.getBoundingClientRect();
+    const mouse = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+     -((e.clientY - rect.top) / rect.height) * 2 + 1
+    );
+    
+    const raycaster = new THREE.Raycaster();
+    const cam = typeof getCamera === 'function' ? getCamera() : null;
+    if (!cam) return;
+    raycaster.setFromCamera(mouse, cam);
+
+    const sc = typeof getScene === 'function' ? getScene() : null;
+    if (!sc) return;
+
+    // Check for floating badges or ground plots
+    const badgeHits = raycaster.intersectObjects(sc.children, false).filter(h => h.object.userData?.isPlotBadge);
+    let plotKey = null;
+    
+    if (badgeHits.length > 0) {
+      plotKey = badgeHits[0].object.userData.plotKey;
+    } else if (typeof getPlotAtRay === 'function') {
+      plotKey = getPlotAtRay(raycaster);
+    }
+
+    // Send the signal to scene.js to light up the building
+    if (typeof window.setHoveredPlot === 'function') {
+      window.setHoveredPlot(plotKey);
+    }
   });
 
-  // Execute when the mouse/finger is lifted
+  // 2. Click to Select
+  canvas.addEventListener("pointerdown", e => { startX = e.clientX; startY = e.clientY; });
+
   canvas.addEventListener("pointerup", e => {
     if (!document.getElementById("world-overlay")?.classList.contains("open")) return;
 
-    // Smart Interaction: If the cursor moved more than 5 pixels, the user was steering the camera. Abort selection.
+    // Smart Interaction: Ignore click if user was dragging/panning
     const dragDist = Math.abs(e.clientX - startX) + Math.abs(e.clientY - startY);
     if (dragDist > 5) return;
 
@@ -583,31 +620,24 @@ function bindPlotSystem() {
     const sc = typeof getScene === 'function' ? getScene() : null;
     if (!sc) return;
 
-    // 1. Check for floating availability badges
-    const badgeHits = raycaster.intersectObjects(sc.children, false)
-      .filter(h => h.object.userData?.isPlotBadge);
-
+    const badgeHits = raycaster.intersectObjects(sc.children, false).filter(h => h.object.userData?.isPlotBadge);
     let plotKey = null;
+    
     if (badgeHits.length > 0) {
       plotKey = badgeHits[0].object.userData.plotKey;
-    } else {
-      // 2. Check ground plot overlays
-      if (typeof getPlotAtRay === 'function') plotKey = getPlotAtRay(raycaster);
+    } else if (typeof getPlotAtRay === 'function') {
+      plotKey = getPlotAtRay(raycaster);
     }
 
     if (plotKey) {
-      // CRITICAL: If the system locked the pointer, force it to unlock instantly
       if (document.pointerLockElement) document.exitPointerLock();
-
       const plot = typeof plotRegistry !== 'undefined' ? plotRegistry.get(plotKey) : null;
       
       if (plot && plot.status === "reserved") {
-        // Display the subtle toast notification for reserved plots
         if (typeof showNotification === 'function') {
-          showNotification("This has been Reserved, please choose another property");
+          showNotification("This has been Reserved, please choose another property.");
         }
       } else {
-        // Open the panel for available plots
         showPlotPanel(plotKey);
       }
     }
@@ -1388,19 +1418,51 @@ window.openGallery = function(type) {
 
 // ─── SPAWN-ON-DEMAND INTERIOR TRIGGER ────────────────────────────────────────
 window.startIsolatedInterior = function(propKey) {
-  // We will build the 3D spawn logic in scene.js next.
-  // For now, this cleanly closes the panel.
+  // 1. Cleanly close the property panel
   const panel = document.getElementById('xix-prop-panel');
   if (panel) {
     panel.style.transform = 'translateX(100%)';
     setTimeout(() => panel.remove(), 400);
   }
   
+  // 2. Trigger the 3D builder in scene.js
   if (typeof window.triggerInteriorBuild === 'function') {
     window.triggerInteriorBuild(propKey);
   } else {
-    alert("Interior 3D Builder is ready to be written in scene.js!");
+    console.warn("Interior 3D Builder missing in scene.js!");
+    return;
   }
+
+  // 3. Create the "Exit Walkthrough" button
+  const exitBtn = document.createElement('button');
+  exitBtn.innerHTML = `Exit Walkthrough`;
+  exitBtn.style.cssText = `
+    position:fixed; bottom:120px; left:50%; transform:translateX(-50%);
+    background:rgba(201,168,76,0.95); color:#061208; border:none; padding:14px 28px;
+    border-radius:30px; font-size:14px; font-weight:600; font-family:Inter,sans-serif;
+    cursor:pointer; z-index:2500; box-shadow:0 8px 24px rgba(0,0,0,0.5);
+    transition: transform 0.2s;
+  `;
+  exitBtn.addEventListener('mouseenter', () => exitBtn.style.transform = 'translateX(-50%) scale(1.05)');
+  exitBtn.addEventListener('mouseleave', () => exitBtn.style.transform = 'translateX(-50%) scale(1)');
+  
+  document.getElementById('world-overlay')?.appendChild(exitBtn);
+
+  // 4. Handle Exiting the Walkthrough
+  exitBtn.addEventListener('click', () => {
+    exitBtn.remove();
+    
+    // Destroy the interior 3D model and restore the exterior shell
+    if (typeof window.destroyInteriorBuild === 'function') {
+      window.destroyInteriorBuild();
+    }
+    
+    // Return camera to a safe aerial view to re-orient the user
+    const aerialBtn = document.getElementById('btn-aerial');
+    if (typeof toggleAerial === 'function' && aerialBtn) {
+       if (!window.aerialOrbit) toggleAerial(aerialBtn);
+    }
+  });
 };
 
 function teleportTo(key, vp){
