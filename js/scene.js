@@ -696,15 +696,9 @@ export function getHotspotAtRay(raycaster) {
 // ─── VILLA HEDGES ────────────────────────────────────────────────────────────
 const _hedgeInstData = []; 
 
-const WATER_ZONES = [
-  { xMin:-85,xMax:140, zMin:-135,zMax:-95 }, 
-  { xMin:212,xMax:232, zMin:-60, zMax:-35  }, 
-];
-function isInWater(x,z){
-  return WATER_ZONES.some(w=>x>=w.xMin&&x<=w.xMax&&z>=w.zMin&&z<=w.zMax);
-}
 function collectVillaHedge(x, z, ry) {
-  if (isInWater(x,z) || isInWater(x,z-12) || isInWater(x,z+12)) return;
+  // We removed the restrictive 'isInWater' check because the new 
+  // precise architectural plotting guarantees no villas are in the lake.
   _hedgeInstData.push({ x, z, ry });
 }
 
