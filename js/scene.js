@@ -1293,11 +1293,57 @@ function addVillaRing(){
     if(!isInNoBuildZone(x+rx+fx,z+rz+fz)) cypressPositions.push([x+rx+fx,z+rz+fz]);
     if(!isInNoBuildZone(x-rx+fx,z-rz+fz)) cypressPositions.push([x-rx+fx,z-rz+fz]);
   }
-  for(let i=0;i<8;i++){placeV(-162,-96+i*PLOT,Math.PI/2);placeV(162,-96+i*PLOT,-Math.PI/2);}
-  for(let i=0;i<7;i++){placeV(-192,-82+i*PLOT,Math.PI/2);placeV(192,-82+i*PLOT,-Math.PI/2);}
-  const LAKE_CX=30,LAKE_R=90,BOW=17;
-  [-140,-116,-92,-68,-44,-20,4,28,52,76,100,124,148,172,196].forEach(x=>{
-    const dx=x-LAKE_CX; const bow=dx*dx<LAKE_R*LAKE_R?BOW*(1-(dx*dx)/(LAKE_R*LAKE_R)):0;
+  // 1. West Straight Row (Inner & Outer)
+  for(let z = 100; z >= -20; z -= 28) {
+    placeV(-162, z, Math.PI / 2);      // Inner row
+    placeV(-194, z + 14, Math.PI / 2); // Outer row (Staggered for better views)
+  }
+
+  // 2. East Straight Row (Inner & Outer)
+  for(let z = 100; z >= -20; z -= 28) {
+    placeV(162, z, -Math.PI / 2);      // Inner row
+    placeV(194, z + 14, -Math.PI / 2); // Outer row (Staggered)
+  }
+
+  // 3. The Great Northern Crescent (Hugging the curved lake)
+  // We calculate a semi-ellipse to seamlessly connect the West and East straight rows.
+  const centerX = 0;
+  const centerZ = -20;
+  const radiusXInner = 162;
+  const radiusZInner = 120; // Pushes the apex north to z = -140, right behind the lake
+  const radiusXOuter = 194;
+  const radiusZOuter = 150;
+
+  // Inner crescent arc (11 villas)
+  const innerCount = 11;
+  for (let i = 1; i <= innerCount; i++) {
+    const t = i / (innerCount + 1); 
+    const angle = Math.PI + t * Math.PI; // Sweeps from 180 degrees to 360 degrees
+    
+    const x = centerX + Math.cos(angle) * radiusXInner;
+    const z = centerZ + Math.sin(angle) * radiusZInner;
+    const rotY = -(angle + Math.PI / 2); // Rotates the villa to face perfectly inward
+    placeV(x, z, rotY);
+  }
+
+  // Outer crescent arc (13 villas)
+  const outerCount = 13;
+  for (let i = 1; i <= outerCount; i++) {
+    const t = i / (outerCount + 1);
+    const angle = Math.PI + t * Math.PI;
+    
+    const x = centerX + Math.cos(angle) * radiusXOuter;
+    const z = centerZ + Math.sin(angle) * radiusZOuter;
+    const rotY = -(angle + Math.PI / 2); 
+    placeV(x, z, rotY);
+  }
+  
+  // 4. South isolated plots (Clubhouse flanks)
+  for(const side of [-1, 1]) {
+    [65, 93, 121].forEach(xa => {
+      placeV(side * xa, 105 + xa * 0.04, 0);
+    });
+  }
     placeV(x,-132-bow,0);
   });
   for(const side of[-1,1]) [65,93,121].forEach(xa=>{placeV(side*xa,105+xa*.04,0);});
