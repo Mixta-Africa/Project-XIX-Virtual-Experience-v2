@@ -1417,7 +1417,6 @@ window.openGallery = function(type) {
 };
 
 // ─── SPAWN-ON-DEMAND INTERIOR TRIGGER ────────────────────────────────────────
-// ─── SPAWN-ON-DEMAND INTERIOR TRIGGER ────────────────────────────────────────
 window.startIsolatedInterior = function(propKey) {
   // 1. Cleanly close the property panel
   const panel = document.getElementById('xix-prop-panel');
