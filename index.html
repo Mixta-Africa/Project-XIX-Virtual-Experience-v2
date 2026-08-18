@@ -666,5 +666,41 @@ window.closeProductPanel = closeProductPanel;
 setTimeout(() => { window.__moduleReady.showProductPanel = openProductPanel; window.__moduleReady.closeProductPanel = closeProductPanel; }, 500);
 window.addEventListener("resize", resizePanelViewer, { passive:true });
 </script>
+
+<div id="reservation-modal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(6,18,8,0.85); backdrop-filter:blur(12px); align-items:center; justify-content:center; padding:20px;">
+  <div style="background:#0a1a0e; border:1px solid rgba(201,168,76,0.4); border-radius:12px; width:100%; max-width:440px; padding:28px; color:#f0ece0; position:relative;">
+    <button id="res-close-btn" style="position:absolute; top:16px; right:16px; font-size:20px;">✕</button>
+    <div style="font-size:11px; color:#c9a84c; text-transform:uppercase;">Project XIX Reserve</div>
+    <h3 id="res-form-title" style="font-size:1.8rem; margin:0 0 16px 0; color:#c9a84c;">Reserve Residence</h3>
+    
+    <form id="reservation-form" style="display:flex; flex-direction:column; gap:14px;">
+      <input type="hidden" id="res-plot-id" name="plotId" value="" />
+      <input type="hidden" id="res-property-name" name="propertyName" value="" />
+
+      <div>
+        <label style="font-size:11px; color:rgba(240,236,224,0.7); display:block;">Full Name *</label>
+        <input type="text" id="res-name" required style="width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(201,168,76,0.3); padding:10px; color:#fff;" />
+      </div>
+
+      <div>
+        <label style="font-size:11px; color:rgba(240,236,224,0.7); display:block;">Email Address *</label>
+        <input type="email" id="res-email" required style="width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(201,168,76,0.3); padding:10px; color:#fff;" />
+      </div>
+
+      <div>
+        <label style="font-size:11px; color:rgba(240,236,224,0.7); display:block;">Phone / WhatsApp *</label>
+        <input type="tel" id="res-phone" required style="width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(201,168,76,0.3); padding:10px; color:#fff;" />
+      </div>
+
+      <div>
+        <label style="font-size:11px; color:rgba(240,236,224,0.7); display:block;">Notes</label>
+        <textarea id="res-notes" rows="2" style="width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(201,168,76,0.3); padding:10px; color:#fff;"></textarea>
+      </div>
+
+      <button type="submit" id="res-submit-btn" style="background:#c9a84c; color:#061208; padding:12px; font-weight:600;">Submit Reservation</button>
+    </form>
+  </div>
+</div>
+  
 </body>
 </html>
