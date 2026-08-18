@@ -1278,6 +1278,46 @@ export function getPlotAtRay(raycaster){
   plotRegistry.forEach(plot=>{if(plot.overlay&&plot.status!=='reserved')plot.overlay.material.opacity=0;});
   return hits.length>0?hits[0].object.userData.plotKey:null;
 }
+// ─── PHASE 2: HOVER VISUALS (GREEN HOLOGRAM) ────────────────────────────────
+let _currentHover = null;
+
+window.setHoveredPlot = function(plotKey) {
+  if (_currentHover === plotKey) return;
+  
+  // 1. Reset the previously hovered building back to its original materials
+  if (_currentHover) {
+    const old = plotRegistry.get(_currentHover);
+    if (old && old.villaClone && old.status !== 'reserved') {
+      old.villaClone.traverse(c => {
+        if (c.isMesh && c.material && c.userData.origEmissive !== undefined) {
+          c.material.emissive.setHex(c.userData.origEmissive);
+          c.material.emissiveIntensity = c.userData.origEmissiveInt;
+        }
+      });
+    }
+  }
+  
+  _currentHover = plotKey;
+  
+  // 2. Apply the Green Glow to the newly hovered building
+  if (_currentHover) {
+    const cur = plotRegistry.get(_currentHover);
+    if (cur && cur.villaClone && cur.status !== 'reserved') {
+      cur.villaClone.traverse(c => {
+        if (c.isMesh && c.material) {
+          // Save original emissive data so we can restore it later
+          if (c.userData.origEmissive === undefined) {
+            c.userData.origEmissive = c.material.emissive.getHex();
+            c.userData.origEmissiveInt = c.material.emissiveIntensity;
+          }
+          // Inject the green glow
+          c.material.emissive.setHex(0x22cc44);
+          c.material.emissiveIntensity = 0.35;
+        }
+      });
+    }
+  }
+};
 
 // ─── VILLA RING ───────────────────────────────────────────────────────────────
 const NO_BUILD_ZONES=[[0,128,75,55],[-375,90,55,45],[-248,-25,50,22],[-248,55,50,22],
@@ -1557,57 +1597,77 @@ window.triggerInteriorBuild = function(plotKey) {
     scene.remove(_activeInteriorGroup);
   }
 
-  // Hide the exterior shell so it doesn't clip through our interior walls
+  // Hide exterior shell
   if (plot.villaClone) plot.villaClone.visible = false;
   _activeInteriorPlotKey = plotKey;
 
-  // 1. Create the container at the exact coordinates and angle of the plot
   _activeInteriorGroup = new THREE.Group();
   _activeInteriorGroup.position.set(plot.x, 0, plot.z);
-  _activeInteriorGroup.rotation.y = plot.ry; // Magic angle alignment
+  _activeInteriorGroup.rotation.y = plot.ry;
 
-  // 2. Define High-End Architectural Materials
-  const floorMat = new THREE.MeshStandardMaterial({ color: 0xeae6dc, roughness: 0.7 }); // Polished concrete/tile
-  const wallMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95 }); // Matte white paint
-  const glassMat = new THREE.MeshStandardMaterial({ 
-    color: 0xccddff, transparent: true, opacity: 0.25, roughness: 0.1, metalness: 0.8 
-  });
+  // 1. Materials
+  const floorMat = new THREE.MeshStandardMaterial({ color: 0xeae6dc, roughness: 0.7 }); 
+  const wallMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95 }); 
+  const glassMat = new THREE.MeshStandardMaterial({ color: 0xccddff, transparent: true, opacity: 0.25, roughness: 0.1, metalness: 0.8 });
+  const woodMat = new THREE.MeshStandardMaterial({ color: 0xb58e65, roughness: 0.5 }); // Luxury timber for stairs
 
-  // 3. Build Level 2 (Ground Floor: Living, Dining, Kitchen) - Elevation: 2.85m
   const L2_Y = 2.85;
-  const CEIL_H = 3.3; // 3.3m ceiling height
+  const L3_Y = 6.15;
+  const CEIL_H = 3.3; 
   
-  // Main Floor Plate (16m wide x 13m deep to encompass the 42m2 living + kitchen)
-  const l2Floor = box(16, 0.2, 13, floorMat, [0, L2_Y, 0], 0, false);
-  _activeInteriorGroup.add(l2Floor);
-
-  // Back Wall & Side Walls
-  _activeInteriorGroup.add(box(16, CEIL_H, 0.4, wallMat, [0, L2_Y + (CEIL_H/2), -6.3]));
-  _activeInteriorGroup.add(box(0.4, CEIL_H, 13, wallMat, [-7.8, L2_Y + (CEIL_H/2), 0]));
-  _activeInteriorGroup.add(box(0.4, CEIL_H, 13, wallMat, [7.8, L2_Y + (CEIL_H/2), 0]));
+  // ─── LEVEL 2 (Ground Floor: Living/Dining) ───
+  _activeInteriorGroup.add(box(16, 0.2, 13, floorMat, [0, L2_Y, 0], 0, false)); // Main Floor Plate
+  _activeInteriorGroup.add(box(16, CEIL_H, 0.4, wallMat, [0, L2_Y + (CEIL_H/2), -6.3])); // Back Wall
+  _activeInteriorGroup.add(box(0.4, CEIL_H, 13, wallMat, [-7.8, L2_Y + (CEIL_H/2), 0])); // West Wall
+  _activeInteriorGroup.add(box(0.4, CEIL_H, 13, wallMat, [7.8, L2_Y + (CEIL_H/2), 0]));  // East Wall
   
-  // Internal Kitchen Partition Wall
+  // Kitchen Partitions
   _activeInteriorGroup.add(box(6, CEIL_H, 0.3, wallMat, [-3, L2_Y + (CEIL_H/2), -2]));
+  _activeInteriorGroup.add(box(3.5, 0.9, 1.2, new THREE.MeshStandardMaterial({color: 0x222222}), [-4, L2_Y + 0.45, -2])); // Island
 
-  // Kitchen Island Placeholder (Modern luxury touch)
-  _activeInteriorGroup.add(box(3.5, 0.9, 1.2, new THREE.MeshStandardMaterial({color: 0x222222}), [-4, L2_Y + 0.45, -2]));
-
-  // Massive Front Glass Wall & Balustrade (Facing the Polo Field)
+  // L2 Front Glass
   _activeInteriorGroup.add(box(15.2, CEIL_H, 0.1, glassMat, [0, L2_Y + (CEIL_H/2), 6.3]));
-  _activeInteriorGroup.add(box(15.2, 1.1, 0.05, glassMat, [0, L2_Y + 0.55, 7.5])); // Balcony glass
+  _activeInteriorGroup.add(box(15.2, 1.1, 0.05, glassMat, [0, L2_Y + 0.55, 7.5])); // Balcony
+  
+  // ─── STAIRCASE (East Lobby) ───
+  const steps = 20;
+  const stepH = (L3_Y - L2_Y) / steps; // Approx 165mm height
+  const stepD = 0.28; // 280mm tread depth
+  for (let i = 0; i < steps; i++) {
+    // Floating wooden stairs running up the right side of the house
+    _activeInteriorGroup.add(box(1.5, stepH, stepD, woodMat, [6, L2_Y + (i * stepH) + (stepH/2), -2 + (i * stepD)], 0, false));
+  }
 
-  // Add it to the world
+  // ─── LEVEL 3 (First Floor: Master Bed & Lounge) ───
+  // L3 Floor Plate (Leaves a cutout on the East side for the stairs)
+  _activeInteriorGroup.add(box(12.5, 0.2, 13, floorMat, [-1.75, L3_Y, 0], 0, false)); 
+  _activeInteriorGroup.add(box(3.5, 0.2, 7.4, floorMat, [6.25, L3_Y, 2.8], 0, false)); // Walkway bridging to front
+
+  // L3 Exterior Walls
+  _activeInteriorGroup.add(box(16, CEIL_H, 0.4, wallMat, [0, L3_Y + (CEIL_H/2), -6.3])); 
+  _activeInteriorGroup.add(box(0.4, CEIL_H, 13, wallMat, [-7.8, L3_Y + (CEIL_H/2), 0])); 
+  _activeInteriorGroup.add(box(0.4, CEIL_H, 13, wallMat, [7.8, L3_Y + (CEIL_H/2), 0]));  
+
+  // Master Bedroom Partition (27sqm Front-Left Room)
+  _activeInteriorGroup.add(box(8, CEIL_H, 0.2, wallMat, [-3.8, L3_Y + (CEIL_H/2), 0])); // Rear separating wall
+  _activeInteriorGroup.add(box(0.2, CEIL_H, 6.3, wallMat, [0.2, L3_Y + (CEIL_H/2), 3.15])); // Side hallway wall
+  
+  // King Bed Placeholder
+  _activeInteriorGroup.add(box(2.2, 0.6, 2.4, new THREE.MeshStandardMaterial({color: 0x99aaff}), [-4, L3_Y + 0.3, 2]));
+
+  // L3 Front Glass (Polo View)
+  _activeInteriorGroup.add(box(15.2, CEIL_H, 0.1, glassMat, [0, L3_Y + (CEIL_H/2), 6.3]));
+  _activeInteriorGroup.add(box(15.2, 1.1, 0.05, glassMat, [0, L3_Y + 0.55, 7.5])); // L3 Balcony
+
   scene.add(_activeInteriorGroup);
 
-  // 4. Teleport the Camera inside the Living Room
-  const camLocalZ = 2.0; // Standing near the glass looking out
+  // Teleport Camera into the Ground Floor Living Area
+  const camLocalZ = 2.0; 
   const worldX = plot.x + Math.sin(plot.ry) * camLocalZ;
   const worldZ = plot.z + Math.cos(plot.ry) * camLocalZ;
-  const camY = L2_Y + 1.65; // Eye level on Floor 2
+  const camY = L2_Y + 1.65; 
   
   if (typeof window.setMoveMode === 'function') window.setMoveMode('walk');
-  
-  // Point the camera out the window
   if (typeof setView === 'function') setView([worldX, camY, worldZ], plot.ry, 0);
 };
 
