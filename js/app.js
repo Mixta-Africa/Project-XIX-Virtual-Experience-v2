@@ -661,8 +661,7 @@ function bindNav() {
 
 //           WORLD ENTRY
 async function openWorldAt(viewKey) {
-  window.currentViewKey = viewKey; // Update the global variable
-  const vp=VIEWPOINTS[viewKey]||VIEWPOINTS.field_centre;
+  window.currentViewKey = viewKey; 
   showLoading(); setLoadingProgress(10);
 
   if(!sceneReady){
@@ -673,20 +672,10 @@ async function openWorldAt(viewKey) {
     setLoadingProgress(70);
     initMinimap("assets/plan-2d.png");
     setLoadingProgress(85);
-    // Resize canvas BEFORE initPostProcessing so it has real pixel dimensions.
-    // SMAAPass crashes if width/height are 0.
     resizeWorld();
     composer=initPostProcessing(getRenderer(),getScene(),getCamera());
-    // Apply Fast mode to graphics immediately
     setPerfModeGraphics('fast');
     setLoadingProgress(90);
-    showVRButton(()=>{
-      enterVR(getRenderer(),getScene(),getCamera(),getClock(),tick=>{
-        updateControls(tick);
-        updateMinimap(getCamera().position.x,getCamera().position.z,getYaw());
-        updateSpatialAudio(getCamera().position.x,getCamera().position.z);
-      });
-    });
     buildViewpointStrip(document.getElementById("viewpoint-strip"),(key,vp)=>teleportTo(key,vp));
     sceneReady=true; setLoadingProgress(100);
   }
@@ -696,12 +685,20 @@ async function openWorldAt(viewKey) {
   const overlay=document.getElementById("world-overlay");
   overlay.classList.add("open");
   document.body.style.overflow="hidden";
-  injectPerfToggle();
-  injectModeToggle();
-  fixTopbarDropdowns(); // Make TIME/WEATHER/QUALITY work on touch
-  injectDayClock();     // On-screen time-of-day clock
   resizeWorld();
   window.addEventListener("resize",resizeWorld);
+
+  setTimeout(() => buildVillaStatusOverlays(), 100);
+
+  // EXECUTIVE MODE: Auto-start in Aerial Orbit
+  const aerialBtn = document.getElementById('btn-aerial');
+  if (typeof toggleAerial === 'function' && !window.aerialOrbit) {
+    toggleAerial(aerialBtn);
+  }
+
+  enableAudio();
+  startRenderLoop();
+}
 
   // Phase 4: Mount persistent sales badges once the world opens
   setTimeout(() => buildVillaStatusOverlays(), 100);
