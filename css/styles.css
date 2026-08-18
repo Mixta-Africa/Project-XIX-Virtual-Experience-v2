@@ -959,6 +959,15 @@ footer {
 body.pointer-locked .crosshair { opacity: 1; }
 body.pointer-locked #enter-prompt { opacity: 0; }
 
+/* CRITICAL FIX: Hide crosshair when pointer is not locked and on all touch devices */
+body:not(.pointer-locked) .crosshair,
+.touch .crosshair,
+.device-mobile .crosshair,
+.device-tablet .crosshair,
+.device-billboard .crosshair {
+  display: none !important;
+}
+
 /*           ZONE PANEL IN WORLD                                                                                                                    */
 
 #world-zone-panel {
