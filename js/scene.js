@@ -1178,9 +1178,13 @@ function loadClubhouseGLB(){
     const bbox=new THREE.Box3().setFromObject(g); if(bbox.min.y<-0.5) g.position.y-=bbox.min.y;
   });
 }
-function loadStablesGLB(){
-  loadOneGLB("assets/stables-mesh.glb",18.846,0,tmpl=>{
-    const g=new THREE.Group(); g.position.set(-375,0,90); g.add(tmpl.clone(true)); scene.add(g);
+function loadStablesGLB() {
+  loadOneGLB("assets/stables-mesh.glb", 18.846, 0, tmpl => {
+    const g = new THREE.Group(); 
+    // Move stables to align perfectly beneath the Training Field's vertical axis
+    g.position.set(-320, 0, 120); 
+    g.add(tmpl.clone(true)); 
+    scene.add(g);
   });
 }
 
