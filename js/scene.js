@@ -205,13 +205,13 @@ function tickNPCHorses(delta) {
 
 // ─── GUIDED TOUR ──────────────────────────────────────────────────────────────
 export const TOUR_STOPS = [
-  { pos:[-20, 3.1, 210], yaw:0,           pitch:-0.08, caption:"Welcome to Project XIX — 18.8 hectares of polo and equestrian living at Lakowe.",        voice:"Welcome to Project Nineteen. 18.8 hectares of polo and equestrian living at Lakowe, Ibeju-Lekki Lagos." },
-  { pos:[-20, 3.1,  80], yaw:0,           pitch:-0.04, caption:"The main polo field — 275 metres long. Full FIP international standard.", voice:"Ahead of you, the main polo field. 275 metres long, built to full FIP international standard." },
-  { pos:[-20, 3.1, -90], yaw:0,           pitch:-0.06, caption:"The lake — a 200-metre crescent between the polo ring and the villa north row.",                       voice:"The crescent lake. 200 metres of still water." },
-  { pos:[-155, 3.1,  0], yaw: Math.PI/2,  pitch:-0.04, caption:"West villa row — 120 premium 3-bedroom villas with direct polo-field view.",                           voice:"The west villa row. 120 premium three-bedroom residences." },
-  { pos:[  0, 3.1, 108], yaw: Math.PI,    pitch:-0.08, caption:"The Clubhouse — 3,419 m². 8 VIP skyboxes. Restaurant. Bar. The social heart of XIX.",                   voice:"The Clubhouse. 3,419 square metres. Eight VIP skyboxes, a restaurant, and bar." },
+  { pos:[-20, 3.1, 210], yaw:0,            pitch:-0.08, caption:"Welcome to Project XIX — 18.8 hectares of polo and equestrian living at Lakowe.",        voice:"Welcome to Project Nineteen. 18.8 hectares of polo and equestrian living at Lakowe, Ibeju-Lekki Lagos." },
+  { pos:[-20, 3.1,  80], yaw:0,            pitch:-0.04, caption:"The main polo field — 275 metres long. Full FIP international standard.", voice:"Ahead of you, the main polo field. 275 metres long, built to full FIP international standard." },
+  { pos:[-20, 3.1, -90], yaw:0,            pitch:-0.06, caption:"The lake — a 200-metre crescent between the polo ring and the villa north row.",                        voice:"The crescent lake. 200 metres of still water." },
+  { pos:[-155, 3.1,  0], yaw: Math.PI/2,  pitch:-0.04, caption:"West villa row — 120 premium 3-bedroom villas with direct polo-field view.",                            voice:"The west villa row. 120 premium three-bedroom residences." },
+  { pos:[  0, 3.1, 108], yaw: Math.PI,    pitch:-0.08, caption:"The Clubhouse — 3,419 m². 8 VIP skyboxes. Restaurant. Bar. The social heart of XIX.",                    voice:"The Clubhouse. 3,419 square metres. Eight VIP skyboxes, a restaurant, and bar." },
   { pos:[-375, 3.1, 90], yaw: Math.PI/2,  pitch:-0.05, caption:"The Equestrian Quarter — 56-stall stables, veterinary clinic, cobblestone courtyard.",                  voice:"The equestrian quarter. 56 stalls across four stable blocks." },
-  { pos:[ 218, 3.1,  0], yaw:-Math.PI/2,  pitch:-0.04, caption:"The paddock — post-and-rail enclosure. Watch horses warm up from your east terrace.",                   voice:"The paddock. Post and rail fencing, used for horse warming." },
+  { pos:[ 218, 3.1,  0], yaw:-Math.PI/2,  pitch:-0.04, caption:"The paddock — post-and-rail enclosure. Watch horses warm up from your east terrace.",                    voice:"The paddock. Post and rail fencing, used for horse warming." },
 ];
 
 let _tourActive=false, _tourStop=0, _tourOnGetCam=null, _tourOnSetCam=null;
@@ -697,8 +697,6 @@ export function getHotspotAtRay(raycaster) {
 const _hedgeInstData = []; 
 
 function collectVillaHedge(x, z, ry) {
-  // We removed the restrictive 'isInWater' check because the new 
-  // precise architectural plotting guarantees no villas are in the lake.
   _hedgeInstData.push({ x, z, ry });
 }
 
@@ -799,7 +797,7 @@ export function initScene(canvas) {
     addGrassRing();
     addYardMarkings();
     addRoads();
-    addLake(); // Now uses Phase 2 Planar Water
+    addLake(); 
     addEastLake();
     addClubhouse();
     addEstateSignage();
@@ -847,7 +845,7 @@ export function updateSkyForTime(timeName) {
 }
 
 export function updateSky(top, hor, gnd) {
-  // no-op: sky is now atmospheric, controlled via updateSkyForTime()
+  // no-op
 }
 
 function buildLighting() {
@@ -973,7 +971,7 @@ const MATS = {
   safetyBrown:() => PBR.dirt(),
   grassGreen: () => PBR.grass(),
   lawnGreen:  () => PBR.grass(),
-  hedgeGreen: () => new THREE.MeshStandardMaterial({color:0x2a5a20,roughness:.95}), // Hedges remain procedural
+  hedgeGreen: () => new THREE.MeshStandardMaterial({color:0x2a5a20,roughness:.95}), 
   cobble:     () => PBR.stone(),
   concrete:   () => PBR.concrete(),
   railWhite:  () => new THREE.MeshStandardMaterial({color:0xfcfaf8,roughness:.5}),
@@ -1012,7 +1010,6 @@ function _makeMicroTexture(col1, col2, planeW, planeD) {
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.repeat.set(planeW/4, planeD/4);
-  // Forces 100% roughness and disables environment reflections
   return new THREE.MeshStandardMaterial({ map: tex, roughness: 1.0, metalness: 0.0, envMapIntensity: 0.0 });
 }
 
@@ -1038,7 +1035,7 @@ function addPoloField(){
   fm.map = st;
   fm.roughness = 1.0; 
   fm.metalness = 0.0; 
-  fm.envMapIntensity = 0.0; // Completely removes the glossy sun reflection
+  fm.envMapIntensity = 0.0; 
   const fp = plane(274, 146, fm, [0, .12, 0]); 
   scene.add(fp); _terrainMeshes.push(fp);
   const lm=new THREE.MeshStandardMaterial({color:0xf8f5e0,roughness:.4});
@@ -1073,10 +1070,8 @@ function addRoads(){
   s(plane(55,8,am,[215,Y,120]));
 }
 
-// ─── PHASE 2 PLANAR WATER (CRASH-PROOF) ───────────────────────────────────────
 function addLake() {
   const shape = new THREE.Shape();
-  
   shape.moveTo(-75, 92); 
   shape.lineTo(75, 92);  
   shape.quadraticCurveTo(85, 92, 80, 102); 
@@ -1106,6 +1101,7 @@ function addLake() {
   scene.add(lakeReflection);
   waterMeshes.push(lakeReflection);
 }
+
 function addEastLake(){
   const wm=createWaterMat();
   const el=new THREE.Mesh(new THREE.BoxGeometry(10,.25,38),wm);
@@ -1142,10 +1138,10 @@ function loadClubhouseGLB(){
     const bbox=new THREE.Box3().setFromObject(g); if(bbox.min.y<-0.5) g.position.y-=bbox.min.y;
   });
 }
+
 function loadStablesGLB() {
   loadOneGLB("assets/stables-mesh.glb", 18.846, 0, tmpl => {
     const g = new THREE.Group(); 
-    // Move stables to align perfectly beneath the Training Field's vertical axis
     g.position.set(-320, 0, 120); 
     g.add(tmpl.clone(true)); 
     scene.add(g);
@@ -1168,7 +1164,6 @@ function loadVillaGLB(){
     wrapper.add(gltf.scene); 
     villaGLBScene = wrapper;
 
-    // Non-blocking batch queue: Process 6 villas per frame to eliminate thread locking
     const queue = [...pendingVillas];
     pendingVillas = [];
 
@@ -1244,7 +1239,6 @@ export function reservePlot(plotKey){
   if (!plot || plot.status === "reserved") return false;
   plot.status = "reserved";
   
-  // Transform the villa into a Red Wireframe Hologram
   if (plot.villaClone) {
     plot.villaClone.traverse(c => {
       if (c.isMesh) {
@@ -1252,7 +1246,7 @@ export function reservePlot(plotKey){
           color: 0xff2222,
           transparent: true,
           opacity: 0.45,
-          wireframe: true // Creates the architectural hologram effect
+          wireframe: true
         });
       }
     });
@@ -1265,7 +1259,6 @@ export function reservePlot(plotKey){
   
   plotRegistry.set(plotKey, plot); 
   
-  // Trigger the 3D floating badge to turn red and say "RESERVED"
   if (typeof window.updatePlotBadge === 'function') window.updatePlotBadge(plotKey);
   
   return true;
@@ -1278,46 +1271,6 @@ export function getPlotAtRay(raycaster){
   plotRegistry.forEach(plot=>{if(plot.overlay&&plot.status!=='reserved')plot.overlay.material.opacity=0;});
   return hits.length>0?hits[0].object.userData.plotKey:null;
 }
-// ─── PHASE 2: HOVER VISUALS (GREEN HOLOGRAM) ────────────────────────────────
-let _currentHover = null;
-
-window.setHoveredPlot = function(plotKey) {
-  if (_currentHover === plotKey) return;
-  
-  // 1. Reset the previously hovered building back to its original materials
-  if (_currentHover) {
-    const old = plotRegistry.get(_currentHover);
-    if (old && old.villaClone && old.status !== 'reserved') {
-      old.villaClone.traverse(c => {
-        if (c.isMesh && c.material && c.userData.origEmissive !== undefined) {
-          c.material.emissive.setHex(c.userData.origEmissive);
-          c.material.emissiveIntensity = c.userData.origEmissiveInt;
-        }
-      });
-    }
-  }
-  
-  _currentHover = plotKey;
-  
-  // 2. Apply the Green Glow to the newly hovered building
-  if (_currentHover) {
-    const cur = plotRegistry.get(_currentHover);
-    if (cur && cur.villaClone && cur.status !== 'reserved') {
-      cur.villaClone.traverse(c => {
-        if (c.isMesh && c.material) {
-          // Save original emissive data so we can restore it later
-          if (c.userData.origEmissive === undefined) {
-            c.userData.origEmissive = c.material.emissive.getHex();
-            c.userData.origEmissiveInt = c.material.emissiveIntensity;
-          }
-          // Inject the green glow
-          c.material.emissive.setHex(0x22cc44);
-          c.material.emissiveIntensity = 0.35;
-        }
-      });
-    }
-  }
-};
 
 // ─── VILLA RING ───────────────────────────────────────────────────────────────
 const NO_BUILD_ZONES=[[0,128,75,55],[-375,90,55,45],[-248,-25,50,22],[-248,55,50,22],
@@ -1343,25 +1296,12 @@ function addVillaRing(){
     if(!isInNoBuildZone(x+rx+fx,z+rz+fz)) cypressPositions.push([x+rx+fx,z+rz+fz]);
     if(!isInNoBuildZone(x-rx+fx,z-rz+fz)) cypressPositions.push([x-rx+fx,z-rz+fz]);
   }
-  // --- 1. THE NORTH SIDE (18 VILLAS) ---
-
-  // A. West Straight Line (4 Villas)
-  [-86, -108, -130, -152].forEach(x => {
-    placeV(x, -120, 0); 
-  });
-
-  // B. West Corner (1 Villa)
+  
+  [-86, -108, -130, -152].forEach(x => { placeV(x, -120, 0); });
   placeV(-160, -104, -Math.PI / 4); 
-
-  // C. East Straight Line (4 Villas)
-  [86, 108, 130, 152].forEach(x => {
-    placeV(x, -120, 0); 
-  });
-
-  // D. East Corner (1 Villa)
+  [86, 108, 130, 152].forEach(x => { placeV(x, -120, 0); });
   placeV(160, -104, Math.PI / 4); 
 
-  // E. The Lake Crescent (Exactly 10 Villas)
   for (let i = 0; i < 10; i++) {
     const t = 0.05 + (i / 9) * 0.90; 
     const x = -70 + (t * 140); 
@@ -1370,21 +1310,16 @@ function addVillaRing(){
     placeV(x, z, rotY);
   }
 
-  // --- 2. THE VERTICAL COLUMNS ---
-  
-  // West Column
   for(let z = -76; z <= 120; z += 28) {
     placeV(-162, z, Math.PI / 2);      
     placeV(-194, z + 14, Math.PI / 2); 
   }
 
-  // East Column
   for(let z = -76; z <= 120; z += 28) {
     placeV(162, z, -Math.PI / 2);      
     placeV(194, z + 14, -Math.PI / 2); 
   }
 
-  // --- 3. SOUTH ISOLATED PLOTS ---
   for(const side of [-1, 1]) {
     [65, 93, 121].forEach(xa => {
       placeV(side * xa, 105 + xa * 0.04, 0);
@@ -1394,6 +1329,7 @@ function addVillaRing(){
   buildInstancedCypress(cypressPositions);
   buildAllVillaHedges();
 }
+
 function addLoftTerraces(){
   for(let x=-310;x<=-110;x+=36){const cz=-162-Math.abs(x)*.05;registerVillaFootprint(x,cz);placeLoftGLB(x,cz,Math.PI);}
   for(let x=95;x<=310;x+=36){const cz=-162-Math.abs(x)*.05;registerVillaFootprint(x,cz);placeLoftGLB(x,cz,Math.PI);}
@@ -1402,24 +1338,16 @@ function addLoftTerraces(){
 }
 
 function addWestCompound() {
-  // 1. Training Field (Aligned symmetrically at Z=0, moved flush against the west road)
   s(plane(120, 185, MATS.safetyBrown(), [-320, .06, 0])); 
   s(plane(100, 160, MAT_GRASS_FIELD(), [-320, .10, 0]));
-  
-  // 2. Block of Flats (Sandwiched between Main Field and Training Field)
-  // Placed symmetrically across the center horizontal axis
   placeAptGLB(-220, -45, Math.PI / 2); 
   placeAptGLB(-220, 45, Math.PI / 2);
 }
 
 function addPaddock() {
-  // 1. Paddock Ground (Centered on X: 240, placed North at Z: -30)
   s(plane(70, 60, MAT_GRASS_FIELD(), [240, 0.07, -30]));
-  
-  // 2. Post-and-Rail Fencing (Perfectly outlines the 70x60 grass plane)
   const postPos = [];
   const xMin = 205, xMax = 275, zMin = -60, zMax = 0;
-  
   for(let fz = zMin; fz <= zMax; fz += 5) { 
     postPos.push([xMin, 0.8, fz]); 
     postPos.push([xMax, 0.8, fz]); 
@@ -1430,40 +1358,28 @@ function addPaddock() {
   }
   buildInstancedFencePosts(postPos); 
 
-  // 3. Horizontal Rails
   const rm = MATS.railWhite();
-  s(box(0.08, 0.1, 60, rm, [xMin, 1.0, -30], 0, false)); // West rail
-  s(box(0.08, 0.1, 60, rm, [xMax, 1.0, -30], 0, false)); // East rail
-  s(box(70, 0.1, 0.08, rm, [240, 1.0, zMin], 0, false)); // North rail
-  s(box(70, 0.1, 0.08, rm, [240, 1.0, zMax], 0, false)); // South rail
+  s(box(0.08, 0.1, 60, rm, [xMin, 1.0, -30], 0, false)); 
+  s(box(0.08, 0.1, 60, rm, [xMax, 1.0, -30], 0, false)); 
+  s(box(70, 0.1, 0.08, rm, [240, 1.0, zMin], 0, false)); 
+  s(box(70, 0.1, 0.08, rm, [240, 1.0, zMax], 0, false)); 
 }
 
 function addGamePark() {
-  // 1. Game Park Ground (Centered on X: 240, placed Mid at Z: 40)
   s(plane(70, 60, MAT_GRASS_FIELD(), [240, 0.07, 40]));
-  
-  // 2. Playground Abstract Blocks (Distributed symmetrically within the park)
   const cols = [0xe8602a, 0x2a88c8, 0xe8c82a, 0x4ac84a];
   for(let i = 0; i < 5; i++) {
     const h = 2.6 + i * 0.4;
     const mat = new THREE.MeshStandardMaterial({ color: cols[i % 4], roughness: 0.6 });
-    // Neatly spaced along X, staggered on Z for a playful but organized look
     s(box(3.2, h, 3.2, mat, [220 + i * 10, h / 2, 40 + (i % 2 === 0 ? -10 : 10)]));
   }
 }
 
 function addCommercialBlock() {
-  // Centered exactly in line with the Paddock and Game Park (X: 240)
-  // Sitting at the South end (Z: 110) aligned with the Clubhouse
   const g = new THREE.Group(); 
   g.position.set(240, 0, 110);
-  
-  // Main Building
   g.add(box(42, 9, 26, MATS.flatGrey(), [0, 4.5, 0]));
-  
-  // Glass Facade (facing West toward the polo field)
   g.add(box(0.4, 8.5, 22, MAT_GLASS(0.5), [-21.2, 4.5, 0]));
-  
   scene.add(g);
 }
 
@@ -1542,16 +1458,14 @@ export function getCamera()     { return camera;     }
 export function getClock()      { return clock;      }
 export function getHorseGroup() { return horseGroup; }
 
-
 // ─── PHASE 2: HOVER VISUALS (GREEN HOLOGRAM) ────────────────────────────────
-let _currentHover = null;
+window._xixHoverState = null;
 
 window.setHoveredPlot = function(plotKey) {
-  if (_currentHover === plotKey) return;
+  if (window._xixHoverState === plotKey) return;
   
-  // 1. Reset the previously hovered building back to its original materials
-  if (_currentHover) {
-    const old = plotRegistry.get(_currentHover);
+  if (window._xixHoverState) {
+    const old = plotRegistry.get(window._xixHoverState);
     if (old && old.villaClone && old.status !== 'reserved') {
       old.villaClone.traverse(c => {
         if (c.isMesh && c.material && c.userData.origEmissive !== undefined) {
@@ -1562,20 +1476,17 @@ window.setHoveredPlot = function(plotKey) {
     }
   }
   
-  _currentHover = plotKey;
+  window._xixHoverState = plotKey;
   
-  // 2. Apply the Green Glow to the newly hovered building
-  if (_currentHover) {
-    const cur = plotRegistry.get(_currentHover);
+  if (window._xixHoverState) {
+    const cur = plotRegistry.get(window._xixHoverState);
     if (cur && cur.villaClone && cur.status !== 'reserved') {
       cur.villaClone.traverse(c => {
         if (c.isMesh && c.material) {
-          // Save original emissive data so we can restore it later
           if (c.userData.origEmissive === undefined) {
             c.userData.origEmissive = c.material.emissive.getHex();
             c.userData.origEmissiveInt = c.material.emissiveIntensity;
           }
-          // Inject the green glow
           c.material.emissive.setHex(0x22cc44);
           c.material.emissiveIntensity = 0.35;
         }
@@ -1585,83 +1496,55 @@ window.setHoveredPlot = function(plotKey) {
 };
 
 // ─── PHASE 3: PROCEDURAL 3D INTERIOR ENGINE ─────────────────────────────────
-let _activeInteriorGroup = null;
-let _activeInteriorPlotKey = null;
+window._xixInteriorGroup = null;
+window._xixInteriorPlotKey = null;
 
 window.triggerInteriorBuild = function(plotKey) {
   const plot = plotRegistry.get(plotKey);
   if (!plot) return;
 
-  // Clean up any existing interior
-  if (_activeInteriorGroup) {
-    scene.remove(_activeInteriorGroup);
-  }
-
-  // Hide exterior shell
+  if (window._xixInteriorGroup) scene.remove(window._xixInteriorGroup);
   if (plot.villaClone) plot.villaClone.visible = false;
-  _activeInteriorPlotKey = plotKey;
+  window._xixInteriorPlotKey = plotKey;
 
-  _activeInteriorGroup = new THREE.Group();
-  _activeInteriorGroup.position.set(plot.x, 0, plot.z);
-  _activeInteriorGroup.rotation.y = plot.ry;
+  window._xixInteriorGroup = new THREE.Group();
+  window._xixInteriorGroup.position.set(plot.x, 0, plot.z);
+  window._xixInteriorGroup.rotation.y = plot.ry;
 
-  // 1. Materials
   const floorMat = new THREE.MeshStandardMaterial({ color: 0xeae6dc, roughness: 0.7 }); 
   const wallMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95 }); 
   const glassMat = new THREE.MeshStandardMaterial({ color: 0xccddff, transparent: true, opacity: 0.25, roughness: 0.1, metalness: 0.8 });
-  const woodMat = new THREE.MeshStandardMaterial({ color: 0xb58e65, roughness: 0.5 }); // Luxury timber for stairs
+  const woodMat = new THREE.MeshStandardMaterial({ color: 0xb58e65, roughness: 0.5 }); 
 
-  const L2_Y = 2.85;
-  const L3_Y = 6.15;
-  const CEIL_H = 3.3; 
+  const L2_Y = 2.85; const L3_Y = 6.15; const CEIL_H = 3.3; 
   
-  // ─── LEVEL 2 (Ground Floor: Living/Dining) ───
-  _activeInteriorGroup.add(box(16, 0.2, 13, floorMat, [0, L2_Y, 0], 0, false)); // Main Floor Plate
-  _activeInteriorGroup.add(box(16, CEIL_H, 0.4, wallMat, [0, L2_Y + (CEIL_H/2), -6.3])); // Back Wall
-  _activeInteriorGroup.add(box(0.4, CEIL_H, 13, wallMat, [-7.8, L2_Y + (CEIL_H/2), 0])); // West Wall
-  _activeInteriorGroup.add(box(0.4, CEIL_H, 13, wallMat, [7.8, L2_Y + (CEIL_H/2), 0]));  // East Wall
+  window._xixInteriorGroup.add(box(16, 0.2, 13, floorMat, [0, L2_Y, 0], 0, false)); 
+  window._xixInteriorGroup.add(box(16, CEIL_H, 0.4, wallMat, [0, L2_Y + (CEIL_H/2), -6.3])); 
+  window._xixInteriorGroup.add(box(0.4, CEIL_H, 13, wallMat, [-7.8, L2_Y + (CEIL_H/2), 0])); 
+  window._xixInteriorGroup.add(box(0.4, CEIL_H, 13, wallMat, [7.8, L2_Y + (CEIL_H/2), 0]));  
+  window._xixInteriorGroup.add(box(6, CEIL_H, 0.3, wallMat, [-3, L2_Y + (CEIL_H/2), -2]));
+  window._xixInteriorGroup.add(box(3.5, 0.9, 1.2, new THREE.MeshStandardMaterial({color: 0x222222}), [-4, L2_Y + 0.45, -2])); 
+  window._xixInteriorGroup.add(box(15.2, CEIL_H, 0.1, glassMat, [0, L2_Y + (CEIL_H/2), 6.3]));
+  window._xixInteriorGroup.add(box(15.2, 1.1, 0.05, glassMat, [0, L2_Y + 0.55, 7.5])); 
   
-  // Kitchen Partitions
-  _activeInteriorGroup.add(box(6, CEIL_H, 0.3, wallMat, [-3, L2_Y + (CEIL_H/2), -2]));
-  _activeInteriorGroup.add(box(3.5, 0.9, 1.2, new THREE.MeshStandardMaterial({color: 0x222222}), [-4, L2_Y + 0.45, -2])); // Island
-
-  // L2 Front Glass
-  _activeInteriorGroup.add(box(15.2, CEIL_H, 0.1, glassMat, [0, L2_Y + (CEIL_H/2), 6.3]));
-  _activeInteriorGroup.add(box(15.2, 1.1, 0.05, glassMat, [0, L2_Y + 0.55, 7.5])); // Balcony
-  
-  // ─── STAIRCASE (East Lobby) ───
-  const steps = 20;
-  const stepH = (L3_Y - L2_Y) / steps; // Approx 165mm height
-  const stepD = 0.28; // 280mm tread depth
+  const steps = 20; const stepH = (L3_Y - L2_Y) / steps; const stepD = 0.28; 
   for (let i = 0; i < steps; i++) {
-    // Floating wooden stairs running up the right side of the house
-    _activeInteriorGroup.add(box(1.5, stepH, stepD, woodMat, [6, L2_Y + (i * stepH) + (stepH/2), -2 + (i * stepD)], 0, false));
+    window._xixInteriorGroup.add(box(1.5, stepH, stepD, woodMat, [6, L2_Y + (i * stepH) + (stepH/2), -2 + (i * stepD)], 0, false));
   }
 
-  // ─── LEVEL 3 (First Floor: Master Bed & Lounge) ───
-  // L3 Floor Plate (Leaves a cutout on the East side for the stairs)
-  _activeInteriorGroup.add(box(12.5, 0.2, 13, floorMat, [-1.75, L3_Y, 0], 0, false)); 
-  _activeInteriorGroup.add(box(3.5, 0.2, 7.4, floorMat, [6.25, L3_Y, 2.8], 0, false)); // Walkway bridging to front
+  window._xixInteriorGroup.add(box(12.5, 0.2, 13, floorMat, [-1.75, L3_Y, 0], 0, false)); 
+  window._xixInteriorGroup.add(box(3.5, 0.2, 7.4, floorMat, [6.25, L3_Y, 2.8], 0, false)); 
+  window._xixInteriorGroup.add(box(16, CEIL_H, 0.4, wallMat, [0, L3_Y + (CEIL_H/2), -6.3])); 
+  window._xixInteriorGroup.add(box(0.4, CEIL_H, 13, wallMat, [-7.8, L3_Y + (CEIL_H/2), 0])); 
+  window._xixInteriorGroup.add(box(0.4, CEIL_H, 13, wallMat, [7.8, L3_Y + (CEIL_H/2), 0]));  
+  window._xixInteriorGroup.add(box(8, CEIL_H, 0.2, wallMat, [-3.8, L3_Y + (CEIL_H/2), 0])); 
+  window._xixInteriorGroup.add(box(0.2, CEIL_H, 6.3, wallMat, [0.2, L3_Y + (CEIL_H/2), 3.15])); 
+  window._xixInteriorGroup.add(box(2.2, 0.6, 2.4, new THREE.MeshStandardMaterial({color: 0x99aaff}), [-4, L3_Y + 0.3, 2]));
+  window._xixInteriorGroup.add(box(15.2, CEIL_H, 0.1, glassMat, [0, L3_Y + (CEIL_H/2), 6.3]));
+  window._xixInteriorGroup.add(box(15.2, 1.1, 0.05, glassMat, [0, L3_Y + 0.55, 7.5])); 
 
-  // L3 Exterior Walls
-  _activeInteriorGroup.add(box(16, CEIL_H, 0.4, wallMat, [0, L3_Y + (CEIL_H/2), -6.3])); 
-  _activeInteriorGroup.add(box(0.4, CEIL_H, 13, wallMat, [-7.8, L3_Y + (CEIL_H/2), 0])); 
-  _activeInteriorGroup.add(box(0.4, CEIL_H, 13, wallMat, [7.8, L3_Y + (CEIL_H/2), 0]));  
+  scene.add(window._xixInteriorGroup);
 
-  // Master Bedroom Partition (27sqm Front-Left Room)
-  _activeInteriorGroup.add(box(8, CEIL_H, 0.2, wallMat, [-3.8, L3_Y + (CEIL_H/2), 0])); // Rear separating wall
-  _activeInteriorGroup.add(box(0.2, CEIL_H, 6.3, wallMat, [0.2, L3_Y + (CEIL_H/2), 3.15])); // Side hallway wall
-  
-  // King Bed Placeholder
-  _activeInteriorGroup.add(box(2.2, 0.6, 2.4, new THREE.MeshStandardMaterial({color: 0x99aaff}), [-4, L3_Y + 0.3, 2]));
-
-  // L3 Front Glass (Polo View)
-  _activeInteriorGroup.add(box(15.2, CEIL_H, 0.1, glassMat, [0, L3_Y + (CEIL_H/2), 6.3]));
-  _activeInteriorGroup.add(box(15.2, 1.1, 0.05, glassMat, [0, L3_Y + 0.55, 7.5])); // L3 Balcony
-
-  scene.add(_activeInteriorGroup);
-
-  // Teleport Camera into the Ground Floor Living Area
   const camLocalZ = 2.0; 
   const worldX = plot.x + Math.sin(plot.ry) * camLocalZ;
   const worldZ = plot.z + Math.cos(plot.ry) * camLocalZ;
@@ -1672,15 +1555,13 @@ window.triggerInteriorBuild = function(plotKey) {
 };
 
 window.destroyInteriorBuild = function() {
-  // 1. Remove the white-box interior
-  if (_activeInteriorGroup) {
-    scene.remove(_activeInteriorGroup);
-    _activeInteriorGroup = null;
+  if (window._xixInteriorGroup) {
+    scene.remove(window._xixInteriorGroup);
+    window._xixInteriorGroup = null;
   }
-  // 2. Restore the exterior shell
-  if (_activeInteriorPlotKey) {
-    const plot = plotRegistry.get(_activeInteriorPlotKey);
+  if (window._xixInteriorPlotKey) {
+    const plot = plotRegistry.get(window._xixInteriorPlotKey);
     if (plot && plot.villaClone) plot.villaClone.visible = true;
-    _activeInteriorPlotKey = null;
+    window._xixInteriorPlotKey = null;
   }
 };
