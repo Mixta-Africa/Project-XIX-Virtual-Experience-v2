@@ -961,6 +961,26 @@ function cyl(rt,rb,h,seg,mat,pos=[0,0,0]){
 }
 function s(...o){ o.forEach(x=>x&&scene.add(x)); }
 
+// ─── PBR TEXTURE LOADERS ──────────────────────────────────────────────────────
+let _dirtMatCache = null;
+function getDirtMaterial() {
+  if (_dirtMatCache) return _dirtMatCache;
+  const tl = new THREE.TextureLoader();
+  const dCol = tl.load('assets/textures/dirt-color.png'); dCol.colorSpace = THREE.SRGBColorSpace;
+  const dNrm = tl.load('assets/textures/dirt-normal.png');
+  const dRgh = tl.load('assets/textures/dirt-roughness.png');
+  
+  [dCol, dNrm, dRgh].forEach(t => {
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(100, 100); // Tiles the dirt texture beautifully across the estate
+  });
+  
+  _dirtMatCache = new THREE.MeshStandardMaterial({
+    map: dCol, normalMap: dNrm, roughnessMap: dRgh, roughness: 1.0
+  });
+  return _dirtMatCache;
+}
+
 const MATS = {
   villaRoof:  () => PBR.tileRoof(),
   loftBody:   () => PBR.concrete(),
@@ -968,7 +988,7 @@ const MATS = {
   flatGrey:   () => PBR.concrete(),
   stableRoof: () => PBR.timber(),
   roadAsph:   () => PBR.asphalt(),
-  safetyBrown:() => PBR.dirt(),
+  safetyBrown:() => getDirtMaterial(), // Now uses your custom dirt textures
   grassGreen: () => PBR.grass(),
   lawnGreen:  () => PBR.grass(),
   hedgeGreen: () => new THREE.MeshStandardMaterial({color:0x2a5a20,roughness:.95}), 
@@ -980,7 +1000,7 @@ const MATS = {
 };
 
 function addGround(){
-  const dirtMat = _makeMicroTexture(0x7a5a38, 0x6a4a28, 900, 700);
+  const dirtMat = getDirtMaterial(); // Replaces the fake micro-texture with true PBR
   const grassMat = _makeMicroTexture(0x3d7028, 0x4a8035, 500, 400);
 
   const gp = plane(900,700,dirtMat,[0,0,30]); gp.receiveShadow=true; scene.add(gp);
@@ -1058,12 +1078,21 @@ function addYardMarkings(){
 }
 
 function addRoads() {
-  // 1. Premium Asphalt with Z-Fighting Protection
-  // 'polygonOffset' gently nudges the road forward in the rendering buffer 
-  // so the overlapping intersections never glitch or flicker.
+  // 1. Custom PBR Asphalt Textures with Z-Fighting Protection
+  const tl = new THREE.TextureLoader();
+  const aCol = tl.load('assets/textures/asphalt-color.png'); aCol.colorSpace = THREE.SRGBColorSpace;
+  const aNrm = tl.load('assets/textures/asphalt-normal.png');
+  const aRgh = tl.load('assets/textures/asphalt-roughness.png');
+  
+  [aCol, aNrm, aRgh].forEach(t => {
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(120, 120); // Tiles the asphalt grain cleanly
+  });
+
   const am = new THREE.MeshStandardMaterial({
-    color: 0x1a1e1c, 
-    roughness: 0.88,
+    map: aCol,
+    normalMap: aNrm,
+    roughnessMap: aRgh,
     polygonOffset: true,
     polygonOffsetFactor: -1, 
     polygonOffsetUnits: -1
