@@ -1289,9 +1289,10 @@ function placeAptGLB(x,z,ry=0){
   if(!aptGLBScene){pendingApts.push({x,z,ry});return;}
   const clone=aptGLBScene.clone(true); clone.position.set(x,0,z); clone.rotation.y=ry; scene.add(clone);
 }
-function placeLoftGLB(x,z,ry){
-  ry=ry||0; if(!loftGLBScene){pendingLofts.push({x,z,ry});return;}
+function placeLoftGLB(x,z,ry,plotKey){
+  ry=ry||0; if(!loftGLBScene){pendingLofts.push({x,z,ry,plotKey});return;}
   const clone=loftGLBScene.clone(true); clone.position.set(x,0,z); clone.rotation.y=ry; scene.add(clone);
+  if (plotKey) addPlotOverlay(x, z, ry, plotKey, clone); // Adds the green hover floor and registry entry
 }
 
 // ─── PLOT OVERLAY ─────────────────────────────────────────────────────────────
@@ -1395,6 +1396,7 @@ export function getPlotAtRay(raycaster) {
 const NO_BUILD_ZONES=[[0,128,75,55],[-375,90,55,45],[-248,-25,50,22],[-248,55,50,22],
   [-390,0,65,100],[270,65,28,18],[218,0,28,28],[218,52,30,26],[0,0,140,76],[30,-115,105,18]];
 const villaFootprints=[];
+window._nextUnitId = 1; // Global sequential tracker starting at 1
 function registerVillaFootprint(x,z){villaFootprints.push({cx:x,cz:z,r:12});}
 function isInNoBuildZone(x,z){
   for(const [cx,cz,hw,hd] of NO_BUILD_ZONES) if(Math.abs(x-cx)<=hw&&Math.abs(z-cz)<=hd) return true;
@@ -1406,7 +1408,7 @@ function addVillaRing(){
   const PLOT=28;
   const cypressPositions=[];
   function placeV(x,z,ry){
-    const plotKey=`${Math.round(x)},${Math.round(z)}`;
+    const plotKey = String(window._nextUnitId++); // Generates 1, 2, 3...
     registerVillaFootprint(x,z);
     placeVillaGLBWithLOD(x,z,ry,plotKey);
     addVillaContactShadow(x,z); 
@@ -1458,24 +1460,31 @@ function addVillaRing(){
 
 function addLoftTerraces(){
   // Northern wrap-around lofts (Top/North border along Crescent)
-  for(let x=-310; x<=-110; x+=36){ const cz=-162-Math.abs(x)*.05; registerVillaFootprint(x,cz); placeLoftGLB(x,cz,Math.PI); }
-  for(let x=95; x<=310; x+=36){ const cz=-162-Math.abs(x)*.05; registerVillaFootprint(x,cz); placeLoftGLB(x,cz,Math.PI); }
+  for(let x=-310; x<=-110; x+=36){ 
+    const cz=-162-Math.abs(x)*.05; 
+    const key=String(window._nextUnitId++); 
+    registerVillaFootprint(x,cz); 
+    placeLoftGLB(x,cz,Math.PI,key); 
+  }
+  for(let x=95; x<=310; x+=36){ 
+    const cz=-162-Math.abs(x)*.05; 
+    const key=String(window._nextUnitId++); 
+    registerVillaFootprint(x,cz); 
+    placeLoftGLB(x,cz,Math.PI,key); 
+  }
   
   // West Column Lofts (7 Units)
-  // Rotated 0 rad so the LONG side runs West-to-East and SHORT side runs North-to-South
-  // 3 Units North of Pony Line
   [-75, -45, -15].forEach(z => { 
+    const key=String(window._nextUnitId++); 
     registerVillaFootprint(-200, z); 
-    placeLoftGLB(-200, z, 0); 
+    placeLoftGLB(-200, z, 0, key); 
   });
-  
-  // 4 Units South of Pony Line
   [15, 45, 75, 105].forEach(z => { 
+    const key=String(window._nextUnitId++); 
     registerVillaFootprint(-200, z); 
-    placeLoftGLB(-200, z, 0); 
+    placeLoftGLB(-200, z, 0, key); 
   });
 }
-
 function addWestCompound() {
   // 1. Training Field (Far West Layer)
   s(plane(120, 185, MATS.safetyBrown(), [-320, .06, 0])); 
