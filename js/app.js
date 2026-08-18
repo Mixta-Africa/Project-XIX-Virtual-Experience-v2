@@ -553,32 +553,66 @@ window.updatePlotBadge = function(plotKey) {
 function bindPlotSystem() {
   const canvas = document.getElementById("world-canvas");
   if (!canvas) return;
-  canvas.addEventListener("click", e => {
+
+  let startX = 0, startY = 0;
+
+  // Record where the mouse/finger started
+  canvas.addEventListener("pointerdown", e => {
+    startX = e.clientX; startY = e.clientY;
+  });
+
+  // Execute when the mouse/finger is lifted
+  canvas.addEventListener("pointerup", e => {
     if (!document.getElementById("world-overlay")?.classList.contains("open")) return;
+
+    // Smart Interaction: If the cursor moved more than 5 pixels, the user was steering the camera. Abort selection.
+    const dragDist = Math.abs(e.clientX - startX) + Math.abs(e.clientY - startY);
+    if (dragDist > 5) return;
+
     const rect = canvas.getBoundingClientRect();
     const mouse = new THREE.Vector2(
       ((e.clientX - rect.left) / rect.width) * 2 - 1,
      -((e.clientY - rect.top) / rect.height) * 2 + 1
     );
+    
     const raycaster = new THREE.Raycaster();
-    raycaster.setFromCamera(mouse, getCamera());
+    const cam = typeof getCamera === 'function' ? getCamera() : null;
+    if (!cam) return;
+    raycaster.setFromCamera(mouse, cam);
 
-    // 1. Check for floating availability badges first
-    const badgeHits = raycaster.intersectObjects(getScene().children, false)
+    const sc = typeof getScene === 'function' ? getScene() : null;
+    if (!sc) return;
+
+    // 1. Check for floating availability badges
+    const badgeHits = raycaster.intersectObjects(sc.children, false)
       .filter(h => h.object.userData?.isPlotBadge);
 
+    let plotKey = null;
     if (badgeHits.length > 0) {
-      const key = badgeHits[0].object.userData.plotKey;
-      showPlotPanel(key);
-      return;
+      plotKey = badgeHits[0].object.userData.plotKey;
+    } else {
+      // 2. Check ground plot overlays
+      if (typeof getPlotAtRay === 'function') plotKey = getPlotAtRay(raycaster);
     }
 
-    // 2. Fallback to ground plot overlays
-    const plotKey = getPlotAtRay(raycaster);
-    if (plotKey) showPlotPanel(plotKey);
+    if (plotKey) {
+      // CRITICAL: If the system locked the pointer, force it to unlock instantly
+      if (document.pointerLockElement) document.exitPointerLock();
+
+      const plot = typeof plotRegistry !== 'undefined' ? plotRegistry.get(plotKey) : null;
+      
+      if (plot && plot.status === "reserved") {
+        // Display the subtle toast notification for reserved plots
+        if (typeof showNotification === 'function') {
+          showNotification("This has been Reserved, please choose another property");
+        }
+      } else {
+        // Open the panel for available plots
+        showPlotPanel(plotKey);
+      }
+    }
   });
 }
-
 function showPlotPanel(plotKey) {
   const plot=plotRegistry.get(plotKey);
   if(!plot) return;
@@ -1003,9 +1037,9 @@ function toggleAerial(btn){
     btn&&btn.classList.add("active");
     deactivate();
     aerialAngle=0; aerialYawOffset=0; aerialPitch=-0.685;
-    // Widen FOV — 90° shows full estate in portrait mobile
+    // Narrow FOV — 55° completely removes architectural edge warping
     const _aerCam = getCamera();
-    _aerCam.fov = 90; _aerCam.far = 2000; _aerCam.updateProjectionMatrix();
+    _aerCam.fov = 55; _aerCam.far = 2000; _aerCam.updateProjectionMatrix();
     // Disable fog — exponential fog hides buildings at orbital distance
     const _sc = getScene();
     if (_sc && _sc.fog) _sc.fog.density = 0.000001;
