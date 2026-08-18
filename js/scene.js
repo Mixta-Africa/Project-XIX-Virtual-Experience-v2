@@ -1324,9 +1324,7 @@ function addVillaRing(){
       placeV(side * xa, 105 + xa * 0.04, 0);
     });
   }
-    placeV(x,-132-bow,0);
-  });
-  for(const side of[-1,1]) [65,93,121].forEach(xa=>{placeV(side*xa,105+xa*.04,0);});
+  
   buildInstancedCypress(cypressPositions);
   buildAllVillaHedges();
 }
