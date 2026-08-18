@@ -1871,9 +1871,10 @@ function injectPropertyDirectory() {
 
   document.getElementById('world-overlay')?.appendChild(dirContainer);
 
-  const toggleBtn = document.getElementById('dir-toggle-btn');
-  const panel = document.getElementById('dir-dropdown-panel');
-  const searchInput = document.getElementById('dir-search-input');
+  // Search inside the container we just built, making it 100% crash-proof
+      const toggleBtn = dirContainer.querySelector('#dir-toggle-btn');
+      const panel = dirContainer.querySelector('#dir-dropdown-panel');
+      const searchInput = dirContainer.querySelector('#dir-search-input');
 
   toggleBtn.addEventListener('click', () => {
     const isOpen = panel.style.display === 'flex';
