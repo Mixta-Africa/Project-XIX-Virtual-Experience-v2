@@ -1262,8 +1262,6 @@ function _showPropertyPanel(data, propKey) {
     font-family:Inter,sans-serif;
   `;
 
-  const interior = data.interior || [];
-
   panel.innerHTML = `
     <div style="display:flex; flex-direction:column; padding:24px; border-bottom:1px solid rgba(201,168,76,0.15); position:relative; flex-shrink:0;">
       <button id="pp-close-btn" style="position:absolute; top:16px; right:16px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:50%; width:32px; height:32px; color:rgba(255,255,255,0.6); cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:16px; transition:all 0.2s;">✕</button>
@@ -1284,16 +1282,22 @@ function _showPropertyPanel(data, propKey) {
         </ul>
       </div>
 
-      ${interior.length > 0 ? `
+      ${data.interior && data.interior.length > 0 ? `
+      <div style="margin-bottom:24px;">
+        <h4 style="font-size:10px; color:rgba(201,168,76,0.8); text-transform:uppercase; letter-spacing:.1em; border-bottom:1px solid rgba(201,168,76,0.2); padding-bottom:6px; margin:0 0 12px 0;">Architectural Plans & Gallery</h4>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+          <button onclick="window.openGallery('floorplans')" style="background:rgba(201,168,76,0.1); border:1px solid rgba(201,168,76,0.3); border-radius:4px; padding:10px; color:var(--gold-300, #e4c878); cursor:pointer; font-size:11px; text-transform:uppercase; letter-spacing:0.05em; transition:all 0.2s;">View Floorplans</button>
+          <button onclick="window.openGallery('renders')" style="background:rgba(201,168,76,0.1); border:1px solid rgba(201,168,76,0.3); border-radius:4px; padding:10px; color:var(--gold-300, #e4c878); cursor:pointer; font-size:11px; text-transform:uppercase; letter-spacing:0.05em; transition:all 0.2s;">View 3D Renders</button>
+        </div>
+      </div>
+
       <div>
-        <h4 style="font-size:10px; color:rgba(201,168,76,0.8); text-transform:uppercase; letter-spacing:.1em; border-bottom:1px solid rgba(201,168,76,0.2); padding-bottom:6px; margin:0 0 12px 0;">Interior Walkthrough</h4>
-        <div style="font-size:12px;color:rgba(240,236,224,0.6);margin-bottom:10px;">Select a room to step inside.</div>
+        <h4 style="font-size:10px; color:rgba(201,168,76,0.8); text-transform:uppercase; letter-spacing:.1em; border-bottom:1px solid rgba(201,168,76,0.2); padding-bottom:6px; margin:0 0 12px 0;">Interactive Walkthrough</h4>
+        <div style="font-size:12px;color:rgba(240,236,224,0.6);margin-bottom:10px;">Experience the space in 1st-person 3D.</div>
         <div style="display:flex; flex-direction:column; gap:8px;">
-          ${interior.map((vp,i) => `
-            <button data-vpidx="${i}" class="pp-vp-btn" style="background:rgba(255,255,255,0.04); border:1px solid rgba(201,168,76,0.2); border-radius:4px; padding:12px; color:rgba(240,236,224,0.9); cursor:pointer; font-size:12px; font-family:Inter,sans-serif; text-align:left; transition:all 0.2s; display:flex; justify-content:space-between; align-items:center;">
-              ${vp.label} <span style="color:#c9a84c; font-size:10px;">▶</span>
-            </button>
-          `).join('')}
+          <button onclick="window.startIsolatedInterior('${propKey}')" style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.2); border-radius:4px; padding:14px; color:#fff; cursor:pointer; font-size:13px; font-weight:600; font-family:Inter,sans-serif; text-align:center; transition:all 0.2s; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
+            Step Inside the Villa
+          </button>
         </div>
       </div>` : ''}
     </div>
@@ -1312,6 +1316,7 @@ function _showPropertyPanel(data, propKey) {
   document.getElementById('world-overlay')?.appendChild(panel);
   requestAnimationFrame(() => panel.style.transform = 'translateX(0)');
 
+  // Close Button Logic
   panel.querySelector('#pp-close-btn')?.addEventListener('click', () => {
     panel.style.transform = 'translateX(100%)';
     if (typeof setInteriorDOF === 'function') setInteriorDOF(false);
@@ -1319,59 +1324,84 @@ function _showPropertyPanel(data, propKey) {
     if (typeof _stopPlotHighlightPulse === 'function') _stopPlotHighlightPulse();
   });
 
-  panel.querySelectorAll('.pp-vp-btn').forEach(b => {
-    b.addEventListener('mouseenter', () => b.style.background = 'rgba(201,168,76,0.1)');
-    b.addEventListener('mouseleave', () => b.style.background = 'rgba(255,255,255,0.04)');
-  });
-
-  panel.querySelectorAll('.pp-vp-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const idx = parseInt(btn.dataset.vpidx, 10);
-      const vp = interior[idx];
-      if (!vp) return;
-
-      try {
-        if (typeof setView === 'function') setView(vp.pos, vp.yaw || 0, vp.pitch || 0);
-        if (typeof setCaption === 'function') setCaption(vp.caption || vp.label);
-        
-        if (typeof moveMode !== 'undefined' && (moveMode === 'ride' || typeof aerialOrbit !== 'undefined' && aerialOrbit)) {
-            if (typeof window.setMoveMode === 'function') window.setMoveMode('walk');
-        }
-        
-        if (typeof setInteriorDOF === 'function') setInteriorDOF(true, 3.5);
-
-        panel.style.transform = 'translateX(100%)';
-
-        const exitBtn = document.createElement('button');
-        exitBtn.innerHTML = `Exit ${data.title} Walkthrough`;
-        exitBtn.style.cssText = `
-          position:fixed; bottom:120px; left:50%; transform:translateX(-50%);
-          background:rgba(201,168,76,0.95); color:#061208; border:none; padding:14px 28px;
-          border-radius:30px; font-size:14px; font-weight:600; font-family:Inter,sans-serif;
-          cursor:pointer; z-index:2500; box-shadow:0 8px 24px rgba(0,0,0,0.5);
-          transition: transform 0.2s;
-        `;
-        exitBtn.addEventListener('mouseenter', () => exitBtn.style.transform = 'translateX(-50%) scale(1.05)');
-        exitBtn.addEventListener('mouseleave', () => exitBtn.style.transform = 'translateX(-50%) scale(1)');
-        
-        document.getElementById('world-overlay')?.appendChild(exitBtn);
-
-        exitBtn.addEventListener('click', () => {
-          exitBtn.remove();
-          if (typeof setInteriorDOF === 'function') setInteriorDOF(false);
-          panel.style.transform = 'translateX(0)';
-          if (typeof setView === 'function') setView([vp.pos[0], 1.72, vp.pos[2] + 15], 0, 0); 
-        });
-
-      } catch(e) { console.warn('[XIX] Walkthrough teleport error:', e); }
-    });
-  });
-
+  // Reservation Button Logic
   panel.querySelector('#pp-reserve-btn')?.addEventListener('click', () => {
-    // NEW: Open the modal, pass the property title (e.g., "Loft Terrace Apartments"), and leave plotKey blank
-    window.openReservationModal(data.title, "");
+    window.openReservationModal(data.title, propKey); // Passing propKey correctly here
   });
 }
+
+// ─── FULL-SCREEN IMAGE LIGHTBOX VIEWER ───────────────────────────────────────
+window.openGallery = function(type) {
+  const images = type === 'floorplans' ? [
+    { src: 'assets/plans/villa-plan-level2.jpg', title: 'Ground Floor - Living, Dining & Kitchen (42m²)' },
+    { src: 'assets/plans/villa-plan-level3.jpg', title: 'First Floor - Master Bedroom & Family Lounge (27m²)' },
+    { src: 'assets/plans/villa-plan-level0.jpg', title: 'Undercroft Level - Parking & Staff Quarters' },
+    { src: 'assets/plans/villa-section.jpg', title: 'Architectural Section & Level Heights' }
+  ] : [
+    { src: 'assets/plans/villa-render-front.jpg', title: '3D Perspective - Front Exterior Elevation' },
+    { src: 'assets/plans/villa-render-back.jpg', title: '3D Perspective - Rear Garden & Terrace' }
+  ];
+
+  const existing = document.getElementById('xix-lightbox');
+  if (existing) existing.remove();
+
+  let activeIdx = 0;
+
+  const modal = document.createElement('div');
+  modal.id = 'xix-lightbox';
+  modal.style.cssText = `
+    position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+    background: rgba(6, 18, 8, 0.95); backdrop-filter: blur(12px);
+    z-index: 10000; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; font-family: Inter, sans-serif;
+  `;
+
+  const renderLightbox = () => {
+    modal.innerHTML = `
+      <div style="position: absolute; top: 20px; right: 25px; cursor: pointer; color: #C9A84C; font-size: 28px; font-weight: bold; line-height: 1;" onclick="document.getElementById('xix-lightbox').remove()">✕</div>
+      <div style="color: #C9A84C; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 12px;">
+        ${type === 'floorplans' ? 'Architectural Floorplans' : '3D Renders'} (${activeIdx + 1} of ${images.length})
+      </div>
+      <img src="${images[activeIdx].src}" style="max-width: 85vw; max-height: 68vh; border: 1px solid rgba(201, 168, 76, 0.3); border-radius: 8px; object-fit: contain; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.8);" />
+      <div style="color: #f0ece0; font-size: 13px; margin-top: 16px; font-weight: 500; text-align: center; max-width: 80vw;">
+        ${images[activeIdx].title}
+      </div>
+      <div style="display: flex; gap: 16px; margin-top: 20px;">
+        <button id="lb-prev" style="background: rgba(201, 168, 76, 0.12); border: 1px solid rgba(201, 168, 76, 0.4); color: #C9A84C; padding: 8px 20px; border-radius: 4px; cursor: pointer; font-size: 12px;">← Previous</button>
+        <button id="lb-next" style="background: rgba(201, 168, 76, 0.12); border: 1px solid rgba(201, 168, 76, 0.4); color: #C9A84C; padding: 8px 20px; border-radius: 4px; cursor: pointer; font-size: 12px;">Next →</button>
+      </div>
+    `;
+
+    document.getElementById('lb-prev').addEventListener('click', () => {
+      activeIdx = (activeIdx - 1 + images.length) % images.length;
+      renderLightbox();
+    });
+    document.getElementById('lb-next').addEventListener('click', () => {
+      activeIdx = (activeIdx + 1) % images.length;
+      renderLightbox();
+    });
+  };
+
+  document.body.appendChild(modal);
+  renderLightbox();
+};
+
+// ─── SPAWN-ON-DEMAND INTERIOR TRIGGER ────────────────────────────────────────
+window.startIsolatedInterior = function(propKey) {
+  // We will build the 3D spawn logic in scene.js next.
+  // For now, this cleanly closes the panel.
+  const panel = document.getElementById('xix-prop-panel');
+  if (panel) {
+    panel.style.transform = 'translateX(100%)';
+    setTimeout(() => panel.remove(), 400);
+  }
+  
+  if (typeof window.triggerInteriorBuild === 'function') {
+    window.triggerInteriorBuild(propKey);
+  } else {
+    alert("Interior 3D Builder is ready to be written in scene.js!");
+  }
+};
 
 function teleportTo(key, vp){
   try {
