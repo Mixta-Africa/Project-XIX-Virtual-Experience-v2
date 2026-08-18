@@ -1493,8 +1493,26 @@ function addWestCompound() {
   // 2. Block of Flats (Middle Layer, sandwiched between Lofts and Training Field)
   placeAptGLB(-245, -45, Math.PI / 2); 
   placeAptGLB(-245, 45, Math.PI / 2);
-}
 
+  // 3. Register Individual Apartment Units into the Global Database sequentially
+  // 24x 1 Bed Maisonette
+  for (let i = 0; i < 24; i++) {
+    const key = String(window._nextUnitId++);
+    plotRegistry.set(key, { status: 'available', type: '1 BED MAISONETTE', x: -245, z: 0, isApt: true });
+  }
+  
+  // 48x 2 Bed Flat
+  for (let i = 0; i < 48; i++) {
+    const key = String(window._nextUnitId++);
+    plotRegistry.set(key, { status: 'available', type: '2 BED FLAT', x: -245, z: 0, isApt: true });
+  }
+  
+  // 12x Studio
+  for (let i = 0; i < 12; i++) {
+    const key = String(window._nextUnitId++);
+    plotRegistry.set(key, { status: 'available', type: 'STUDIO', x: -245, z: 0, isApt: true });
+  }
+}
 function addPaddock() {
   s(plane(70, 60, MAT_GRASS_FIELD(), [240, 0.07, -30]));
   const postPos = [];
