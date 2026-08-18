@@ -1126,19 +1126,18 @@ function addRoads() {
   s(plane(400, 8, am, [0, Y, 128])); 
   s(plane(130, 35, am, [0, Y, 148]));
 
-  // 8. THE CRESCENT ROAD (Beautiful sweeping curve)
+  // 8. THE CRESCENT ROAD (Behind the Northern Villas)
   const cShape = new THREE.Shape();
-  // Start near the North-West corner
-  cShape.moveTo(-160, 104);
-  cShape.lineTo(-120, 104);
-  // Sweep the road up and perfectly around the back of the 10 crescent villas
-  cShape.quadraticCurveTo(0, 148, 120, 104);
-  cShape.lineTo(160, 104);
-  // Draw the thickness (8m wide) back to the start
-  cShape.lineTo(160, 112);
-  cShape.quadraticCurveTo(0, 158, -120, 112);
-  cShape.lineTo(-160, 112);
-  cShape.lineTo(-160, 104);
+  cShape.moveTo(-160, -104); 
+  cShape.lineTo(-120, -104);
+  // Push the peak of the curve to Z: -155
+  cShape.quadraticCurveTo(0, -155, 120, -104);
+  cShape.lineTo(160, -104);
+  // Add the 8m thickness
+  cShape.lineTo(160, -112);
+  cShape.quadraticCurveTo(0, -163, -120, -112);
+  cShape.lineTo(-160, -112);
+  cShape.lineTo(-160, -104);
 
   const cGeo = new THREE.ShapeGeometry(cShape, 64);
   const cMesh = new THREE.Mesh(cGeo, am);
@@ -1342,14 +1341,37 @@ export function reservePlot(plotKey){
   return true;
 }
 
-export function getPlotAtRay(raycaster){
-  const overlays=[];
-  plotRegistry.forEach(plot=>{if(plot.overlay){plot.overlay.material.opacity=0.01;overlays.push(plot.overlay);}});
-  const hits=raycaster.intersectObjects(overlays,false);
-  plotRegistry.forEach(plot=>{if(plot.overlay&&plot.status!=='reserved')plot.overlay.material.opacity=0;});
-  return hits.length>0?hits[0].object.userData.plotKey:null;
+export function getPlotAtRay(raycaster) {
+  const targets = [];
+  
+  plotRegistry.forEach((plot, key) => {
+    // 1. Add the ground overlay
+    if (plot.overlay) {
+      plot.overlay.material.opacity = 0.01;
+      targets.push(plot.overlay);
+    }
+    // 2. Add the actual 3D building mesh
+    if (plot.villaClone && plot.villaClone.visible) {
+      // We assign the plotKey directly to the mesh so the raycaster knows what it hit
+      plot.villaClone.traverse(c => {
+        if (c.isMesh) {
+          c.userData.plotKey = key;
+          targets.push(c);
+        }
+      });
+    }
+  });
+  
+  const hits = raycaster.intersectObjects(targets, false);
+  
+  // Clean up the ground opacity
+  plotRegistry.forEach(plot => {
+    if (plot.overlay && plot.status !== 'reserved') plot.overlay.material.opacity = 0;
+  });
+  
+  if (hits.length > 0) return hits[0].object.userData.plotKey;
+  return null;
 }
-
 // ─── VILLA RING ───────────────────────────────────────────────────────────────
 const NO_BUILD_ZONES=[[0,128,75,55],[-375,90,55,45],[-248,-25,50,22],[-248,55,50,22],
   [-390,0,65,100],[270,65,28,18],[218,0,28,28],[218,52,30,26],[0,0,140,76],[30,-115,105,18]];
@@ -1540,7 +1562,8 @@ export function getHorseGroup() { return horseGroup; }
 window._xixHoverState = null;
 
 window.setHoveredPlot = function(plotKey) {
-  if (window._xixHoverState === plotKey) return;
+  // Prevent the global Impostor Mesh from glowing green when in Aerial View
+  if (_aerialModeActive || window._xixHoverState === plotKey) return;
   
   if (window._xixHoverState) {
     const old = plotRegistry.get(window._xixHoverState);
