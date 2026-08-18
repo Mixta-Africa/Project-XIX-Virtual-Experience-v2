@@ -136,12 +136,19 @@ function applyTimePreset(name, fromWeather = false) {
 
 function applyWeather(w) {
   _currentWeather = w;
+  window._currentWeather = w; // Expose globally for scene.js
   document.querySelectorAll(".wx-weather-btn").forEach(b => b.classList.toggle("active", b.dataset.weather === w));
   
   let bloomMult = 1;
   if (w === 'clear')  bloomMult = 0.2; 
   if (w === 'cloudy') bloomMult = 0.5;
   if (w === 'rain')   bloomMult = 0.1;
+
+  const sc = getScene();
+  if (sc && sc.fog) {
+    // Force ultra-clear distance visibility for 'clear' weather
+    sc.fog.density = (w === 'clear') ? 0.000008 : (w === 'cloudy' ? 0.00035 : 0.00085);
+  }
 
   if (typeof setWeatherBloomModifier === 'function') setWeatherBloomModifier(bloomMult);
   if (_lastDayApplied) applyTimePreset(_lastDayApplied, true); 
