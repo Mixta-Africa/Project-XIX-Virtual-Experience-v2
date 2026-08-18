@@ -522,33 +522,48 @@ function buildVillaStatusOverlays() {
   });
 }
 
-window.updatePlotBadge = function(plotKey) {
+window.updatePlotBadge = function(plotKey, status) {
   const sc = typeof getScene === 'function' ? getScene() : null;
   if (!sc) return;
   
-  sc.traverse(obj => {
-    if (obj.userData?.isPlotBadge && obj.userData?.plotKey === plotKey) {
-      const canvas = document.createElement('canvas');
-      canvas.width = 160; canvas.height = 48;
-      const ctx = canvas.getContext('2d');
-      
-      ctx.fillStyle = 'rgba(28,10,10,0.88)';
-      ctx.beginPath(); ctx.roundRect(2, 2, 156, 44, 10); ctx.fill();
-      ctx.strokeStyle = 'rgba(220,70,70,0.6)'; ctx.lineWidth = 2; ctx.stroke();
-      
-      ctx.fillStyle = '#ff6666'; ctx.font = 'bold 15px Inter, sans-serif';
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText('RESERVED', 80, 24);
-      
-      if (obj.material.map) obj.material.map.dispose();
-      const tex = new THREE.CanvasTexture(canvas);
-      tex.colorSpace = THREE.SRGBColorSpace;
-      obj.material.map = tex;
-      obj.material.needsUpdate = true;
+  const isRes = status === 'RESERVED';
+  const canvas = document.createElement('canvas');
+  canvas.width = 180; canvas.height = 54;
+  const ctx = canvas.getContext('2d');
+  
+  // 1. Draw pill background & border
+  ctx.fillStyle = isRes ? 'rgba(40,10,10,0.92)' : 'rgba(10,40,18,0.92)';
+  ctx.beginPath(); ctx.roundRect(2, 2, 176, 50, 8); ctx.fill();
+  ctx.strokeStyle = isRes ? 'rgba(230,60,60,0.8)' : 'rgba(60,230,120,0.8)'; 
+  ctx.lineWidth = 2; ctx.stroke();
+  
+  // 2. Render badge status text
+  ctx.fillStyle = isRes ? '#ff6666' : '#66ff99'; 
+  ctx.font = 'bold 16px Inter, sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(isRes ? 'RESERVED' : 'AVAILABLE', 90, 27);
+  
+  // 3. Attach or update the 3D sprite floating over the building
+  const plot = typeof plotRegistry !== 'undefined' ? plotRegistry.get(plotKey) : null;
+  if (plot && plot.villaClone) {
+    let badge = plot.villaClone.getObjectByName('statusBadge');
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    
+    if (!badge) {
+      const mat = new THREE.SpriteMaterial({ map: tex, depthWrite: false });
+      badge = new THREE.Sprite(mat);
+      badge.name = 'statusBadge';
+      badge.scale.set(6, 1.8, 1);
+      badge.position.set(0, 10, 0); // Positioned 10m above building center
+      plot.villaClone.add(badge);
+    } else {
+      if (badge.material.map) badge.material.map.dispose(); // Prevent GPU memory leaks
+      badge.material.map = tex;
+      badge.material.needsUpdate = true;
     }
-  });
+  }
 };
-
 //           PLOT SYSTEM
 function bindPlotSystem() {
   const canvas = document.getElementById("world-canvas");
@@ -643,42 +658,71 @@ function bindPlotSystem() {
     }
   });
 }
-function showPlotPanel(plotKey) {
-  const plot=plotRegistry.get(plotKey);
-  if(!plot) return;
-  const panel=document.getElementById("plot-panel");
-  if(!panel) return;
-  // Stop aerial auto-pan so user can inspect the plot without camera drift
-  if (aerialOrbit) { aerialOrbit = false; activate(); }
-  const [x,z]=plotKey.split(",").map(Number);
-  const side=x<0?"West":x===0?"Centre":"East";
-  const pos=z<-50?"North":z>50?"South":"Mid";
-  panel.querySelector(".plot-id").textContent       = `Plot ${plotKey}`;
-  panel.querySelector(".plot-location").textContent = `${pos} ${side}  —  Premium Villa`;
-  panel.querySelector(".plot-status").textContent   = plot.status==="available"?"Available":"Reserved";
-  panel.querySelector(".plot-status").className     = "plot-status "+plot.status;
-  const btn=panel.querySelector(".plot-reserve-btn");
-  btn.disabled    = plot.status!=="available";
-  btn.textContent = plot.status==="available"?"Reserve This Plot":"Already Reserved";
-  
-  // NEW: Instead of instantly reserving, open the modal and pass the plotKey
-  btn.onclick = () => { 
-    if (plot.status === "available") {
-      window.openReservationModal("Premium Villa", plotKey); 
-    }
-  };
-  
-  panel.classList.add("visible");
-  // Real-time gold pulse highlight on selected plot
-  highlightPlot(plotKey);
-  _startPlotGlow(plotKey);
 
-  // Close button — guaranteed immediate
-  const closeBtn=document.getElementById("plot-panel-close");
-  if(closeBtn){
-    const handler=e=>{ e.stopImmediatePropagation(); panel.classList.remove("visible"); _stopPlotHighlightPulse(); closeBtn.removeEventListener('click',handler,true); };
-    closeBtn.addEventListener('click',handler,{capture:true,once:true});
-  }
+function showPlotPanel(plotKey) {
+  document.getElementById('xix-plot-panel')?.remove();
+  const plot = typeof plotRegistry !== 'undefined' ? plotRegistry.get(plotKey) : null;
+  const isReserved = plot?.status === "reserved";
+
+  const panel = document.createElement('div');
+  panel.id = 'xix-plot-panel';
+  panel.style.cssText = `
+    position:fixed; top:0; left:0; bottom:0; width:min(380px,100vw);
+    background:rgba(6,14,8,0.94); backdrop-filter:blur(16px);
+    border-right:1px solid rgba(201,168,76,0.3); z-index:2000;
+    display:flex; flex-direction:column; overflow:hidden;
+    transform:translateX(-100%); transition:transform .4s cubic-bezier(0.16, 1, 0.3, 1);
+    font-family:Inter,sans-serif;
+  `;
+
+  panel.innerHTML = `
+    <div style="display:flex; flex-direction:column; padding:24px; border-bottom:1px solid rgba(201,168,76,0.15); position:relative;">
+      <button id="plot-close-btn" style="position:absolute; top:16px; right:16px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:50%; width:32px; height:32px; color:#fff; cursor:pointer;">✕</button>
+      <div style="font-size:10px; color:rgba(201,168,76,0.8); letter-spacing:.15em; text-transform:uppercase;">PROJECT XIX — PREMIUM VILLA PLOT</div>
+      <h2 style="font-size:1.8rem; font-weight:300; color:#f0ece0; font-family:'Cormorant Garamond',serif; margin:6px 0 16px 0;">Plot ${plotKey}</h2>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; font-size:12px; color:#f0ece0;">
+        <div><span style="color:rgba(240,236,224,0.5); display:block; font-size:9px;">TYPE</span>3-Bedroom Premium Villa</div>
+        <div><span style="color:rgba(240,236,224,0.5); display:block; font-size:9px;">AREA</span>330 m²</div>
+      </div>
+    </div>
+
+    <div style="flex:1; overflow-y:auto; padding:24px;">
+      <div style="margin-bottom:20px;">
+        <h4 style="font-size:10px; color:rgba(201,168,76,0.8); text-transform:uppercase; border-bottom:1px solid rgba(201,168,76,0.2); padding-bottom:6px; margin:0 0 12px 0;">Architectural Plans & Gallery</h4>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+          <button onclick="window.openGallery('floorplans')" style="background:rgba(201,168,76,0.1); border:1px solid rgba(201,168,76,0.3); border-radius:4px; padding:10px; color:#e4c878; cursor:pointer; font-size:11px; text-transform:uppercase;">View Floorplans</button>
+          <button onclick="window.openGallery('renders')" style="background:rgba(201,168,76,0.1); border:1px solid rgba(201,168,76,0.3); border-radius:4px; padding:10px; color:#e4c878; cursor:pointer; font-size:11px; text-transform:uppercase;">View 3D Renders</button>
+        </div>
+      </div>
+
+      <div style="margin-bottom:24px;">
+        <h4 style="font-size:10px; color:rgba(201,168,76,0.8); text-transform:uppercase; border-bottom:1px solid rgba(201,168,76,0.2); padding-bottom:6px; margin:0 0 12px 0;">1st-Person Walkthrough</h4>
+        <button onclick="window.startIsolatedInterior('${plotKey}')" style="width:100%; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.2); border-radius:4px; padding:14px; color:#fff; cursor:pointer; font-size:13px; font-weight:600;">
+          Step Inside Plot ${plotKey}
+        </button>
+      </div>
+    </div>
+
+    <div style="padding:20px 24px; border-top:1px solid rgba(201,168,76,0.15); background:rgba(6,18,8,0.95);">
+      ${isReserved ? `
+        <button disabled style="width:100%; background:rgba(220,50,50,0.2); color:#ff6666; border:1px solid rgba(220,50,50,0.4); padding:14px; border-radius:4px; font-weight:600;">RESERVED</button>
+      ` : `
+        <button id="plot-reserve-btn" style="width:100%; background:#c9a84c; color:#061208; border:none; padding:14px; border-radius:4px; font-weight:600; cursor:pointer;">RESERVE THIS PLOT</button>
+      `}
+    </div>
+  `;
+
+  document.getElementById('world-overlay')?.appendChild(panel);
+  requestAnimationFrame(() => panel.style.transform = 'translateX(0)');
+
+  panel.querySelector('#plot-close-btn')?.addEventListener('click', () => {
+    panel.style.transform = 'translateX(-100%)';
+    setTimeout(() => panel.remove(), 400);
+  });
+
+  panel.querySelector('#plot-reserve-btn')?.addEventListener('click', () => {
+    window.openReservationModal(`Plot ${plotKey}`, plotKey);
+  });
 }
 
 // Gold pulsing glow on the selected plot overlay while the panel is open
