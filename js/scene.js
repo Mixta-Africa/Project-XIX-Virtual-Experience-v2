@@ -1410,16 +1410,23 @@ function addVillaRing(){
     placeV(x, z, rotY);
   }
 
-  for(let z = -76; z <= 120; z += 28) {
-    placeV(-162, z, Math.PI / 2);      
-    placeV(-194, z + 14, Math.PI / 2); 
-  }
+  // --- 2. THE WEST COLUMN (With Pony Line) ---
+  // 3 Villas North of the Pony Line
+  [-75, -47, -19].forEach(z => placeV(-162, z, Math.PI / 2));
+  // 3 Villas South of the Pony Line
+  [19, 47, 75].forEach(z => placeV(-162, z, Math.PI / 2));
+  // South-West Curved Villa (Leading to the Clubhouse)
+  placeV(-148, 105, 3 * Math.PI / 4);
 
-  for(let z = -76; z <= 120; z += 28) {
-    placeV(162, z, -Math.PI / 2);      
-    placeV(194, z + 14, -Math.PI / 2); 
-  }
+  // --- 3. THE EAST COLUMN (With Pony Line) ---
+  // 3 Villas North of the Pony Line
+  [-75, -47, -19].forEach(z => placeV(162, z, -Math.PI / 2));
+  // 3 Villas South of the Pony Line
+  [19, 47, 75].forEach(z => placeV(162, z, -Math.PI / 2));
+  // South-East Curved Villa (Leading to the Clubhouse)
+  placeV(148, 105, -3 * Math.PI / 4);
 
+  // --- 4. SOUTH ISOLATED PLOTS ---
   for(const side of [-1, 1]) {
     [65, 93, 121].forEach(xa => {
       placeV(side * xa, 105 + xa * 0.04, 0);
@@ -1431,17 +1438,25 @@ function addVillaRing(){
 }
 
 function addLoftTerraces(){
+  // Northern wrap-around lofts (Top of the map)
   for(let x=-310;x<=-110;x+=36){const cz=-162-Math.abs(x)*.05;registerVillaFootprint(x,cz);placeLoftGLB(x,cz,Math.PI);}
   for(let x=95;x<=310;x+=36){const cz=-162-Math.abs(x)*.05;registerVillaFootprint(x,cz);placeLoftGLB(x,cz,Math.PI);}
-  registerVillaFootprint(-220,-40);registerVillaFootprint(-220,40);
-  placeLoftGLB(-220,-40,-Math.PI/2);placeLoftGLB(-220,40,-Math.PI/2);
+  
+  // West Column Lofts (7 Units oriented vertically, split by pony line)
+  // 3 North of Pony Line
+  [-75, -45, -15].forEach(z => { registerVillaFootprint(-195, z); placeLoftGLB(-195, z, Math.PI / 2); });
+  // 4 South of Pony Line
+  [15, 45, 75, 105].forEach(z => { registerVillaFootprint(-195, z); placeLoftGLB(-195, z, Math.PI / 2); });
 }
 
 function addWestCompound() {
+  // 1. Training Field (Far West Layer)
   s(plane(120, 185, MATS.safetyBrown(), [-320, .06, 0])); 
   s(plane(100, 160, MAT_GRASS_FIELD(), [-320, .10, 0]));
-  placeAptGLB(-220, -45, Math.PI / 2); 
-  placeAptGLB(-220, 45, Math.PI / 2);
+  
+  // 2. Block of Flats (Middle Layer, sandwiched between Lofts and Training Field)
+  placeAptGLB(-245, -45, Math.PI / 2); 
+  placeAptGLB(-245, 45, Math.PI / 2);
 }
 
 function addPaddock() {
