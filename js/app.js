@@ -908,6 +908,9 @@ async function openWorldAt(viewKey) {
   // Phase 4: Mount persistent sales badges once the world opens
   setTimeout(() => buildVillaStatusOverlays(), 100);
 
+  // Initialize the searchable property directory
+  injectPropertyDirectory();
+  
   // Always open at field_centre — walk mode, ground level, facing north
   const _fieldVp = VIEWPOINTS['field_centre'];
   setView(_fieldVp.pos, _fieldVp.yaw, 0);
@@ -1110,6 +1113,7 @@ async function cinematicIntro(){
 function toggleAerial(btn){
   aerialOrbit=!aerialOrbit;
   if(aerialOrbit){
+    document.getElementById('xix-property-directory').style.display = 'block';
     btn&&btn.classList.add("active");
     deactivate();
     aerialAngle=0; aerialYawOffset=0; aerialPitch=-0.685;
@@ -1129,6 +1133,7 @@ function toggleAerial(btn){
       b.classList.toggle('active', b.dataset.mode === 'aerial')
     );
   } else {
+    document.getElementById('xix-property-directory').style.display = 'none';
     btn&&btn.classList.remove("active");
     unbindAerialPointer();
     activate();
@@ -1819,4 +1824,106 @@ function buildVillaStrip(){
     btn.addEventListener("click",()=>teleportVillaTo(vp.key));
     strip.appendChild(btn);
   });
+}
+
+// ─── SEARCHABLE PROPERTY DIRECTORY (AERIAL MODE) ──────────────────────────
+function injectPropertyDirectory() {
+  if (document.getElementById('xix-property-directory')) return;
+
+  const dirContainer = document.createElement('div');
+  dirContainer.id = 'xix-property-directory';
+  dirContainer.style.cssText = `
+    position: absolute; top: 80px; left: 24px; z-index: 2000;
+    font-family: Inter, sans-serif; pointer-events: none;
+    display: none; /* Hidden by default, shown in Aerial */
+  `;
+
+  dirContainer.innerHTML = `
+    
+      
+      Property Directory
+    
+    
+    
+      
+        
+      
+      
+      
+    
+  `;
+
+  document.getElementById('world-overlay')?.appendChild(dirContainer);
+
+  const toggleBtn = document.getElementById('dir-toggle-btn');
+  const panel = document.getElementById('dir-dropdown-panel');
+  const searchInput = document.getElementById('dir-search-input');
+
+  toggleBtn.addEventListener('click', () => {
+    const isOpen = panel.style.display === 'flex';
+    panel.style.display = isOpen ? 'none' : 'flex';
+    if (!isOpen) {
+      searchInput.value = '';
+      populateDirectoryList('');
+      searchInput.focus();
+    }
+  });
+
+  searchInput.addEventListener('input', (e) => populateDirectoryList(e.target.value.toLowerCase()));
+
+  function populateDirectoryList(searchTerm) {
+    const listEl = document.getElementById('dir-list-container');
+    listEl.innerHTML = '';
+    let matchCount = 0;
+
+    if (typeof plotRegistry === 'undefined') return;
+
+    // Sort keys sequentially (1 to 223)
+    const sortedKeys = Array.from(plotRegistry.keys()).sort((a, b) => Number(a) - Number(b));
+
+    sortedKeys.forEach(key => {
+      const plot = plotRegistry.get(key);
+      const typeLabel = plot.type || "Property";
+      
+      if (key.toLowerCase().includes(searchTerm) || typeLabel.toLowerCase().includes(searchTerm)) {
+        matchCount++;
+        const isAvail = plot.status === 'available';
+        const item = document.createElement('div');
+        item.style.cssText = `
+          padding: 10px; border-radius: 4px; cursor: pointer; display: flex; justify-content: space-between;
+          align-items: center; margin-bottom: 4px; transition: background 0.15s;
+        `;
+        item.onmouseover = () => item.style.background = 'rgba(201,168,76,0.1)';
+        item.onmouseout = () => item.style.background = 'transparent';
+        
+        item.innerHTML = `
+          
+            Unit ${key}
+            ${typeLabel}
+          
+          
+            ${isAvail ? 'AVAILABLE' : 'RESERVED'}
+          
+        `;
+
+        // Click to fly to unit
+        item.addEventListener('click', () => {
+          panel.style.display = 'none';
+          
+          if (plot.isApt) {
+             // For apartments, we just fly to the block for now
+             if (typeof setView === 'function') setView([-245, 40, 0], Math.PI/2, -0.4);
+          } else {
+             // Fly to specific Villa/Loft
+             if (typeof setView === 'function') setView([plot.x, 30, plot.z + 40], 0, -0.6);
+             if (typeof showPlotPanel === 'function') showPlotPanel(key);
+          }
+        });
+
+        listEl.appendChild(item);
+      }
+    });
+
+    if (matchCount === 0) listEl.innerHTML = `No properties found.`;
+  }
 }
