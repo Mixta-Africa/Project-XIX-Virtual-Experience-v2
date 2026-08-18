@@ -37,10 +37,17 @@ export function setPerfMode(mode) {
   if (sunLight) {
     sunLight.shadow.mapSize.set(s.shadowMapSize, s.shadowMapSize);
     sunLight.castShadow = (mode !== 'fast');
-    sunLight.shadow.map && sunLight.shadow.map.dispose();
-    sunLight.shadow.map = null;
+    if (sunLight.shadow.map) {
+      sunLight.shadow.map.dispose();
+      sunLight.shadow.map = null;
+    }
   }
-  if (scene && scene.fog) scene.fog.density = s.fogDensity;
+  
+  // FIX: Only set performance-based fog if the user does NOT have clear weather active
+  if (scene && scene.fog) {
+    const isClear = (window._currentWeather === 'clear');
+    scene.fog.density = isClear ? 0.000008 : s.fogDensity;
+  }
 }
 
 // ─── MODULE STATE ─────────────────────────────────────────────────────────────
