@@ -569,7 +569,14 @@ function showPlotPanel(plotKey) {
   const btn=panel.querySelector(".plot-reserve-btn");
   btn.disabled    = plot.status!=="available";
   btn.textContent = plot.status==="available"?"Reserve This Plot":"Already Reserved";
-  btn.onclick=()=>{ if(reservePlot(plotKey)){ showPlotPanel(plotKey); showNotification("Plot reserved! Our team will contact you within 24 hours."); }};
+  
+  // NEW: Instead of instantly reserving, open the modal and pass the plotKey
+  btn.onclick = () => { 
+    if (plot.status === "available") {
+      window.openReservationModal("Premium Villa", plotKey); 
+    }
+  };
+  
   panel.classList.add("visible");
   // Real-time gold pulse highlight on selected plot
   highlightPlot(plotKey);
@@ -637,6 +644,78 @@ function showNotification(msg) {
   n.textContent=msg; n.classList.add("show");
   setTimeout(()=>n.classList.remove("show"),4500);
 }
+
+// ─── RESERVATION MODAL LOGIC ──────────────────────────────────────────────────
+const GOOGLE_SCRIPT_URL = "https://script.google.com/a/macros/mixtafrica.com/s/AKfycbw0wMc4vyoUvPnxmaoSHW6mOYPNZ1F3qQzB0UaY2KJAJkV1VFfbF_yLsHYuZ-AZN3-b/exec";
+
+window.openReservationModal = function(propertyName, plotId = "") {
+  const modal = document.getElementById('reservation-modal');
+  if (!modal) return;
+  document.getElementById('res-property-name').value = propertyName || "General";
+  document.getElementById('res-plot-id').value = plotId || "";
+  document.getElementById('res-form-title').textContent = plotId ? `Reserve ${plotId}` : `Reserve ${propertyName}`;
+  modal.style.display = 'flex';
+};
+
+document.getElementById('res-close-btn')?.addEventListener('click', () => {
+  document.getElementById('reservation-modal').style.display = 'none';
+});
+
+document.getElementById('reservation-form')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('res-submit-btn');
+  btn.textContent = "Submitting...";
+  btn.disabled = true;
+
+  const payload = {
+    propertyName: document.getElementById('res-property-name').value,
+    plotId:       document.getElementById('res-plot-id').value,
+    fullName:     document.getElementById('res-name').value,
+    email:        document.getElementById('res-email').value,
+    phone:        document.getElementById('res-phone').value,
+    notes:        document.getElementById('res-notes').value,
+  };
+
+  try {
+    await fetch(GOOGLE_SCRIPT_URL, {
+      method: "POST",
+      mode: "no-cors", 
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    // 1. If it was a specific 3D plot, reserve it on the map and show notification
+    if (payload.plotId && typeof reservePlot === 'function') {
+      reservePlot(payload.plotId);
+      showPlotPanel(payload.plotId); // Refresh panel to show "Reserved" status
+      showNotification("Plot reserved! Our team will contact you within 24 hours.");
+    } 
+    // 2. If it was a general property (like a Loft or Stable), update the panel UI
+    else {
+      const propPanelBtn = document.getElementById('pp-reserve-btn');
+      if (propPanelBtn) {
+        const reserveSection = propPanelBtn.parentNode;
+        reserveSection.innerHTML = `
+          <div style="background:rgba(30,80,30,0.25);border:1px solid rgba(100,200,80,0.3);border-radius:4px;padding:16px;text-align:center;">
+            <div style="color:#8cde6a;font-size:24px;margin-bottom:8px;">✓</div>
+            <div style="color:#f0ece0;font-weight:600;margin-bottom:4px;">Interest Registered</div>
+            <div style="color:rgba(240,236,224,0.6);font-size:12px;">Our team will contact you within 24 hours.</div>
+          </div>`;
+      } else {
+        alert("Reservation submitted successfully! The concierge team will contact you shortly.");
+      }
+    }
+
+    document.getElementById('reservation-modal').style.display = 'none';
+    document.getElementById('reservation-form').reset();
+  } catch (err) {
+    alert("Submission failed. Please check your connection and try again.");
+  } finally {
+    btn.textContent = "Submit Reservation";
+    btn.disabled = false;
+  }
+});
+// ──────────────────────────────────────────────────────────────────────────────
 
 window.closeWorldAndPlot=function(){
   document.getElementById("plot-panel")?.classList.remove("visible");
@@ -1231,13 +1310,8 @@ function _showPropertyPanel(data, propKey) {
   });
 
   panel.querySelector('#pp-reserve-btn')?.addEventListener('click', () => {
-    const reserveSection = panel.querySelector('#pp-reserve-btn').parentNode;
-    reserveSection.innerHTML = `
-      <div style="background:rgba(30,80,30,0.25);border:1px solid rgba(100,200,80,0.3);border-radius:4px;padding:16px;text-align:center;">
-        <div style="color:#8cde6a;font-size:24px;margin-bottom:8px;">✓</div>
-        <div style="color:#f0ece0;font-weight:600;margin-bottom:4px;">Interest Registered</div>
-        <div style="color:rgba(240,236,224,0.6);font-size:12px;">Our team will contact you within 24 hours.</div>
-      </div>`;
+    // NEW: Open the modal, pass the property title (e.g., "Loft Terrace Apartments"), and leave plotKey blank
+    window.openReservationModal(data.title, "");
   });
 }
 
