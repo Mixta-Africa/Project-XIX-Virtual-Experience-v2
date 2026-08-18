@@ -1604,16 +1604,16 @@ export function getHorseGroup() { return horseGroup; }
 window._xixHoverState = null;
 
 window.setHoveredPlot = function(plotKey) {
-  // Prevent the global Impostor Mesh from glowing green when in Aerial View
-  if (_aerialModeActive || window._xixHoverState === plotKey) return;
+  if (window._aerialModeActive || window._xixHoverState === plotKey) return;
   
+  // 1. RESTORE OLD PLOT (Remove the unique glowing material and restore the shared one)
   if (window._xixHoverState) {
     const old = plotRegistry.get(window._xixHoverState);
     if (old && old.villaClone && old.status !== 'reserved') {
       old.villaClone.traverse(c => {
-        if (c.isMesh && c.material && c.userData.origEmissive !== undefined) {
-          c.material.emissive.setHex(c.userData.origEmissive);
-          c.material.emissiveIntensity = c.userData.origEmissiveInt;
+        if (c.isMesh && c.userData.origMat) {
+          c.material = c.userData.origMat; // Snap back to the high-performance shared material
+          c.userData.origMat = null;
         }
       });
     }
@@ -1621,15 +1621,17 @@ window.setHoveredPlot = function(plotKey) {
   
   window._xixHoverState = plotKey;
   
+  // 2. APPLY NEW PLOT GLOW (Clone material for this specific house only)
   if (window._xixHoverState) {
     const cur = plotRegistry.get(window._xixHoverState);
     if (cur && cur.villaClone && cur.status !== 'reserved') {
       cur.villaClone.traverse(c => {
-        if (c.isMesh && c.material) {
-          if (c.userData.origEmissive === undefined) {
-            c.userData.origEmissive = c.material.emissive.getHex();
-            c.userData.origEmissiveInt = c.material.emissiveIntensity;
-          }
+        if (c.isMesh) {
+          // Backup the shared material
+          if (!c.userData.origMat) c.userData.origMat = c.material;
+          
+          // Clone it so the green glow DOES NOT bleed to the rest of the row
+          c.material = c.userData.origMat.clone();
           c.material.emissive.setHex(0x22cc44);
           c.material.emissiveIntensity = 0.35;
         }
