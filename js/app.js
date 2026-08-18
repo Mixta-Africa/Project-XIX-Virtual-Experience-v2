@@ -1838,44 +1838,53 @@ function buildVillaStrip(){
 function injectPropertyDirectory() {
   if (document.getElementById('xix-property-directory')) return;
 
-  // BLACK RECTANGLE FIX: CSS Safeguard against empty HTML containers
+  // BLACK RECTANGLE FIX: Forcefully hide the crosshair and empty panels
   if (!document.getElementById('xix-safe-css')) {
     const safeCss = document.createElement('style');
     safeCss.id = 'xix-safe-css';
-    safeCss.textContent = `#dir-dropdown-panel:empty, .xix-tooltip:empty { display: none !important; }`;
+    safeCss.textContent = `#dir-dropdown-panel:empty, .xix-tooltip:empty, #crosshair { display: none !important; }`;
     document.head.appendChild(safeCss);
   }
 
+  // 1. Create Main Container
   const dirContainer = document.createElement('div');
   dirContainer.id = 'xix-property-directory';
-  dirContainer.style.cssText = `
-    position: absolute; top: 80px; left: 24px; z-index: 2000;
-    font-family: Inter, sans-serif; pointer-events: none;
-    display: none; /* Hidden by default, shown in Aerial */
-  `;
+  dirContainer.style.cssText = 'position: absolute; top: 80px; left: 24px; z-index: 2000; font-family: Inter, sans-serif; pointer-events: none; display: none;';
 
-  dirContainer.innerHTML = `
-    
-      
-      Property Directory
-    
-    
-    
-      
-        
-      
-      
-      
-    
-  `;
+  // 2. Create Toggle Button
+  const toggleBtn = document.createElement('button');
+  toggleBtn.id = 'dir-toggle-btn';
+  toggleBtn.textContent = 'Property Directory ▾';
+  toggleBtn.style.cssText = 'pointer-events: all; background: rgba(6,18,8,0.85); border: 1px solid rgba(201,168,76,0.4); color: #c9a84c; padding: 10px 18px; border-radius: 6px; font-weight: 600; font-size: 13px; cursor: pointer; backdrop-filter: blur(8px); display: flex; align-items: center; gap: 8px;';
 
+  // 3. Create Dropdown Panel
+  const panel = document.createElement('div');
+  panel.id = 'dir-dropdown-panel';
+  panel.style.cssText = 'pointer-events: all; background: rgba(6,18,8,0.95); border: 1px solid rgba(201,168,76,0.3); border-radius: 6px; margin-top: 8px; width: 300px; display: none; flex-direction: column; box-shadow: 0 8px 32px rgba(0,0,0,0.5); backdrop-filter: blur(12px);';
+
+  // 4. Create Search Bar
+  const searchDiv = document.createElement('div');
+  searchDiv.style.cssText = 'padding: 12px; border-bottom: 1px solid rgba(255,255,255,0.1);';
+  const searchInput = document.createElement('input');
+  searchInput.id = 'dir-search-input';
+  searchInput.type = 'text';
+  searchInput.placeholder = 'Search Unit ID or Typology...';
+  searchInput.style.cssText = 'width: 100%; background: rgba(255,255,255,0.05); border: 1px solid rgba(201,168,76,0.3); color: #f0ece0; padding: 10px 12px; border-radius: 4px; font-size: 13px; outline: none; box-sizing: border-box;';
+  searchDiv.appendChild(searchInput);
+
+  // 5. Create List Container
+  const listContainer = document.createElement('div');
+  listContainer.id = 'dir-list-container';
+  listContainer.style.cssText = 'max-height: 400px; overflow-y: auto; padding: 8px;';
+
+  // Assemble UI
+  panel.appendChild(searchDiv);
+  panel.appendChild(listContainer);
+  dirContainer.appendChild(toggleBtn);
+  dirContainer.appendChild(panel);
   document.getElementById('world-overlay')?.appendChild(dirContainer);
 
-  // Search inside the container we just built, making it 100% crash-proof
-      const toggleBtn = dirContainer.querySelector('#dir-toggle-btn');
-      const panel = dirContainer.querySelector('#dir-dropdown-panel');
-      const searchInput = dirContainer.querySelector('#dir-search-input');
-
+  // 6. Logic: Toggle Open/Close
   toggleBtn.addEventListener('click', () => {
     const isOpen = panel.style.display === 'flex';
     panel.style.display = isOpen ? 'none' : 'flex';
@@ -1886,11 +1895,12 @@ function injectPropertyDirectory() {
     }
   });
 
+  // 7. Logic: Search Filtering
   searchInput.addEventListener('input', (e) => populateDirectoryList(e.target.value.toLowerCase()));
 
+  // 8. Logic: Build the List dynamically
   function populateDirectoryList(searchTerm) {
-    const listEl = document.getElementById('dir-list-container');
-    listEl.innerHTML = '';
+    listContainer.innerHTML = '';
     let matchCount = 0;
 
     if (typeof plotRegistry === 'undefined') return;
@@ -1904,24 +1914,23 @@ function injectPropertyDirectory() {
       if (key.toLowerCase().includes(searchTerm) || typeLabel.toLowerCase().includes(searchTerm)) {
         matchCount++;
         const isAvail = plot.status === 'available';
-        const item = document.createElement('div');
-        item.style.cssText = `
-          padding: 10px; border-radius: 4px; cursor: pointer; display: flex; justify-content: space-between;
-          align-items: center; margin-bottom: 4px; transition: background 0.15s;
-        `;
-        item.onmouseover = () => item.style.background = 'rgba(201,168,76,0.1)';
-        item.onmouseout = () => item.style.background = 'transparent';
         
-        item.innerHTML = `
-          
-            Unit ${key}
-            ${typeLabel}
-          
-          
-            ${isAvail ? 'AVAILABLE' : 'RESERVED'}
-          
-        `;
+        const item = document.createElement('div');
+        item.style.cssText = 'padding: 10px; border-radius: 4px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; border-bottom: 1px solid rgba(255,255,255,0.05);';
+        
+        // Left side text
+        const leftDiv = document.createElement('div');
+        leftDiv.innerHTML = `Unit ${key}${typeLabel}`;
+        
+        // Right side badge
+        const rightDiv = document.createElement('div');
+        rightDiv.style.cssText = `font-size: 9px; font-weight: bold; padding: 3px 6px; border-radius: 3px; background: ${isAvail ? 'rgba(100,230,120,0.15)' : 'rgba(230,80,80,0.15)'}; color: ${isAvail ? '#66ff99' : '#ff6666'};`;
+        rightDiv.textContent = isAvail ? 'AVAILABLE' : 'RESERVED';
+        
+        item.appendChild(leftDiv);
+        item.appendChild(rightDiv);
 
+        // Click to fly
         item.addEventListener('click', () => {
           panel.style.display = 'none';
           if (plot.isApt) {
@@ -1932,10 +1941,10 @@ function injectPropertyDirectory() {
           }
         });
 
-        listEl.appendChild(item);
+        listContainer.appendChild(item);
       }
     });
 
-    if (matchCount === 0) listEl.innerHTML = `No properties found.`;
+    if (matchCount === 0) listContainer.innerHTML = 'No properties found.';
   }
 }
