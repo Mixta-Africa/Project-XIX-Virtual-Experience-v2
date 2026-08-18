@@ -1408,8 +1408,8 @@ function addVillaRing(){
   const PLOT=28;
   const cypressPositions=[];
   function placeV(x,z,ry){
-    const plotKey = String(window._nextUnitId++); // Generates 1, 2, 3...
-    registerVillaFootprint(x,z);
+    const plotKey=String(window._nextUnitId++); // Sequential numbering
+    registerVillaFootprint(x,z,plotKey,"3 BED VILLA");
     placeVillaGLBWithLOD(x,z,ry,plotKey);
     addVillaContactShadow(x,z); 
     collectVillaHedge(x,z,ry); 
@@ -1418,38 +1418,33 @@ function addVillaRing(){
     if(!isInNoBuildZone(x-rx+fx,z-rz+fz)) cypressPositions.push([x-rx+fx,z-rz+fz]);
   }
   
+  // PRESERVED: Exact North Straight Edges
   [-86, -108, -130, -152].forEach(x => { placeV(x, -120, 0); });
   placeV(-160, -104, -Math.PI / 4); 
   [86, 108, 130, 152].forEach(x => { placeV(x, -120, 0); });
   placeV(160, -104, Math.PI / 4); 
 
-  for (let i = 0; i < 10; i++) {
-    const t = 0.05 + (i / 9) * 0.90; 
+  // EDITED: Changed from 10 to 11 to add 1 missing villa around the lake
+  for (let i = 0; i < 11; i++) {
+    const t = 0.05 + (i / 10) * 0.90; 
     const x = -70 + (t * 140); 
     const z = -120 - Math.sin(t * Math.PI) * 18; 
     const rotY = Math.atan2(0 - x, -60 - z); 
     placeV(x, z, rotY);
   }
 
-  // --- 2. THE WEST COLUMN (With Pony Line) ---
-  // 3 Villas North of the Pony Line
+  // PRESERVED: Exact West & East Columns (Pony Lines)
   [-75, -47, -19].forEach(z => placeV(-162, z, Math.PI / 2));
-  // 3 Villas South of the Pony Line
   [19, 47, 75].forEach(z => placeV(-162, z, Math.PI / 2));
-  // South-West Curved Villa (Leading to the Clubhouse)
   placeV(-148, 105, 3 * Math.PI / 4);
 
-  // --- 3. THE EAST COLUMN (With Pony Line) ---
-  // 3 Villas North of the Pony Line
   [-75, -47, -19].forEach(z => placeV(162, z, -Math.PI / 2));
-  // 3 Villas South of the Pony Line
   [19, 47, 75].forEach(z => placeV(162, z, -Math.PI / 2));
-  // South-East Curved Villa (Leading to the Clubhouse)
   placeV(148, 105, -3 * Math.PI / 4);
 
-  // --- 4. SOUTH ISOLATED PLOTS ---
+  // EDITED: Added 149 to both sides to spawn 2 missing villas at the south corners
   for(const side of [-1, 1]) {
-    [65, 93, 121].forEach(xa => {
+    [65, 93, 121, 149].forEach(xa => {
       placeV(side * xa, 105 + xa * 0.04, 0);
     });
   }
@@ -1459,31 +1454,45 @@ function addVillaRing(){
 }
 
 function addLoftTerraces(){
-  // Northern wrap-around lofts (Top/North border along Crescent)
+  
+  // New helper: Slices 1 physical block into 4 clickable units
+  function placeLoftBlock(x, z, ry) {
+    placeLoftGLB(x, z, ry, null); // Place 1 physical building
+    const offsets = [-13.5, -4.5, 4.5, 13.5]; 
+    const cosR = Math.cos(ry), sinR = Math.sin(ry);
+
+    offsets.forEach(offsetX => {
+      const unitX = x + offsetX * cosR;
+      const unitZ = z - offsetX * sinR; 
+      const key = String(window._nextUnitId++); // Registers 4 sequential IDs
+      
+      const hitbox = new THREE.Mesh(
+        new THREE.BoxGeometry(9, 10, 16),
+        new THREE.MeshBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0, depthWrite: false })
+      );
+      hitbox.position.set(unitX, 5, unitZ); 
+      hitbox.rotation.y = ry;
+      hitbox.userData = { isPlotOverlay: true, plotKey: key }; 
+      scene.add(hitbox);
+      
+      plotRegistry.set(key, { x: unitX, z: unitZ, status: 'available', overlay: hitbox, type: "2 BED LOFT TERRACE", ry: ry });
+    });
+  }
+
+  // PRESERVED: Your exact Northern wrap-around lofts (12 Blocks)
   for(let x=-310; x<=-110; x+=36){ 
-    const cz=-162-Math.abs(x)*.05; 
-    const key=String(window._nextUnitId++); 
-    registerVillaFootprint(x,cz); 
-    placeLoftGLB(x,cz,Math.PI,key); 
+    placeLoftBlock(x, -162-Math.abs(x)*.05, Math.PI); 
   }
   for(let x=95; x<=310; x+=36){ 
-    const cz=-162-Math.abs(x)*.05; 
-    const key=String(window._nextUnitId++); 
-    registerVillaFootprint(x,cz); 
-    placeLoftGLB(x,cz,Math.PI,key); 
+    placeLoftBlock(x, -162-Math.abs(x)*.05, Math.PI); 
   }
   
-  // West Column Lofts (7 Units)
-  [-75, -45, -15].forEach(z => { 
-    const key=String(window._nextUnitId++); 
-    registerVillaFootprint(-200, z); 
-    placeLoftGLB(-200, z, 0, key); 
-  });
-  [15, 45, 75, 105].forEach(z => { 
-    const key=String(window._nextUnitId++); 
-    registerVillaFootprint(-200, z); 
-    placeLoftGLB(-200, z, 0, key); 
-  });
+  // PRESERVED: Your exact West Column Lofts (7 Blocks)
+  [-75, -45, -15].forEach(z => { placeLoftBlock(-200, z, 0); });
+  [15, 45, 75, 105].forEach(z => { placeLoftBlock(-200, z, 0); });
+
+  // NEW: The 5 Blocks on the Far East Column you were missing
+  [-45, -15, 15, 45, 75].forEach(z => { placeLoftBlock(260, z, Math.PI); });
 }
 function addWestCompound() {
   // 1. Training Field (Far West Layer)
