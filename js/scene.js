@@ -1075,24 +1075,16 @@ function addRoads(){
 
 // ─── PHASE 2 PLANAR WATER (CRASH-PROOF) ───────────────────────────────────────
 function addLake() {
-  // 1. Draw the smooth Crescent Shape using 2D vector math
   const shape = new THREE.Shape();
   
-  // Start at South-West inner corner
-  shape.moveTo(-110, -10);
-  // West rounded cap
-  shape.quadraticCurveTo(-120, 0, -110, 10);
-  // Outer (North) curve arching beautifully to the North
-  shape.quadraticCurveTo(0, 35, 110, 10);
-  // East rounded cap
-  shape.quadraticCurveTo(120, 0, 110, -10);
-  // Inner (South) curve returning
-  shape.quadraticCurveTo(0, 15, -110, -10);
+  shape.moveTo(-75, 92); 
+  shape.lineTo(75, 92);  
+  shape.quadraticCurveTo(85, 92, 80, 102); 
+  shape.quadraticCurveTo(0, 135, -80, 102); 
+  shape.quadraticCurveTo(-85, 92, -75, 92); 
 
-  // 2. Generate flat geometry from the shape (64 segments for smoothness)
   const waterGeo = new THREE.ShapeGeometry(shape, 64);
 
-  // 3. Pre-load normal map for the Planar Water shader safely
   const waterNormals = new THREE.TextureLoader().load('assets/textures/stone-normal.png', function(tex) {
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
     tex.repeat.set(6, 6);
@@ -1100,18 +1092,14 @@ function addLake() {
   waterNormals.wrapS = waterNormals.wrapT = THREE.RepeatWrapping;
 
   const lakeReflection = new Water(waterGeo, {
-    textureWidth: 512, 
-    textureHeight: 512,
+    textureWidth: 512, textureHeight: 512,
     waterNormals: waterNormals, 
     sunDirection: new THREE.Vector3(-180, 180, 120).normalize(),
-    sunColor: 0xfff4e0,
-    waterColor: 0x1a6a98,
-    distortionScale: 2.5,
-    fog: scene.fog !== undefined
+    sunColor: 0xfff4e0, waterColor: 0x1a6a98,
+    distortionScale: 2.5, fog: scene.fog !== undefined
   });
   
-  // 4. Position the lake in the world
-  lakeReflection.position.set(30, 0.335, -115);
+  lakeReflection.position.set(0, 0.335, 0);
   lakeReflection.rotation.x = -Math.PI / 2;
   lakeReflection.userData.isPlanarWater = true;
   
@@ -1273,62 +1261,57 @@ function addVillaRing(){
     if(!isInNoBuildZone(x+rx+fx,z+rz+fz)) cypressPositions.push([x+rx+fx,z+rz+fz]);
     if(!isInNoBuildZone(x-rx+fx,z-rz+fz)) cypressPositions.push([x-rx+fx,z-rz+fz]);
   }
-  // 1. West Straight Row (Inner & Outer)
-  for(let z = 100; z >= -20; z -= 28) {
-    placeV(-162, z, Math.PI / 2);      // Inner row
-    placeV(-194, z + 14, Math.PI / 2); // Outer row (Staggered for better views)
-  }
+  // --- 1. THE NORTH SIDE (18 VILLAS) ---
 
-  // 2. East Straight Row (Inner & Outer)
-  for(let z = 100; z >= -20; z -= 28) {
-    placeV(162, z, -Math.PI / 2);      // Inner row
-    placeV(194, z + 14, -Math.PI / 2); // Outer row (Staggered)
-  }
+  // A. West Straight Line (4 Villas)
+  [-86, -108, -130, -152].forEach(x => {
+    placeV(x, -120, 0); 
+  });
 
-  // 3. The Great Northern Crescent (Hugging the curved lake)
-  // We calculate a semi-ellipse to seamlessly connect the West and East straight rows.
-  const centerX = 0;
-  const centerZ = -20;
-  const radiusXInner = 162;
-  const radiusZInner = 120; // Pushes the apex north to z = -140, right behind the lake
-  const radiusXOuter = 194;
-  const radiusZOuter = 150;
+  // B. West Corner (1 Villa)
+  placeV(-160, -104, -Math.PI / 4); 
 
-  // Inner crescent arc (11 villas)
-  const innerCount = 11;
-  for (let i = 1; i <= innerCount; i++) {
-    const t = i / (innerCount + 1); 
-    const angle = Math.PI + t * Math.PI; // Sweeps from 180 degrees to 360 degrees
-    
-    const x = centerX + Math.cos(angle) * radiusXInner;
-    const z = centerZ + Math.sin(angle) * radiusZInner;
-    const rotY = -(angle + Math.PI / 2); // Rotates the villa to face perfectly inward
+  // C. East Straight Line (4 Villas)
+  [86, 108, 130, 152].forEach(x => {
+    placeV(x, -120, 0); 
+  });
+
+  // D. East Corner (1 Villa)
+  placeV(160, -104, Math.PI / 4); 
+
+  // E. The Lake Crescent (Exactly 10 Villas)
+  for (let i = 0; i < 10; i++) {
+    const t = 0.05 + (i / 9) * 0.90; 
+    const x = -70 + (t * 140); 
+    const z = -120 - Math.sin(t * Math.PI) * 18; 
+    const rotY = Math.atan2(0 - x, -60 - z); 
     placeV(x, z, rotY);
   }
 
-  // Outer crescent arc (13 villas)
-  const outerCount = 13;
-  for (let i = 1; i <= outerCount; i++) {
-    const t = i / (outerCount + 1);
-    const angle = Math.PI + t * Math.PI;
-    
-    const x = centerX + Math.cos(angle) * radiusXOuter;
-    const z = centerZ + Math.sin(angle) * radiusZOuter;
-    const rotY = -(angle + Math.PI / 2); 
-    placeV(x, z, rotY);
-  }
+  // --- 2. THE VERTICAL COLUMNS ---
   
-  // 4. South isolated plots (Clubhouse flanks)
+  // West Column
+  for(let z = -76; z <= 120; z += 28) {
+    placeV(-162, z, Math.PI / 2);      
+    placeV(-194, z + 14, Math.PI / 2); 
+  }
+
+  // East Column
+  for(let z = -76; z <= 120; z += 28) {
+    placeV(162, z, -Math.PI / 2);      
+    placeV(194, z + 14, -Math.PI / 2); 
+  }
+
+  // --- 3. SOUTH ISOLATED PLOTS ---
   for(const side of [-1, 1]) {
     [65, 93, 121].forEach(xa => {
       placeV(side * xa, 105 + xa * 0.04, 0);
     });
   }
-  
+
   buildInstancedCypress(cypressPositions);
   buildAllVillaHedges();
 }
-
 function addLoftTerraces(){
   for(let x=-310;x<=-110;x+=36){const cz=-162-Math.abs(x)*.05;registerVillaFootprint(x,cz);placeLoftGLB(x,cz,Math.PI);}
   for(let x=95;x<=310;x+=36){const cz=-162-Math.abs(x)*.05;registerVillaFootprint(x,cz);placeLoftGLB(x,cz,Math.PI);}
