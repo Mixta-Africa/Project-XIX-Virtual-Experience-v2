@@ -22,9 +22,9 @@ import {
 export let PERF_MODE = 'fast';
 
 const PERF_SETTINGS = {
-  fast:     { shadowMapSize: 1024, pixelRatio: 1.5, fogDensity: 0.00042, palmTickDiv: 6 },
-  balanced: { shadowMapSize: 2048, pixelRatio: 1.75,fogDensity: 0.00032, palmTickDiv: 3 },
-  rich:     { shadowMapSize: 4096, pixelRatio: 2.0, fogDensity: 0.00022, palmTickDiv: 1 },
+  fast:     { shadowMapSize: 1024, pixelRatio: 1.5, fogDensity: 0.00002, palmTickDiv: 6 },
+  balanced: { shadowMapSize: 2048, pixelRatio: 1.75,fogDensity: 0.00002, palmTickDiv: 3 },
+  rich:     { shadowMapSize: 4096, pixelRatio: 2.0, fogDensity: 0.00002, palmTickDiv: 1 },
 };
 
 export function setPerfMode(mode) {
@@ -1018,7 +1018,8 @@ function _makeMicroTexture(col1, col2, planeW, planeD) {
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.repeat.set(planeW/4, planeD/4);
-  return new THREE.MeshStandardMaterial({ map: tex, roughness: 0.92, metalness: 0 });
+  // Forces 100% roughness and disables environment reflections
+  return new THREE.MeshStandardMaterial({ map: tex, roughness: 1.0, metalness: 0.0, envMapIntensity: 0.0 });
 }
 
 function addGrassRing(){
@@ -1039,8 +1040,13 @@ function addPoloField(){
   }
   const st=new THREE.CanvasTexture(sc);
   st.colorSpace=THREE.SRGBColorSpace; st.wrapS=st.wrapT=THREE.RepeatWrapping;
-  const fm=MAT_GRASS_FIELD(); fm.map=st;
-  const fp = plane(274,146,fm,[0,.12,0]); scene.add(fp); _terrainMeshes.push(fp);
+  const fm = MAT_GRASS_FIELD(); 
+  fm.map = st;
+  fm.roughness = 1.0; 
+  fm.metalness = 0.0; 
+  fm.envMapIntensity = 0.0; // Completely removes the glossy sun reflection
+  const fp = plane(274, 146, fm, [0, .12, 0]); 
+  scene.add(fp); _terrainMeshes.push(fp);
   const lm=new THREE.MeshStandardMaterial({color:0xf8f5e0,roughness:.4});
   s(box(.5,.05,146,lm,[0,.14,0],0,false)); s(box(274,.05,.5,lm,[0,.14,0],0,false));
 }
@@ -1240,13 +1246,35 @@ export function highlightPlot(plotKey){
 }
 
 export function reservePlot(plotKey){
-  const plot=plotRegistry.get(plotKey); if(!plot||plot.status==="reserved") return false;
-  plot.status="reserved";
-  plot.villaClone && plot.villaClone.traverse(c=>{
-    if(c.isMesh&&c.material){c.material=c.material.clone();c.material.color.set(0x888888);c.material.opacity=.7;c.material.transparent=true;}
-  });
-  if(plot.overlay){plot.overlay.material.color.set(0xff4444);plot.overlay.material.opacity=0;}
-  plotRegistry.set(plotKey,plot); return true;
+  const plot = plotRegistry.get(plotKey); 
+  if (!plot || plot.status === "reserved") return false;
+  plot.status = "reserved";
+  
+  // Transform the villa into a Red Wireframe Hologram
+  if (plot.villaClone) {
+    plot.villaClone.traverse(c => {
+      if (c.isMesh) {
+        c.material = new THREE.MeshBasicMaterial({
+          color: 0xff2222,
+          transparent: true,
+          opacity: 0.45,
+          wireframe: true // Creates the architectural hologram effect
+        });
+      }
+    });
+  }
+  
+  if (plot.overlay) {
+    plot.overlay.material.color.set(0xff2222);
+    plot.overlay.material.opacity = 0;
+  }
+  
+  plotRegistry.set(plotKey, plot); 
+  
+  // Trigger the 3D floating badge to turn red and say "RESERVED"
+  if (typeof window.updatePlotBadge === 'function') window.updatePlotBadge(plotKey);
+  
+  return true;
 }
 
 export function getPlotAtRay(raycaster){
