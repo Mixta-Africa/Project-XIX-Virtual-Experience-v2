@@ -1438,15 +1438,23 @@ function addVillaRing(){
 }
 
 function addLoftTerraces(){
-  // Northern wrap-around lofts (Top of the map)
-  for(let x=-310;x<=-110;x+=36){const cz=-162-Math.abs(x)*.05;registerVillaFootprint(x,cz);placeLoftGLB(x,cz,Math.PI);}
-  for(let x=95;x<=310;x+=36){const cz=-162-Math.abs(x)*.05;registerVillaFootprint(x,cz);placeLoftGLB(x,cz,Math.PI);}
+  // Northern wrap-around lofts (Top/North border along Crescent)
+  for(let x=-310; x<=-110; x+=36){ const cz=-162-Math.abs(x)*.05; registerVillaFootprint(x,cz); placeLoftGLB(x,cz,Math.PI); }
+  for(let x=95; x<=310; x+=36){ const cz=-162-Math.abs(x)*.05; registerVillaFootprint(x,cz); placeLoftGLB(x,cz,Math.PI); }
   
-  // West Column Lofts (7 Units oriented vertically, split by pony line)
-  // 3 North of Pony Line
-  [-75, -45, -15].forEach(z => { registerVillaFootprint(-195, z); placeLoftGLB(-195, z, Math.PI / 2); });
-  // 4 South of Pony Line
-  [15, 45, 75, 105].forEach(z => { registerVillaFootprint(-195, z); placeLoftGLB(-195, z, Math.PI / 2); });
+  // West Column Lofts (7 Units)
+  // Rotated 0 rad so the LONG side runs West-to-East and SHORT side runs North-to-South
+  // 3 Units North of Pony Line
+  [-75, -45, -15].forEach(z => { 
+    registerVillaFootprint(-200, z); 
+    placeLoftGLB(-200, z, 0); 
+  });
+  
+  // 4 Units South of Pony Line
+  [15, 45, 75, 105].forEach(z => { 
+    registerVillaFootprint(-200, z); 
+    placeLoftGLB(-200, z, 0); 
+  });
 }
 
 function addWestCompound() {
