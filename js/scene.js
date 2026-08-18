@@ -1098,22 +1098,35 @@ function addRoads(){
 }
 
 // ─── PHASE 2 PLANAR WATER (CRASH-PROOF) ───────────────────────────────────────
-function addLake(){
-  const wm = createWaterMat();
+function addLake() {
+  // 1. Draw the smooth Crescent Shape using 2D vector math
+  const shape = new THREE.Shape();
   
-  const safeCanvas = document.createElement('canvas');
-  safeCanvas.width = 2; safeCanvas.height = 2;
-  const safeCtx = safeCanvas.getContext('2d');
-  safeCtx.fillStyle = '#8080ff'; 
-  safeCtx.fillRect(0,0,2,2);
-  const safeTex = new THREE.CanvasTexture(safeCanvas);
-  safeTex.wrapS = safeTex.wrapT = THREE.RepeatWrapping;
+  // Start at South-West inner corner
+  shape.moveTo(-110, -10);
+  // West rounded cap
+  shape.quadraticCurveTo(-120, 0, -110, 10);
+  // Outer (North) curve arching beautifully to the North
+  shape.quadraticCurveTo(0, 35, 110, 10);
+  // East rounded cap
+  shape.quadraticCurveTo(120, 0, 110, -10);
+  // Inner (South) curve returning
+  shape.quadraticCurveTo(0, 15, -110, -10);
 
-  const waterGeo = new THREE.PlaneGeometry(195, 22);
+  // 2. Generate flat geometry from the shape (64 segments for smoothness)
+  const waterGeo = new THREE.ShapeGeometry(shape, 64);
+
+  // 3. Pre-load normal map for the Planar Water shader safely
+  const waterNormals = new THREE.TextureLoader().load('assets/textures/stone-normal.png', function(tex) {
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(6, 6);
+  });
+  waterNormals.wrapS = waterNormals.wrapT = THREE.RepeatWrapping;
+
   const lakeReflection = new Water(waterGeo, {
-    textureWidth: window.innerWidth * Math.min(window.devicePixelRatio || 1, 2) * 0.5,
-    textureHeight: window.innerHeight * Math.min(window.devicePixelRatio || 1, 2) * 0.5,
-    waterNormals: safeTex, 
+    textureWidth: 512, 
+    textureHeight: 512,
+    waterNormals: waterNormals, 
     sunDirection: new THREE.Vector3(-180, 180, 120).normalize(),
     sunColor: 0xfff4e0,
     waterColor: 0x1a6a98,
@@ -1121,32 +1134,14 @@ function addLake(){
     fog: scene.fog !== undefined
   });
   
-  new THREE.TextureLoader().load('assets/textures/stone-normal.png', (tex) => {
-    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    tex.repeat.set(6, 6);
-    if (lakeReflection.material.uniforms['normalSampler']) {
-      lakeReflection.material.uniforms['normalSampler'].value = tex;
-    }
-  });
-  
+  // 4. Position the lake in the world
   lakeReflection.position.set(30, 0.335, -115);
   lakeReflection.rotation.x = -Math.PI / 2;
   lakeReflection.userData.isPlanarWater = true;
+  
   scene.add(lakeReflection);
   waterMeshes.push(lakeReflection);
-
-  for(const ex of [-68, 128]){
-    const ep=new THREE.Mesh(new THREE.CylinderGeometry(11,11,.35,32),wm);
-    ep.position.set(ex,.16,-115); 
-    scene.add(ep); 
-    waterMeshes.push(ep);
-  }
-  
-  const sg=MATS.grassGreen();
-  s(plane(220,6,sg,[30,.12,-104])); 
-  s(plane(220,6,sg,[30,.12,-126]));
 }
-
 function addEastLake(){
   const wm=createWaterMat();
   const el=new THREE.Mesh(new THREE.BoxGeometry(10,.25,38),wm);
