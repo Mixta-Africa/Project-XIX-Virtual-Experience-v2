@@ -1153,21 +1153,41 @@ function loadStablesGLB() {
 }
 
 function loadVillaGLB(){
-  makeDracoLoader().load("assets/villa-mesh.glb",gltf=>{
+  makeDracoLoader().load("assets/villa-mesh.glb", gltf => {
     gltf.scene.scale.setScalar(VILLA_SCALE);
-    gltf.scene.traverse(c=>{
-      if(c.isMesh){ c.castShadow=false; c.receiveShadow=true;
-        if(c.material){ c.material.envMapIntensity=0.4; c.material.needsUpdate=true; }
+    gltf.scene.traverse(c => {
+      if(c.isMesh){ 
+        c.castShadow = false; 
+        c.receiveShadow = true;
+        if(c.material){ c.material.envMapIntensity = 0.4; c.material.needsUpdate = true; }
       }
     });
-    const bbox=new THREE.Box3().setFromObject(gltf.scene);
-    gltf.scene.position.y=bbox.min.y<0?-bbox.min.y:0;
-    const wrapper=new THREE.Group(); wrapper.add(gltf.scene); villaGLBScene=wrapper;
-    pendingVillas.forEach(({x,z,ry,plotKey})=>placeVillaGLBWithLOD(x,z,ry,plotKey));
-    pendingVillas=[];
-  },null,err=>{
-    pendingVillas.forEach(({x,z,ry})=>{const v=_createVillaFallback();v.position.set(x,0,z);v.rotation.y=ry;scene.add(v);});
-    pendingVillas=[];
+    const bbox = new THREE.Box3().setFromObject(gltf.scene);
+    gltf.scene.position.y = bbox.min.y < 0 ? -bbox.min.y : 0;
+    const wrapper = new THREE.Group(); 
+    wrapper.add(gltf.scene); 
+    villaGLBScene = wrapper;
+
+    // Non-blocking batch queue: Process 6 villas per frame to eliminate thread locking
+    const queue = [...pendingVillas];
+    pendingVillas = [];
+
+    function processBatch() {
+      const batch = queue.splice(0, 6);
+      batch.forEach(({x, z, ry, plotKey}) => placeVillaGLBWithLOD(x, z, ry, plotKey));
+      if (queue.length > 0) {
+        requestAnimationFrame(processBatch);
+      }
+    }
+    processBatch();
+  }, null, err => {
+    pendingVillas.forEach(({x, z, ry}) => {
+      const v = _createVillaFallback();
+      v.position.set(x, 0, z);
+      v.rotation.y = ry;
+      scene.add(v);
+    });
+    pendingVillas = [];
   });
 }
 
