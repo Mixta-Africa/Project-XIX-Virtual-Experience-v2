@@ -1417,6 +1417,7 @@ window.openGallery = function(type) {
 };
 
 // ─── SPAWN-ON-DEMAND INTERIOR TRIGGER ────────────────────────────────────────
+// ─── SPAWN-ON-DEMAND INTERIOR TRIGGER ────────────────────────────────────────
 window.startIsolatedInterior = function(propKey) {
   // 1. Cleanly close the property panel
   const panel = document.getElementById('xix-prop-panel');
@@ -1433,7 +1434,47 @@ window.startIsolatedInterior = function(propKey) {
     return;
   }
 
-  // 3. Create the "Exit Walkthrough" button
+  // --- NEW: INTERIOR UI ELEMENTS ---
+  const uiContainer = document.createElement('div');
+  uiContainer.id = 'interior-walkthrough-ui';
+  
+  // 3. Create Floor Navigation Buttons (Right side of screen)
+  const plot = typeof plotRegistry !== 'undefined' ? plotRegistry.get(propKey) : null;
+  if (plot) {
+    const camLocalZ = 2.0; 
+    const worldX = plot.x + Math.sin(plot.ry) * camLocalZ;
+    const worldZ = plot.z + Math.cos(plot.ry) * camLocalZ;
+    
+    // Eye-level heights based on architectural sections
+    const L2_CAM_Y = 2.85 + 1.65; // Ground Floor Living
+    const L3_CAM_Y = 6.15 + 1.65; // First Floor Master Bed
+
+    uiContainer.innerHTML = `
+      
+        Level 3: Master Bedroom
+        Level 2: Living & Dining
+      
+    `;
+
+    document.getElementById('world-overlay')?.appendChild(uiContainer);
+
+    // Teleport Logic
+    document.getElementById('btn-floor-3').addEventListener('click', (e) => {
+      if (typeof setView === 'function') setView([worldX, L3_CAM_Y, worldZ], plot.ry, 0);
+      e.target.style.background = 'var(--gold-500, #c9a84c)'; e.target.style.color = '#061208'; e.target.style.fontWeight = 'bold';
+      const otherBtn = document.getElementById('btn-floor-2');
+      otherBtn.style.background = 'rgba(6,18,8,0.8)'; otherBtn.style.color = '#c9a84c'; otherBtn.style.fontWeight = 'normal';
+    });
+
+    document.getElementById('btn-floor-2').addEventListener('click', (e) => {
+      if (typeof setView === 'function') setView([worldX, L2_CAM_Y, worldZ], plot.ry, 0);
+      e.target.style.background = 'var(--gold-500, #c9a84c)'; e.target.style.color = '#061208'; e.target.style.fontWeight = 'bold';
+      const otherBtn = document.getElementById('btn-floor-3');
+      otherBtn.style.background = 'rgba(6,18,8,0.8)'; otherBtn.style.color = '#c9a84c'; otherBtn.style.fontWeight = 'normal';
+    });
+  }
+
+  // 4. Create the "Exit Walkthrough" button
   const exitBtn = document.createElement('button');
   exitBtn.innerHTML = `Exit Walkthrough`;
   exitBtn.style.cssText = `
@@ -1448,9 +1489,10 @@ window.startIsolatedInterior = function(propKey) {
   
   document.getElementById('world-overlay')?.appendChild(exitBtn);
 
-  // 4. Handle Exiting the Walkthrough
+  // 5. Handle Exiting the Walkthrough
   exitBtn.addEventListener('click', () => {
     exitBtn.remove();
+    if (uiContainer) uiContainer.remove(); // Clean up the floor buttons
     
     // Destroy the interior 3D model and restore the exterior shell
     if (typeof window.destroyInteriorBuild === 'function') {
