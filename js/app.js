@@ -1313,22 +1313,32 @@ function _showPropertyPanel(data, propKey) {
 
 function teleportTo(key, vp){
   try {
-    // vp may be a subView (has pos) or just a key reference (look up in VIEWPOINTS)
+    // 1. Exit Aerial view if active so orbital math stops overriding the camera
+    if (typeof aerialOrbit !== 'undefined' && aerialOrbit) {
+      toggleAerial(document.getElementById('btn-aerial'));
+    }
+
+    // 2. Set mode to walk and ensure controls are active
+    if (typeof setMoveMode === 'function') setMoveMode('walk');
+
+    // 3. Resolve position data
     const resolved = (vp && vp.pos) ? vp : (VIEWPOINTS[key] || null);
     if (!resolved || !Array.isArray(resolved.pos) || resolved.pos.length < 3) {
       console.warn('[XIX] teleportTo: bad viewpoint for key', key, resolved);
       return;
     }
+
+    // 4. Set camera ground position, yaw, and pitch
     setView(resolved.pos, resolved.yaw || 0, resolved.pitch || 0);
     setCaption(resolved.caption || key);
-    // Restore Y for current ground mode after teleport
+
+    // 5. Enforce ground eye height
     const cam = getCamera();
-    if (moveMode !== 'aerial') {
-      const eyeY = (moveMode === 'ride') ? 3.10 : 1.72;
-      cam.position.y = eyeY;
-      _currentEyeY = eyeY;
-      _targetEyeY  = eyeY;
-    }
+    const eyeY = (moveMode === 'ride') ? 3.10 : 1.72;
+    cam.position.y = eyeY;
+    _currentEyeY = eyeY;
+    _targetEyeY  = eyeY;
+
     if (resolved.zoneKey) showZonePanel(resolved.zoneKey); else hideZonePanel();
   } catch(err) {
     console.error('[XIX] teleportTo error:', err);
