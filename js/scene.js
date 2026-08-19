@@ -789,43 +789,48 @@ export function initScene(canvas) {
     buildEnvMapFromSky(renderer, scene, skyObj);
   }));
 
+  // ── Ground + field always first — visible within frame 1 ──
   addGround();
   addPoloField();
   addSafetyZone();
 
+  // ── All geometry that doesn't depend on async GLBs — single RAF ──
+  // Using one deferred frame keeps the first render fast (no jank) while
+  // still building the scene in the same second. Previously 3+ nested RAFs
+  // delayed GLB kicks by ~150 ms and caused the "empty scene until night" bug.
   requestAnimationFrame(() => {
     addGrassRing();
     addYardMarkings();
     addRoads();
-    addLake(); 
+    addLake();
     addEastLake();
     addClubhouse();
     addEstateSignage();
     addLandmarkHotspots();
 
-    requestAnimationFrame(() => {
-      loadHorseGLB();
-      loadVillaGLB();
-      loadApartmentGLB();
-      loadLoftGLB();
-      loadClubhouseGLB();
-      loadStablesGLB();
-      addVillaRing();
-      _buildVillaImpostors(); 
-      addLoftTerraces();
-      addWestCompound();
-      addPaddock();
-      addGamePark();
-      addCommercialBlock();
-      addServiceCompound();
-      addLandscaping();
+    // GLBs — fire immediately in the same RAF so they hit the network queue ASAP
+    loadHorseGLB();
+    loadVillaGLB();
+    loadApartmentGLB();
+    loadLoftGLB();
+    loadClubhouseGLB();
+    loadStablesGLB();
 
-      requestAnimationFrame(() => {
-        for (let i = 0; i < 8; i++) {
-          setTimeout(() => spawnNPCHorse(i), i * 400);
-        }
-      });
-    });
+    // Procedural geometry — synchronous, no network cost
+    addVillaRing();
+    _buildVillaImpostors();
+    addLoftTerraces();
+    addWestCompound();
+    addPaddock();
+    addGamePark();
+    addCommercialBlock();
+    addServiceCompound();
+    addLandscaping();
+
+    // NPC horses staggered but now triggered earlier (same RAF instead of RAF+RAF+RAF)
+    for (let i = 0; i < 8; i++) {
+      setTimeout(() => spawnNPCHorse(i), i * 400);
+    }
   });
 
   return { scene, renderer, camera, clock };
@@ -852,7 +857,7 @@ function buildLighting() {
   const perfS = PERF_SETTINGS[PERF_MODE];
   hemiLight = new THREE.HemisphereLight(0xd4e8ff, 0x4a6a30, 1.0);
   scene.add(hemiLight);
-  sunLight = new THREE.DirectionalLight(0xfff4e0, 2.8); 
+  sunLight = new THREE.DirectionalLight(0xfff4e0, 1.8); // Reduced from 2.8 — eliminates ground glare
   sunLight.position.set(-180, 180, 120);
   sunLight.castShadow = true; 
   sunLight.shadow.camera.left = sunLight.shadow.camera.bottom = -380;
