@@ -68,19 +68,21 @@ export function initPostProcessing(renderer, scene, camera) {
   }
 
   try {
+    try {
     lutPass = new LUTPass();
     lutPass.enabled = false;
+    /* Temporarily disabled to prevent console warnings until the LUT file is uploaded
     new LUTCubeLoader().load('assets/lut/xix_signature.cube', (result) => {
       lutPass.lut = result.lut;
       lutPass.enabled = true; 
     }, undefined, () => {
       console.warn('[XIX] LUT texture missing - using default tone mapping');
     });
+    */
     composer.addPass(lutPass);
   } catch(e) { 
     console.warn('[XIX] LUT pass init:', e.message); 
   }
-
   try {
     smaaPass = new SMAAPass(w, h);
     smaaPass.enabled = false;
