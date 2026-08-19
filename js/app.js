@@ -95,10 +95,10 @@ function tickDayCycle(elapsed) {
 }
 
 const TIME_PRESETS = {
-  morning:   { sky:["#1e3a5a","#7aaac8","#4a7a38"], sunCol:0xffd080, sunInt:1.8, sunPos:[-80,55,-80],   fog:"#8ab8cc", fogD:0.00018, exp:0.92 },
-  afternoon: { sky:["#1a3a6a","#5a9acc","#3a6a30"], sunCol:0xffe8b0, sunInt:2.2, sunPos:[-160,160,100], fog:"#8ab8cc", fogD:0.00014, exp:1.02 },
-  sunset:    { sky:["#0a1830","#c84818","#4a2a10"], sunCol:0xff8030, sunInt:1.6, sunPos:[-100,28,60],   fog:"#c06040", fogD:0.00022, exp:1.05 },
-  night:     { sky:["#000508","#020a14","#050a08"], sunCol:0x304870, sunInt:0.12,sunPos:[0,40,-80],     fog:"#020810", fogD:0.00035, exp:0.55 },
+  morning:   { sky:["#1e3a5a","#7aaac8","#4a7a38"], sunCol:0xffd080, sunInt:1.3, sunPos:[-80,55,-80],   fog:"#8ab8cc", fogD:0.00018, exp:0.72 },
+  afternoon: { sky:["#1a3a6a","#5a9acc","#3a6a30"], sunCol:0xffe8b0, sunInt:1.6, sunPos:[-160,160,100], fog:"#8ab8cc", fogD:0.00014, exp:0.78 }, // was 2.2/1.02 — kills the overexposed glare
+  sunset:    { sky:["#0a1830","#c84818","#4a2a10"], sunCol:0xff8030, sunInt:1.3, sunPos:[-100,28,60],   fog:"#c06040", fogD:0.00022, exp:0.88 },
+  night:     { sky:["#000508","#020a14","#050a08"], sunCol:0x304870, sunInt:0.10,sunPos:[0,40,-80],     fog:"#020810", fogD:0.00035, exp:0.48 },
 };
 
 function applyTimePreset(name, fromWeather = false) {
