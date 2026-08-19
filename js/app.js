@@ -961,18 +961,15 @@ async function openWorldAt(viewKey) {
       }
     }
     document.addEventListener('keydown', _onFirstMove, { passive:true });
-    // Mobile/touch: 2s flash when joystick is first touched
-    const _joy = document.getElementById('joystick-overlay');
-    if (_joy) {
-      _joy.addEventListener('touchstart', () => {
-        if (!_promptShown) {
-          _promptShown = true;
-          showEnterPrompt('Drag right to look  •  Joystick to move');
-          setTimeout(hideEnterPrompt, 2000);
-        }
-      }, { passive:true, once:true });
+    
     }
-  }
+  
+  // NEW: Instantly hide joystick on laptops if a physical mouse is moved
+  document.addEventListener('pointermove', (e) => {
+    if (e.pointerType === 'mouse' && typeof hideJoystick === 'function') {
+      hideJoystick();
+    }
+  }, { passive: true, once: true });
 
   // EXECUTIVE MODE: Auto-start in Aerial Orbit
   const aerialBtn = document.getElementById('btn-aerial');
