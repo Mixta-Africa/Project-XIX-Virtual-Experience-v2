@@ -1398,24 +1398,33 @@ export function getPlotAtRay(raycaster) {
   return null;
 }
 // ─── VILLA RING ───────────────────────────────────────────────────────────────
-const NO_BUILD_ZONES=[[0,128,75,55],[-375,90,55,45],[-248,-25,50,22],[-248,55,50,22],
-  [-390,0,65,100],[270,65,28,18],[218,0,28,28],[218,52,30,26],[0,0,140,76],[30,-115,105,18]];
 const villaFootprints=[];
-window._nextUnitId = 1; // Global sequential tracker starting at 1
-function registerVillaFootprint(x,z){villaFootprints.push({cx:x,cz:z,r:12});}
+window._nextUnitId = 1; // 1. Guarantees the counter starts cleanly
+
+// 2. Safely registers BOTH 3D collision boundaries and Database properties
+function registerVillaFootprint(x, z, customId, type = "3 BED VILLA") {
+  villaFootprints.push({cx:x, cz:z, r:12});
+  if (customId) {
+    plotRegistry.set(String(customId), { x, z, status: 'available', type: type });
+  }
+}
+
+// 3. Collision logic
 function isInNoBuildZone(x,z){
   for(const [cx,cz,hw,hd] of NO_BUILD_ZONES) if(Math.abs(x-cx)<=hw&&Math.abs(z-cz)<=hd) return true;
   for(const {cx,cz,r} of villaFootprints) if((x-cx)*(x-cx)+(z-cz)*(z-cz)<=r*r) return true;
   return false;
 }
 
+// 4. The 43-Unit Villa Ring
 function addVillaRing(){
   const PLOT=28;
   const cypressPositions=[];
+  
   function placeV(x,z,ry){
-    const plotKey=String(window._nextUnitId++); // Sequential numbering
-    registerVillaFootprint(x,z,plotKey,"3 BED VILLA");
-    placeVillaGLBWithLOD(x,z,ry,plotKey);
+    const plotKey = String(window._nextUnitId++); // Sequential numbering
+    registerVillaFootprint(x, z, plotKey, "3 BED VILLA");
+    placeVillaGLBWithLOD(x, z, ry, plotKey);
     addVillaContactShadow(x,z); 
     collectVillaHedge(x,z,ry); 
     const fx=Math.sin(ry)*(-9),fz=Math.cos(ry)*(-9),rx=Math.cos(ry)*8,rz=-Math.sin(ry)*8;
@@ -1423,13 +1432,11 @@ function addVillaRing(){
     if(!isInNoBuildZone(x-rx+fx,z-rz+fz)) cypressPositions.push([x-rx+fx,z-rz+fz]);
   }
   
-  // PRESERVED: Exact North Straight Edges
   [-86, -108, -130, -152].forEach(x => { placeV(x, -120, 0); });
   placeV(-160, -104, -Math.PI / 4); 
   [86, 108, 130, 152].forEach(x => { placeV(x, -120, 0); });
   placeV(160, -104, Math.PI / 4); 
 
-  // EDITED: Changed from 10 to 11 to add 1 missing villa around the lake
   for (let i = 0; i < 11; i++) {
     const t = 0.05 + (i / 10) * 0.90; 
     const x = -70 + (t * 140); 
@@ -1438,7 +1445,6 @@ function addVillaRing(){
     placeV(x, z, rotY);
   }
 
-  // PRESERVED: Exact West & East Columns (Pony Lines)
   [-75, -47, -19].forEach(z => placeV(-162, z, Math.PI / 2));
   [19, 47, 75].forEach(z => placeV(-162, z, Math.PI / 2));
   placeV(-148, 105, 3 * Math.PI / 4);
@@ -1447,7 +1453,6 @@ function addVillaRing(){
   [19, 47, 75].forEach(z => placeV(162, z, -Math.PI / 2));
   placeV(148, 105, -3 * Math.PI / 4);
 
-  // EDITED: Added 149 to both sides to spawn 2 missing villas at the south corners
   for(const side of [-1, 1]) {
     [65, 93, 121, 149].forEach(xa => {
       placeV(side * xa, 105 + xa * 0.04, 0);
