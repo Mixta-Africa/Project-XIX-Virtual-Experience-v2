@@ -1302,7 +1302,12 @@ function addPlotOverlay(x,z,ry,plotKey,villaClone){
   overlay.rotation.x=-Math.PI/2; overlay.position.set(x,.25,z);
   overlay.userData.plotKey=plotKey; overlay.userData.isPlotOverlay=true; overlay.userData.villaClone=villaClone;
   scene.add(overlay);
-  plotRegistry.set(plotKey,{status:"available",overlay,villaClone,x,z,ry});
+  
+  // Get the existing database entry (which holds the Typology) so we don't erase it
+  const existingData = plotRegistry.get(plotKey) || {};
+  
+  // Merge the new 3D data with the existing database data
+  plotRegistry.set(plotKey, { ...existingData, status: "available", overlay, villaClone, x, z, ry });
 }
 
 export function highlightPlot(plotKey){
