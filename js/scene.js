@@ -14,7 +14,7 @@ import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
   buildPalmInstances, tickPalms,
   setPerfModeGraphics, setBloomForTime, setSkyForTime, createAtmosphericSky,
-  buildEnvMapFromSky, applyPS4Materials, loadTexSafe,
+  buildEnvMapFromSky, applyPS4Materials,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
 } from "./graphics.js";
 
