@@ -1105,13 +1105,45 @@ function addLake() {
   shape.quadraticCurveTo(-85, 92, -75, 92); 
 
   const waterGeo = new THREE.ShapeGeometry(shape, 64);
-  const wm = createWaterMat(); 
-  const lakeMesh = new THREE.Mesh(waterGeo, wm);
   
-  lakeMesh.position.set(0, 0.335, 0);
-  lakeMesh.rotation.x = -Math.PI / 2;
-  scene.add(lakeMesh);
-  waterMeshes.push(lakeMesh);
+  // 1. FAST STARTUP: Spawn cheap PBR water on Frame 1 so the scene loads instantly
+  const wm = createWaterMat(); 
+  const lakeFallback = new THREE.Mesh(waterGeo, wm);
+  lakeFallback.position.set(0, 0.335, 0);
+  lakeFallback.rotation.x = -Math.PI / 2;
+  scene.add(lakeFallback);
+  waterMeshes.push(lakeFallback);
+
+  // 2. DEFERRED REALISM: Silently load the complex normal map in the background.
+  // This completely circumvents the "Texture marked for update" crash.
+  new THREE.TextureLoader().load('assets/textures/stone-normal.png', (normalTex) => {
+    normalTex.wrapS = normalTex.wrapT = THREE.RepeatWrapping;
+    normalTex.repeat.set(6, 6);
+
+    // Initialize the realistic planar reflection
+    const lakeReflection = new Water(waterGeo, {
+      textureWidth: 512, textureHeight: 512,
+      waterNormals: normalTex, 
+      // Matched perfectly to our new, glare-free sun position
+      sunDirection: new THREE.Vector3(120, 220, 100).normalize(), 
+      sunColor: 0xfff4e0, 
+      waterColor: 0x1a6a98,
+      distortionScale: 2.5, 
+      fog: scene.fog !== undefined
+    });
+    
+    lakeReflection.position.set(0, 0.335, 0);
+    lakeReflection.rotation.x = -Math.PI / 2;
+    lakeReflection.userData.isPlanarWater = true;
+    
+    // 3. SEAMLESS SWAP: Remove the cheap water and insert the real water
+    scene.remove(lakeFallback);
+    const index = waterMeshes.indexOf(lakeFallback);
+    if (index > -1) waterMeshes.splice(index, 1);
+    
+    scene.add(lakeReflection);
+    waterMeshes.push(lakeReflection);
+  });
 }
 
 function addEastLake(){
