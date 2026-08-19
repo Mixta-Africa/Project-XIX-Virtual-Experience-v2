@@ -31,7 +31,7 @@ export function initPostProcessing(renderer, scene, camera) {
   _scene = scene; 
   _camera = camera;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.62; // Reduced further — kills lower-left glare, closer to real-world luminance
+  renderer.toneMappingExposure = 0.62; // Reduced to kill glare and boost realism
 
   const w = Math.max(renderer.domElement.width || window.innerWidth, 1);
   const h = Math.max(renderer.domElement.height || window.innerHeight, 1);
@@ -50,8 +50,6 @@ export function initPostProcessing(renderer, scene, camera) {
   }
 
   try {
-    // threshold raised to 0.92 so only true highlights (sun disc, lamps) bloom.
-    // strength halved from 0.22 — kills the milky ground glare in daylight.
     bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.10, 0.40, 0.92);
     bloomPass.enabled = true;
     composer.addPass(bloomPass);
@@ -70,14 +68,7 @@ export function initPostProcessing(renderer, scene, camera) {
   try {
     lutPass = new LUTPass();
     lutPass.enabled = false;
-    /* Temporarily disabled to prevent console warnings until the LUT file is uploaded
-    new LUTCubeLoader().load('assets/lut/xix_signature.cube', (result) => {
-      lutPass.lut = result.lut;
-      lutPass.enabled = true; 
-    }, undefined, () => {
-      console.warn('[XIX] LUT texture missing - using default tone mapping');
-    });
-    */
+    /* Temporarily disabled until xix_signature.cube is on the server */
     composer.addPass(lutPass);
   } catch(e) { 
     console.warn('[XIX] LUT pass init:', e.message); 
@@ -95,6 +86,7 @@ export function initPostProcessing(renderer, scene, camera) {
   setPerfModeGraphics(_perfMode);
   return composer;
 }
+
 export function setInteriorDOF(active, focusDistance = 3.5) {
   if (!bokehPass) return;
   bokehPass.enabled = active;
@@ -157,22 +149,18 @@ export function setBloomForTime(name) {
 
   let params;
   if (_perfMode === 'fast') {
-    params = { strength: 0.07, threshold: 0.97, radius: 0.35 };
+    params = { strength: 0.07, threshold: 0.98, radius: 0.35 };
   } else {
-    // High threshold (0.95+) prevents the ground/grass from glowing. Only the actual sun will bloom.
+    // High threshold forces bloom strictly on emissive highlights and the sun disc
     const timePresets = {
-      // Threshold kept very high for daytime so only the actual sun disc blooms
-      morning:   { strength: 0.08, threshold: 0.96, radius: 0.35 },
+      morning:   { strength: 0.08, threshold: 0.98, radius: 0.35 },
       afternoon: { strength: 0.06, threshold: 0.98, radius: 0.35 },
-      // Sunset gets a warm glow but not cartoonish
       sunset:    { strength: 0.22, threshold: 0.88, radius: 0.55 },
-      // Night: lamps need to pop — lower threshold OK because scene is dark
       night:     { strength: 0.45, threshold: 0.65, radius: 0.75 },
     };
     params = timePresets[name] || { strength: 0.12, threshold: 0.98, radius: 0.40 };
   }
 
-  // Multiply by the weather modifier to dim glare when it rains
   bloomPass.strength = params.strength * (window._weatherBloomMult || 1.0);
   bloomPass.threshold = params.threshold;
   bloomPass.radius = params.radius;
@@ -254,15 +242,15 @@ export function createAtmosphericSky(scene, renderer) {
   u['sunPosition'].value.copy(sun);
   
   renderer.toneMapping = THREE.ACESFilmicToneMapping; 
-  renderer.toneMappingExposure = 0.85;
+  renderer.toneMappingExposure = 0.62;
   
   return { skyObj: sky, sun, skyUniforms: u };
 }
 
 export function setSkyForTime(skyUniforms, sun, sunLight, time) {
   const presets = {
-    morning:   { phi: 18,  theta: 95,  turb: 3.5, ray: 1.2, exp: 0.68, sunCol: 0xffd080, sunInt: 1.3 },
-    afternoon: { phi: 68,  theta: 195, turb: 2.5, ray: 0.9, exp: 0.75, sunCol: 0xfff4e0, sunInt: 1.6 }, // was exp:0.88 sunInt:2.6 — source of harsh glare
+    morning:   { phi: 18,  theta: 95,  turb: 3.5, ray: 1.2, exp: 0.58, sunCol: 0xffd080, sunInt: 1.0 },
+    afternoon: { phi: 68,  theta: 195, turb: 2.5, ray: 0.8, exp: 0.62, sunCol: 0xfff4e0, sunInt: 1.1 },
     sunset:    { phi: 5,   theta: 268, turb: 5.5, ray: 2.0, exp: 0.85, sunCol: 0xff6820, sunInt: 1.2 },
     night:     { phi: -12, theta: 180, turb: 1.0, ray: 0.4, exp: 0.15, sunCol: 0x304870, sunInt: 0.06 },
   };
@@ -288,6 +276,31 @@ export function setSkyForTime(skyUniforms, sun, sunLight, time) {
 // ─── PBR FACTORY & TEXTURE SAFETY ──────────────────────────────────────────────
 const tl = new THREE.TextureLoader(), T = "assets/textures/";
 
+export function loadTexSafe(path, repeat = 6, sRGB = false) {
+  const c = document.createElement('canvas');
+  c.width = 64; c.height = 64;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = sRGB ? '#5a8040' : '#8080ff';
+  ctx.fillRect(0, 0, 64, 64);
+
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(repeat, repeat);
+  if (sRGB) t.colorSpace = THREE.SRGBColorSpace;
+  t.needsUpdate = true;
+
+  new THREE.TextureLoader().load(
+    path,
+    (loaded) => {
+      t.image = loaded.image;
+      t.needsUpdate = true;
+    },
+    undefined,
+    () => { console.warn('[XIX] Safe-tex missing, using placeholder:', path); }
+  );
+  return t;
+}
+
 const _emptyCanvas = document.createElement('canvas');
 _emptyCanvas.width = 1; _emptyCanvas.height = 1;
 const _emptyCtx = _emptyCanvas.getContext('2d');
@@ -295,9 +308,6 @@ _emptyCtx.fillStyle = '#8080FF';
 _emptyCtx.fillRect(0,0,1,1);
 
 function loadTex(name, repeat, sRGB = true) {
-  // Pre-assign a safe 1×1 canvas image so the texture is GPU-ready immediately.
-  // This eliminates the "Texture marked for update but no image data found" spam —
-  // the loader will overwrite .image when the real asset arrives.
   const safeCanvas = document.createElement('canvas');
   safeCanvas.width = 4; safeCanvas.height = 4;
   const safeCtx = safeCanvas.getContext('2d');
@@ -312,14 +322,12 @@ function loadTex(name, repeat, sRGB = true) {
 
   tl.load(T + name,
     (loaded) => {
-      // Swap in the real image without replacing the texture object
       t.image = loaded.image;
       t.needsUpdate = true;
     },
     undefined,
     () => {
       console.warn('[XIX] Texture missing, keeping safe fallback:', name);
-      // Already has the safe canvas — no further action needed
     }
   );
   return t;
@@ -337,7 +345,7 @@ export function pbrMat({ color, normal, rough, repeat = 4, roughVal = 0.8, metal
 }
 
 export const PBR = {
-  grass:   () => pbrMat({ color: "grass",   normal: "grass",   rough: "grass",   repeat: 14, roughVal: 1.0, normalScale: 1.5, envInt: 0.0 }),
+  grass:   () => pbrMat({ color: "grass",   normal: "grass",   rough: "grass",   repeat: 24, roughVal: 1.0, normalScale: 2.5, envInt: 0.0 }),
   dirt:    () => pbrMat({ color: "dirt",    normal: "dirt",    rough: "dirt",    repeat: 18, roughVal: 0.95, normalScale: 1.0 }),
   asphalt: () => pbrMat({ color: "asphalt", normal: "asphalt", rough: "asphalt", repeat: 8,  roughVal: 0.88, normalScale: 0.9 }),
   concrete:() => pbrMat({ color: "concrete",normal: "concrete",rough: "concrete",repeat: 4, roughVal: 0.80, normalScale: 0.8 }),
@@ -387,11 +395,10 @@ export function tickWater(waterMeshes, elapsed) {
 }
 
 // ─── INSTANCED GRASS ──────────────────────────────────────────────────────────
-let _grassMesh = null, _grassCount = 0, _grassPos = null;
+let _grassMesh = null, _grassCount = 0;
 const _dummy = new THREE.Object3D();
 
 const _grassTexture = (() => {
-  // 128×256 atlas — 4 overlapping blades per card, colour-varied for realism
   const gc = document.createElement("canvas"); gc.width = 128; gc.height = 256;
   const gx = gc.getContext("2d");
   gx.clearRect(0, 0, 128, 256);
@@ -404,7 +411,6 @@ const _grassTexture = (() => {
     gg.addColorStop(1,   "rgba(100,160,60,0)");
     gx.fillStyle = gg;
     gx.beginPath();
-    // Wide base, tapers and curls at tip
     gx.moveTo(baseX - 5, 256);
     gx.quadraticCurveTo(baseX - 10 + lean * 0.3, 140, baseX + lean, 0);
     gx.quadraticCurveTo(baseX + lean + 4, 0, baseX + lean + 2, 2);
@@ -413,7 +419,6 @@ const _grassTexture = (() => {
     gx.fill();
   }
 
-  // 4 blades per card — different leans and two green shades for richness
   drawBlade(18,  -8, "#1e4a12", "#4a8a30");
   drawBlade(42,   5, "#224f14", "#52963a");
   drawBlade(70, -12, "#1a4510", "#3d7825");
@@ -433,8 +438,8 @@ export function addGrassField(centerX, centerZ, radiusX, radiusZ, density = 400)
     const rz = (Math.random() * 0.5 + 0.5) * radiusZ;
     const x = centerX + Math.cos(angle) * rx;
     const z = centerZ + Math.sin(angle) * rz;
-    const h = 0.55 + Math.random() * 0.65; // taller blades — lusher field
-    const w = 0.28 + Math.random() * 0.30; // wider cards — more visible texture
+    const h = 0.55 + Math.random() * 0.65; 
+    const w = 0.28 + Math.random() * 0.30; 
     newCards.push({ x, y: h / 2, z, h, w });
   }
   return newCards; 
@@ -443,7 +448,6 @@ export function addGrassField(centerX, centerZ, radiusX, radiusZ, density = 400)
 export function commitGrass(scene, cards) {
   if (!cards || cards.length === 0) return;
   _grassCount = cards.length; 
-  _grassPos = new Float32Array(_grassCount * 3);
   
   const geo = new THREE.PlaneGeometry(1, 1); 
   const mat = new THREE.MeshLambertMaterial({ map: _grassTexture, side: THREE.DoubleSide, alphaTest: 0.35, transparent: true });
@@ -453,9 +457,6 @@ export function commitGrass(scene, cards) {
   _grassMesh.frustumCulled = false; 
   
   cards.forEach((c, i) => {
-    _grassPos[i * 3] = c.x; 
-    _grassPos[i * 3 + 1] = c.y; 
-    _grassPos[i * 3 + 2] = c.z;
     _dummy.position.set(c.x, c.y, c.z); 
     _dummy.scale.set(c.w, c.h, 1);
     _dummy.rotation.set(0, Math.random() * Math.PI, 0); 
@@ -468,27 +469,7 @@ export function commitGrass(scene, cards) {
 }
 
 export function tickGrass(camera) {
-  if (!_grassMesh) return;
-  const cx = camera.position.x, cz = camera.position.z;
-  const FADE_START2 = 85 * 85, FADE_END2 = 155 * 155, RANGE = FADE_END2 - FADE_START2;
-  let needsUpdate = false;
-  
-  for (let i = 0; i < _grassCount; i++) {
-    const px = _grassPos[i * 3], py = _grassPos[i * 3 + 1], pz = _grassPos[i * 3 + 2];
-    const dx = cx - px, dz = cz - pz, dist2 = dx * dx + dz * dz;
-    
-    if (dist2 > FADE_END2) {
-      _dummy.position.set(px, py, pz); _dummy.scale.set(0, 0, 0); _dummy.rotation.y = 0;
-      _dummy.updateMatrix(); _grassMesh.setMatrixAt(i, _dummy.matrix); needsUpdate = true;
-    } else {
-      const rot = Math.atan2(dx, dz);
-      _dummy.position.set(px, py, pz); _dummy.rotation.set(0, rot, 0);
-      const op = dist2 < FADE_START2 ? 1 : 1 - (dist2 - FADE_START2) / RANGE;
-      _dummy.scale.set(op * 0.55, op * 0.60, 1); // wider + taller blades for visible texture
-      _dummy.updateMatrix(); _grassMesh.setMatrixAt(i, _dummy.matrix); needsUpdate = true;
-    }
-  }
-  if (needsUpdate) _grassMesh.instanceMatrix.needsUpdate = true;
+  return; // BYPASSED FOR PERFORMANCE: GPU handles static terrain texture now
 }
 
 // ─── INSTANCED PALMS ──────────────────────────────────────────────────────────
