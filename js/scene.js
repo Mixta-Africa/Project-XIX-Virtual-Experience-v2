@@ -14,7 +14,7 @@ import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
   buildPalmInstances, tickPalms,
   setPerfModeGraphics, setBloomForTime, setSkyForTime, createAtmosphericSky,
-  buildEnvMapFromSky, applyPS4Materials,
+  buildEnvMapFromSky, applyPS4Materials, loadTexSafe,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
 } from "./graphics.js";
 
@@ -515,7 +515,19 @@ const _impostorMat   = new THREE.MeshStandardMaterial({ color:0xF5E6B0, roughnes
 const _impostorGeo   = new THREE.BoxGeometry(14, 8, 12);
 
 function placeVillaGLBWithLOD(x, z, ry, plotKey) {
-  if (!villaGLBScene) { pendingVillas.push({x,z,ry,plotKey}); return; }
+  if (!villaGLBScene) { 
+    // INSTANT LOAD ARCHITECTURE:
+    // Place a lightweight architectural box immediately so the estate looks full on Frame 1
+    const dummy = new THREE.Mesh(_impostorGeo, _impostorMat);
+    dummy.position.set(x, 4, z);
+    dummy.rotation.y = ry;
+    scene.add(dummy);
+    
+    // Save reference so we can delete it when the real GLB arrives
+    pendingVillas.push({x, z, ry, plotKey, placeholder: dummy}); 
+    if (plotKey) addPlotOverlay(x, z, ry, plotKey, dummy); 
+    return; 
+  }
 
   const lod = new THREE.LOD();
   lod.position.set(x, 0, z);
@@ -527,13 +539,15 @@ function placeVillaGLBWithLOD(x, z, ry, plotKey) {
   const highDetail = villaGLBScene.clone(true);
   highDetail.rotation.y = 0;
   lod.addLevel(highDetail, 0);          
-
-  lod.addLevel(new THREE.Group(), 180); 
+  
+  // Proper LOD Design: After 180m, swap the high-poly house for a cheap box
+  const lowDetail = new THREE.Mesh(_impostorGeo, _impostorMat);
+  lowDetail.position.y = 4;
+  lod.addLevel(lowDetail, 180); 
   lod.addLevel(new THREE.Group(), 350);
 
   scene.add(lod);
   if (plotKey) addPlotOverlay(x, z, ry, plotKey, lod);
-  _villaInstData.push({ x, z, ry });
 }
 
 let _aerialModeActive = false;
@@ -808,19 +822,17 @@ export function initScene(canvas) {
     addEstateSignage();
     addLandmarkHotspots();
 
-    // GLBs — fire immediately in the same RAF so they hit the network queue ASAP
-    loadHorseGLB();
+   // 1. PRIORITY ZERO: Load the most important/heaviest model first
     loadVillaGLB();
-    loadApartmentGLB();
-    loadLoftGLB();
-    loadClubhouseGLB();
-    loadStablesGLB();
-
-    // Procedural geometry — synchronous, no network cost
     addVillaRing();
-    _buildVillaImpostors();
-    addLoftTerraces();
-    addWestCompound();
+    _buildVillaImpostors(); 
+
+    // 2. STAGGER THE REST: Space them out by 400ms so the CPU and Network don't choke
+    setTimeout(() => { loadLoftGLB(); addLoftTerraces(); }, 400);
+    setTimeout(() => { loadApartmentGLB(); addWestCompound(); }, 800);
+    setTimeout(() => { loadClubhouseGLB(); }, 1200);
+    setTimeout(() => { loadStablesGLB(); }, 1600);
+    setTimeout(() => { loadHorseGLB(); }, 2000);
     addPaddock();
     addGamePark();
     addCommercialBlock();
@@ -855,10 +867,12 @@ export function updateSky(top, hor, gnd) {
 
 function buildLighting() {
   const perfS = PERF_SETTINGS[PERF_MODE];
-  hemiLight = new THREE.HemisphereLight(0xd4e8ff, 0x4a6a30, 1.0);
+  hemiLight = new THREE.HemisphereLight(0xd4e8ff, 0x4a6a30, 0.4); // Reduced from 1.0
   scene.add(hemiLight);
-  sunLight = new THREE.DirectionalLight(0xfff4e0, 1.8); // Reduced from 2.8 — eliminates ground glare
-  sunLight.position.set(-180, 180, 120);
+  
+  sunLight = new THREE.DirectionalLight(0xfff4e0, 1.2); // Reduced from 1.8
+  // Moved the sun Higher and to the Right, eliminating the lower-left ground glare
+  sunLight.position.set(120, 220, 100); 
   sunLight.castShadow = true; 
   sunLight.shadow.camera.left = sunLight.shadow.camera.bottom = -380;
   sunLight.shadow.camera.right = sunLight.shadow.camera.top   =  380;
@@ -870,10 +884,10 @@ function buildLighting() {
   sunLight.shadow.radius      =  2.5;    
   scene.add(sunLight);
 
-  const fill = new THREE.DirectionalLight(0xd4b890, 0.55);
+  const fill = new THREE.DirectionalLight(0xd4b890, 0.25); // Reduced from 0.55
   fill.position.set(100, 60, -120); scene.add(fill);
 
-  const ambient = new THREE.DirectionalLight(0xb8d0ff, 0.28);
+  const ambient = new THREE.DirectionalLight(0xb8d0ff, 0.15); // Reduced from 0.28
   ambient.position.set(-80, 20, 80); scene.add(ambient);
 }
 
@@ -1161,27 +1175,15 @@ function addLake() {
   shape.quadraticCurveTo(-85, 92, -75, 92); 
 
   const waterGeo = new THREE.ShapeGeometry(shape, 64);
-
-  const waterNormals = new THREE.TextureLoader().load('assets/textures/stone-normal.png', function(tex) {
-    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    tex.repeat.set(6, 6);
-  });
-  waterNormals.wrapS = waterNormals.wrapT = THREE.RepeatWrapping;
-
-  const lakeReflection = new Water(waterGeo, {
-    textureWidth: 512, textureHeight: 512,
-    waterNormals: waterNormals, 
-    sunDirection: new THREE.Vector3(-180, 180, 120).normalize(),
-    sunColor: 0xfff4e0, waterColor: 0x1a6a98,
-    distortionScale: 2.5, fog: scene.fog !== undefined
-  });
   
-  lakeReflection.position.set(0, 0.335, 0);
-  lakeReflection.rotation.x = -Math.PI / 2;
-  lakeReflection.userData.isPlanarWater = true;
+  // Use the highly optimized PBR water instead of Planar Water.js
+  const wm = createWaterMat(); 
+  const lakeMesh = new THREE.Mesh(waterGeo, wm);
   
-  scene.add(lakeReflection);
-  waterMeshes.push(lakeReflection);
+  lakeMesh.position.set(0, 0.335, 0);
+  lakeMesh.rotation.x = -Math.PI / 2;
+  scene.add(lakeMesh);
+  waterMeshes.push(lakeMesh);
 }
 
 function addEastLake(){
@@ -1241,6 +1243,8 @@ function loadVillaGLB(){
       if(c.isMesh){ 
         c.castShadow = false; 
         c.receiveShadow = true;
+        // Frustum-cull individual meshes — LOD handles the distance switch
+        c.frustumCulled = true;
         if(c.material){ c.material.envMapIntensity = 0.4; c.material.needsUpdate = true; }
       }
     });
@@ -1250,18 +1254,19 @@ function loadVillaGLB(){
     wrapper.add(gltf.scene); 
     villaGLBScene = wrapper;
 
+    // Process ALL pending villas in one synchronous pass
     const queue = [...pendingVillas];
     pendingVillas = [];
+    queue.forEach((data) => {
+      if (data.placeholder) scene.remove(data.placeholder); // Remove the temporary box
+      placeVillaGLBWithLOD(data.x, data.z, data.ry, data.plotKey); // Insert real GLB
+    });
 
-    function processBatch() {
-      const batch = queue.splice(0, 6);
-      batch.forEach(({x, z, ry, plotKey}) => placeVillaGLBWithLOD(x, z, ry, plotKey));
-      if (queue.length > 0) {
-        requestAnimationFrame(processBatch);
-      }
-    }
-    processBatch();
+    if (_impostorMesh) { scene.remove(_impostorMesh); _impostorMesh = null; }
+    _buildVillaImpostors();
+
   }, null, err => {
+    console.warn('[XIX] villa-mesh.glb failed, using fallbacks:', err);
     pendingVillas.forEach(({x, z, ry}) => {
       const v = _createVillaFallback();
       v.position.set(x, 0, z);
@@ -1276,11 +1281,19 @@ function loadApartmentGLB(){
   makeDracoLoader().load("assets/apartment-mesh.glb",gltf=>{
     gltf.scene.scale.setScalar(APT_SCALE);
     applyPS4Materials(gltf.scene);
+    // Enable frustum culling per mesh for perf
+    gltf.scene.traverse(c => { if(c.isMesh) c.frustumCulled = true; });
     const bbox=new THREE.Box3().setFromObject(gltf.scene);
     gltf.scene.position.y=bbox.min.y<0?-bbox.min.y:0;
     const wrapper=new THREE.Group(); wrapper.add(gltf.scene); aptGLBScene=wrapper;
-    pendingApts.forEach(({x,z,ry})=>placeAptGLB(x,z,ry)); pendingApts=[];
-  },null,()=>{pendingApts.forEach(({x,z})=>scene.add(_createFlatBlock(x,z)));pendingApts=[];});
+    // Process all in one pass — no deferred batching
+    const q=[...pendingApts]; pendingApts=[];
+    q.forEach(({x,z,ry})=>placeAptGLB(x,z,ry));
+  },null,err=>{
+    console.warn('[XIX] apartment-mesh.glb failed:', err);
+    const q=[...pendingApts]; pendingApts=[];
+    q.forEach(({x,z})=>scene.add(_createFlatBlock(x,z)));
+  });
 }
 
 function loadLoftGLB(){
