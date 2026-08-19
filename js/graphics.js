@@ -154,15 +154,16 @@ export function setBloomForTime(name) {
 
   let params;
   if (_perfMode === 'fast') {
-    params = { strength: 0.22, threshold: 0.75, radius: 0.55 };
+    params = { strength: 0.15, threshold: 0.95, radius: 0.40 };
   } else {
+    // High threshold (0.95+) prevents the ground/grass from glowing. Only the actual sun will bloom.
     const timePresets = {
-      morning:   { strength: 0.30, threshold: 0.78, radius: 0.50 },
-      afternoon: { strength: 0.28, threshold: 0.72, radius: 0.58 },
-      sunset:    { strength: 0.72, threshold: 0.62, radius: 0.85 },
-      night:     { strength: 0.90, threshold: 0.52, radius: 0.80 },
+      morning:   { strength: 0.15, threshold: 0.95, radius: 0.40 },
+      afternoon: { strength: 0.12, threshold: 0.98, radius: 0.40 },
+      sunset:    { strength: 0.35, threshold: 0.85, radius: 0.60 },
+      night:     { strength: 0.60, threshold: 0.60, radius: 0.80 },
     };
-    params = timePresets[name] || { strength: 0.28, threshold: 0.72, radius: 0.58 };
+    params = timePresets[name] || { strength: 0.12, threshold: 0.98, radius: 0.40 };
   }
 
   // Multiply by the weather modifier to dim glare when it rains
@@ -300,19 +301,19 @@ function loadTex(name, repeat, sRGB = true) {
   return t;
 }
 
-export function pbrMat({ color, normal, rough, repeat = 4, roughVal = 0.8, metalVal = 0, normalScale = 1.2 }) {
+export function pbrMat({ color, normal, rough, repeat = 4, roughVal = 0.8, metalVal = 0, normalScale = 1.2, envInt = 1.2 }) {
   return new THREE.MeshStandardMaterial({
     map: loadTex(color + "-color.png", repeat), 
     normalMap: loadTex(normal + "-normal.png", repeat, false),
     roughnessMap: loadTex(rough + "-roughness.png", repeat, false),
     normalScale: new THREE.Vector2(normalScale, normalScale),
-    roughness: roughVal, metalness: metalVal, envMapIntensity: 1.2,
+    roughness: roughVal, metalness: metalVal, envMapIntensity: envInt,
     ...(_envMap ? { envMap: _envMap } : {}),
   });
 }
 
 export const PBR = {
-  grass:   () => pbrMat({ color: "grass",   normal: "grass",   rough: "grass",   repeat: 14, roughVal: 0.90, normalScale: 0.8 }),
+  grass:   () => pbrMat({ color: "grass",   normal: "grass",   rough: "grass",   repeat: 14, roughVal: 1.0, normalScale: 1.5, envInt: 0.0 }),
   dirt:    () => pbrMat({ color: "dirt",    normal: "dirt",    rough: "dirt",    repeat: 18, roughVal: 0.95, normalScale: 1.0 }),
   asphalt: () => pbrMat({ color: "asphalt", normal: "asphalt", rough: "asphalt", repeat: 8,  roughVal: 0.88, normalScale: 0.9 }),
   concrete:() => pbrMat({ color: "concrete",normal: "concrete",rough: "concrete",repeat: 4, roughVal: 0.80, normalScale: 0.8 }),
