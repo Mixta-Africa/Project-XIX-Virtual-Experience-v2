@@ -485,15 +485,12 @@ function buildInstancedCypress(positions) {
 }
 
 // ─── INSTANCED VILLA RENDERING WITH LOD ───────────────────────────────────────
-const _villaInstData = [];   
-let   _impostorMesh  = null; 
 const _impostorMat   = new THREE.MeshStandardMaterial({ color:0xF5E6B0, roughness:.8 });
 const _impostorGeo   = new THREE.BoxGeometry(14, 8, 12);
 
 function placeVillaGLBWithLOD(x, z, ry, plotKey) {
   if (!villaGLBScene) { 
-    // INSTANT LOAD ARCHITECTURE:
-    // Place a lightweight architectural box immediately so the estate looks full on Frame 1
+    // Frame 1: Place a lightweight box immediately so the estate looks full
     const dummy = new THREE.Mesh(_impostorGeo, _impostorMat);
     dummy.position.set(x, 4, z);
     dummy.rotation.y = ry;
@@ -520,40 +517,13 @@ function placeVillaGLBWithLOD(x, z, ry, plotKey) {
   const lowDetail = new THREE.Mesh(_impostorGeo, _impostorMat);
   lowDetail.position.y = 4;
   lod.addLevel(lowDetail, 180); 
-  lod.addLevel(new THREE.Group(), 350);
 
   scene.add(lod);
   if (plotKey) addPlotOverlay(x, z, ry, plotKey, lod);
-  _villaInstData.push({ x, z, ry });
 }
-
-let _aerialModeActive = false;
 
 export function setAerialMode(on) {
-  _aerialModeActive = on;
-  if (!scene) return;
-
-  // We remove the LOD locking so the engine can natively swap to 
-  // the highly optimized 1-draw-call impostor mesh when high in the sky.
-  if (_impostorMesh) _impostorMesh.visible = true; 
-}
-
-function _buildVillaImpostors() {
-  if (_villaInstData.length === 0) return;
-  _impostorMesh = new THREE.InstancedMesh(_impostorGeo, _impostorMat, _villaInstData.length);
-  _impostorMesh.receiveShadow = true;
-  _impostorMesh.castShadow    = false;
-  _impostorMesh.frustumCulled = false;
-  const dummy = new THREE.Object3D();
-  _villaInstData.forEach(({ x, z, ry }, i) => {
-    dummy.position.set(x, 4, z); 
-    dummy.rotation.y = ry;
-    dummy.updateMatrix();
-    _impostorMesh.setMatrixAt(i, dummy.matrix);
-  });
-  _impostorMesh.instanceMatrix.needsUpdate = true;
-  _impostorMesh.renderOrder = -1;
-  scene.add(_impostorMesh);
+  // Empty function - the LOD distance parameter automatically handles Aerial views now!
 }
 
 // ─── IN-WORLD SIGNAGE ─────────────────────────────────────────────────────────
@@ -807,17 +777,17 @@ export function initScene(canvas) {
     addServiceCompound();
     addLandscaping();
 
-    // GLBs staggered loading — fires in sequence, saving CPU and Network bandwidth
-    // 1. PRIORITY ZERO: Load the most important/heaviest model first
+    // 1. PRIORITY ZERO: Load the most important model first
     loadVillaGLB();
+    addVillaRing();
 
-    // 2. STAGGER THE REST: Space them out by 400ms so the CPU and Network don't choke
-    setTimeout(() => { loadLoftGLB(); }, 400);
-    setTimeout(() => { loadApartmentGLB(); }, 800);
+    // 2. STAGGER THE REST: Space them out so the CPU and Network don't crash
+    setTimeout(() => { loadLoftGLB(); addLoftTerraces(); }, 400);
+    setTimeout(() => { loadApartmentGLB(); addWestCompound(); }, 800);
     setTimeout(() => { loadClubhouseGLB(); }, 1200);
     setTimeout(() => { loadStablesGLB(); }, 1600);
     setTimeout(() => { loadHorseGLB(); }, 2000);
-
+    
     // NPC horses staggered but now triggered later
     for (let i = 0; i < 8; i++) {
       setTimeout(() => spawnNPCHorse(i), 2400 + (i * 400));
@@ -1222,7 +1192,6 @@ function loadVillaGLB(){
       if(c.isMesh){ 
         c.castShadow = false; 
         c.receiveShadow = true;
-        // Frustum-cull individual meshes — LOD handles the distance switch
         c.frustumCulled = true;
         if(c.material){ c.material.envMapIntensity = 0.4; c.material.needsUpdate = true; }
       }
@@ -1233,24 +1202,21 @@ function loadVillaGLB(){
     wrapper.add(gltf.scene); 
     villaGLBScene = wrapper;
 
-    // Process ALL pending villas in one synchronous pass
+    // Swap placeholders for real houses
     const queue = [...pendingVillas];
     pendingVillas = [];
     queue.forEach((data) => {
-      if (data.placeholder) scene.remove(data.placeholder); // Remove the temporary box
+      if (data.placeholder) scene.remove(data.placeholder); // Remove the dummy box
       placeVillaGLBWithLOD(data.x, data.z, data.ry, data.plotKey); // Insert real GLB
     });
 
-    if (_impostorMesh) { scene.remove(_impostorMesh); _impostorMesh = null; }
-    _buildVillaImpostors();
-
   }, null, err => {
     console.warn('[XIX] villa-mesh.glb failed, using fallbacks:', err);
-    pendingVillas.forEach(({x, z, ry, placeholder}) => {
-      if (placeholder) scene.remove(placeholder);
+    pendingVillas.forEach((data) => {
+      if (data.placeholder) scene.remove(data.placeholder); // Clean up dummy
       const v = _createVillaFallback();
-      v.position.set(x, 0, z);
-      v.rotation.y = ry;
+      v.position.set(data.x, 0, data.z);
+      v.rotation.y = data.ry;
       scene.add(v);
     });
     pendingVillas = [];
