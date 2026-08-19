@@ -1,7 +1,7 @@
 /**
  * Project XIX — Scene (Production Standard v25)
  * Upgrades: 
- * - Real-time Planar Water reflections removed for speed
+ * - Fast PBR Water (No texture crash loop)
  * - 3D Spatial Audio (Web Audio API PannerNodes)
  * - LOD instancing, Atmospheric Sky, and guided tour integration
  */
@@ -755,7 +755,6 @@ export function initScene(canvas) {
   addPoloField();
   addSafetyZone();
 
-  // ── All geometry that doesn't depend on async GLBs — single RAF ──
   requestAnimationFrame(() => {
     addGrassRing();
     addYardMarkings();
@@ -766,31 +765,24 @@ export function initScene(canvas) {
     addEstateSignage();
     addLandmarkHotspots();
 
-    // Procedural geometry — synchronous, no network cost
-    addVillaRing();
-    _buildVillaImpostors();
-    addLoftTerraces();
-    addWestCompound();
-    addPaddock();
-    addGamePark();
-    addCommercialBlock();
-    addServiceCompound();
-    addLandscaping();
-
-    // 1. PRIORITY ZERO: Load the most important model first
+    // Load main asset first, stagger the rest using separate loaders to prevent Web Worker deadlock
     loadVillaGLB();
     addVillaRing();
 
-    // 2. STAGGER THE REST: Space them out so the CPU and Network don't crash
     setTimeout(() => { loadLoftGLB(); addLoftTerraces(); }, 400);
     setTimeout(() => { loadApartmentGLB(); addWestCompound(); }, 800);
     setTimeout(() => { loadClubhouseGLB(); }, 1200);
     setTimeout(() => { loadStablesGLB(); }, 1600);
     setTimeout(() => { loadHorseGLB(); }, 2000);
     
-    // NPC horses staggered but now triggered later
+    addPaddock();
+    addGamePark();
+    addCommercialBlock();
+    addServiceCompound();
+    addLandscaping();
+
     for (let i = 0; i < 8; i++) {
-      setTimeout(() => spawnNPCHorse(i), 2400 + (i * 400));
+      setTimeout(() => spawnNPCHorse(i), 2500 + i * 400);
     }
   });
 
@@ -816,12 +808,11 @@ export function updateSky(top, hor, gnd) {
 
 function buildLighting() {
   const perfS = PERF_SETTINGS[PERF_MODE];
-  hemiLight = new THREE.HemisphereLight(0xd4e8ff, 0x4a6a30, 0.4); // Reduced from 1.0
+  hemiLight = new THREE.HemisphereLight(0xd4e8ff, 0x4a6a30, 0.4); // Reduced to fix glare
   scene.add(hemiLight);
   
-  sunLight = new THREE.DirectionalLight(0xfff4e0, 1.2); // Reduced from 1.8
-  // Moved the sun Higher and to the Right, eliminating the lower-left ground glare
-  sunLight.position.set(120, 220, 100); 
+  sunLight = new THREE.DirectionalLight(0xfff4e0, 1.2); 
+  sunLight.position.set(120, 220, 100); // Moved out of lower-left view
   sunLight.castShadow = true; 
   sunLight.shadow.camera.left = sunLight.shadow.camera.bottom = -380;
   sunLight.shadow.camera.right = sunLight.shadow.camera.top   =  380;
@@ -833,10 +824,10 @@ function buildLighting() {
   sunLight.shadow.radius      =  2.5;    
   scene.add(sunLight);
 
-  const fill = new THREE.DirectionalLight(0xd4b890, 0.25); // Reduced from 0.55
+  const fill = new THREE.DirectionalLight(0xd4b890, 0.25); 
   fill.position.set(100, 60, -120); scene.add(fill);
 
-  const ambient = new THREE.DirectionalLight(0xb8d0ff, 0.15); // Reduced from 0.28
+  const ambient = new THREE.DirectionalLight(0xb8d0ff, 0.15); 
   ambient.position.set(-80, 20, 80); scene.add(ambient);
 }
 
@@ -956,7 +947,7 @@ const MATS = {
   flatGrey:   () => PBR.concrete(),
   stableRoof: () => PBR.timber(),
   roadAsph:   () => PBR.asphalt(),
-  safetyBrown:() => getDirtMaterial(), // Now uses your custom dirt textures
+  safetyBrown:() => getDirtMaterial(), 
   grassGreen: () => PBR.grass(),
   lawnGreen:  () => PBR.grass(),
   hedgeGreen: () => new THREE.MeshStandardMaterial({color:0x2a5a20,roughness:.95}), 
@@ -968,7 +959,7 @@ const MATS = {
 };
 
 function addGround(){
-  const dirtMat = getDirtMaterial(); // Replaces the fake micro-texture with true PBR
+  const dirtMat = getDirtMaterial(); 
   const grassMat = _makeMicroTexture(0x3d7028, 0x4a8035, 500, 400);
 
   const gp = plane(900,700,dirtMat,[0,0,30]); gp.receiveShadow=true; scene.add(gp);
@@ -1046,7 +1037,6 @@ function addYardMarkings(){
 }
 
 function addRoads() {
-  // 1. Custom PBR Asphalt Textures with Z-Fighting Protection
   const tl = new THREE.TextureLoader();
   const aCol = tl.load('assets/textures/asphalt-color.png'); aCol.colorSpace = THREE.SRGBColorSpace;
   const aNrm = tl.load('assets/textures/asphalt-normal.png');
@@ -1054,7 +1044,7 @@ function addRoads() {
   
   [aCol, aNrm, aRgh].forEach(t => {
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.repeat.set(120, 120); // Tiles the asphalt grain cleanly
+    t.repeat.set(120, 120); 
   });
 
   const am = new THREE.MeshStandardMaterial({
@@ -1067,41 +1057,32 @@ function addRoads() {
   }); 
   const Y = 0.13;
   
-  // 2. The South Boulevard (Main Entrance)
   s(plane(700, 30, am, [0, Y, 215])); 
-  s(plane(700, 4, MATS.grassGreen(), [0, Y + 0.01, 215])); // Green median
+  s(plane(700, 4, MATS.grassGreen(), [0, Y + 0.01, 215])); 
   
-  // 3. The Polo Ring (Straight Edges)
-  s(plane(8, 220, am, [-155, Y, 0])); // West Vertical
-  s(plane(8, 220, am, [ 155, Y, 0])); // East Vertical
-  s(plane(320, 8, am, [0, Y, 104]));  // South Horizontal
-  s(plane(240, 8, am, [0, Y, -104])); // North Horizontal (Shortened for curve)
+  s(plane(8, 220, am, [-155, Y, 0])); 
+  s(plane(8, 220, am, [ 155, Y, 0])); 
+  s(plane(320, 8, am, [0, Y, 104]));  
+  s(plane(240, 8, am, [0, Y, -104])); 
   
-  // 4. Outer Avenues
-  s(plane(8, 220, am, [-177, Y, -5])); // Outer West
-  s(plane(8, 220, am, [ 177, Y, -5])); // Outer East
+  s(plane(8, 220, am, [-177, Y, -5])); 
+  s(plane(8, 220, am, [ 177, Y, -5])); 
   
-  // 5. Equestrian & Training Quarter Roads (West)
   s(plane(8, 280, am, [-270, Y, 20])); 
   s(plane(8, 200, am, [-230, Y, 10]));
   s(plane(150, 8, am, [-310, Y, 145]));
   
-  // 6. East Precinct Roads (Commercial/Paddock)
   s(plane(8, 250, am, [ 200, Y, 10]));
   s(plane(55, 8, am, [ 215, Y, 120]));
   
-  // 7. Clubhouse Driveways
   s(plane(400, 8, am, [0, Y, 128])); 
   s(plane(130, 35, am, [0, Y, 148]));
 
-  // 8. THE CRESCENT ROAD (Behind the Northern Villas)
   const cShape = new THREE.Shape();
   cShape.moveTo(-160, -104); 
   cShape.lineTo(-120, -104);
-  // Push the peak of the curve to Z: -155
   cShape.quadraticCurveTo(0, -155, 120, -104);
   cShape.lineTo(160, -104);
-  // Add the 8m thickness
   cShape.lineTo(160, -112);
   cShape.quadraticCurveTo(0, -163, -120, -112);
   cShape.lineTo(-160, -112);
@@ -1109,7 +1090,7 @@ function addRoads() {
 
   const cGeo = new THREE.ShapeGeometry(cShape, 64);
   const cMesh = new THREE.Mesh(cGeo, am);
-  cMesh.rotation.x = -Math.PI / 2; // Lay it flat on the ground
+  cMesh.rotation.x = -Math.PI / 2; 
   cMesh.position.set(0, Y, 0);
   cMesh.receiveShadow = true;
   scene.add(cMesh);
@@ -1124,8 +1105,6 @@ function addLake() {
   shape.quadraticCurveTo(-85, 92, -75, 92); 
 
   const waterGeo = new THREE.ShapeGeometry(shape, 64);
-  
-  // Use the highly optimized PBR water instead of Planar Water.js
   const wm = createWaterMat(); 
   const lakeMesh = new THREE.Mesh(waterGeo, wm);
   
@@ -1147,14 +1126,15 @@ function addClubhouse(){
 }
 
 // ─── GLB LOADERS ──────────────────────────────────────────────────────────────
-let _sharedGLTFLoader = null;
-function makeDracoLoader(){
-  if (_sharedGLTFLoader) return _sharedGLTFLoader; // Reuses the active connection!
-  const draco=new DRACOLoader();
+
+// INDEPENDENT LOADERS FIX: We removed the Singleton _sharedGLTFLoader pattern 
+// so every model spawns its own Draco decoding connection. This stops the queue deadlock!
+function makeDracoLoader() {
+  const draco = new DRACOLoader();
   draco.setDecoderPath("https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/libs/draco/");
-  const loader=new GLTFLoader(); loader.setDRACOLoader(draco); 
-  _sharedGLTFLoader = loader;
-  return _sharedGLTFLoader;
+  const loader = new GLTFLoader(); 
+  loader.setDRACOLoader(draco); 
+  return loader;
 }
 
 function loadOneGLB(path,scale,yOff,onDone,onFail){
@@ -1227,12 +1207,10 @@ function loadApartmentGLB(){
   makeDracoLoader().load("assets/apartment-mesh.glb",gltf=>{
     gltf.scene.scale.setScalar(APT_SCALE);
     applyPS4Materials(gltf.scene);
-    // Enable frustum culling per mesh for perf
     gltf.scene.traverse(c => { if(c.isMesh) c.frustumCulled = true; });
     const bbox=new THREE.Box3().setFromObject(gltf.scene);
     gltf.scene.position.y=bbox.min.y<0?-bbox.min.y:0;
     const wrapper=new THREE.Group(); wrapper.add(gltf.scene); aptGLBScene=wrapper;
-    // Process all in one pass — no deferred batching
     const q=[...pendingApts]; pendingApts=[];
     q.forEach(({x,z,ry})=>placeAptGLB(x,z,ry));
   },null,err=>{
@@ -1260,7 +1238,7 @@ function placeAptGLB(x,z,ry=0){
 function placeLoftGLB(x,z,ry,plotKey){
   ry=ry||0; if(!loftGLBScene){pendingLofts.push({x,z,ry,plotKey});return;}
   const clone=loftGLBScene.clone(true); clone.position.set(x,0,z); clone.rotation.y=ry; scene.add(clone);
-  if (plotKey) addPlotOverlay(x, z, ry, plotKey, clone); // Adds the green hover floor and registry entry
+  if (plotKey) addPlotOverlay(x, z, ry, plotKey, clone); 
 }
 
 // ─── PLOT OVERLAY ─────────────────────────────────────────────────────────────
@@ -1271,10 +1249,7 @@ function addPlotOverlay(x,z,ry,plotKey,villaClone){
   overlay.userData.plotKey=plotKey; overlay.userData.isPlotOverlay=true; overlay.userData.villaClone=villaClone;
   scene.add(overlay);
   
-  // Get the existing database entry (which holds the Typology) so we don't erase it
   const existingData = plotRegistry.get(plotKey) || {};
-  
-  // Merge the new 3D data with the existing database data
   plotRegistry.set(plotKey, { ...existingData, status: "available", overlay, villaClone, x, z, ry });
 }
 
@@ -1338,14 +1313,11 @@ export function getPlotAtRay(raycaster) {
   const targets = [];
   
   plotRegistry.forEach((plot, key) => {
-    // 1. Add the ground overlay
     if (plot.overlay) {
       plot.overlay.material.opacity = 0.01;
       targets.push(plot.overlay);
     }
-    // 2. Add the actual 3D building mesh
     if (plot.villaClone && plot.villaClone.visible) {
-      // We assign the plotKey directly to the mesh so the raycaster knows what it hit
       plot.villaClone.traverse(c => {
         if (c.isMesh) {
           c.userData.plotKey = key;
@@ -1357,7 +1329,6 @@ export function getPlotAtRay(raycaster) {
   
   const hits = raycaster.intersectObjects(targets, false);
   
-  // Clean up the ground opacity
   plotRegistry.forEach(plot => {
     if (plot.overlay && plot.status !== 'reserved') plot.overlay.material.opacity = 0;
   });
@@ -1367,9 +1338,11 @@ export function getPlotAtRay(raycaster) {
 }
 // ─── VILLA RING ───────────────────────────────────────────────────────────────
 const villaFootprints=[];
-window._nextUnitId = 1; // 1. Guarantees the counter starts cleanly
+window._nextUnitId = 1; 
 
-// 2. Safely registers BOTH 3D collision boundaries and Database properties
+const NO_BUILD_ZONES=[[0,128,75,55],[-375,90,55,45],[-248,-25,50,22],[-248,55,50,22],
+  [-390,0,65,100],[270,65,28,18],[218,0,28,28],[218,52,30,26],[0,0,140,76],[30,-115,105,18]];
+
 function registerVillaFootprint(x, z, customId, type = "3 BED VILLA") {
   villaFootprints.push({cx:x, cz:z, r:12});
   if (customId) {
@@ -1377,23 +1350,18 @@ function registerVillaFootprint(x, z, customId, type = "3 BED VILLA") {
   }
 }
 
-// 3. Collision logic
-const NO_BUILD_ZONES=[[0,128,75,55],[-375,90,55,45],[-248,-25,50,22],[-248,55,50,22],
-  [-390,0,65,100],[270,65,28,18],[218,0,28,28],[218,52,30,26],[0,0,140,76],[30,-115,105,18]];
-
 function isInNoBuildZone(x,z){
   for(const [cx,cz,hw,hd] of NO_BUILD_ZONES) if(Math.abs(x-cx)<=hw&&Math.abs(z-cz)<=hd) return true;
   for(const {cx,cz,r} of villaFootprints) if((x-cx)*(x-cx)+(z-cz)*(z-cz)<=r*r) return true;
   return false;
 }
 
-// 4. The 43-Unit Villa Ring
 function addVillaRing(){
   const PLOT=28;
   const cypressPositions=[];
   
   function placeV(x,z,ry){
-    const plotKey = String(window._nextUnitId++); // Sequential numbering
+    const plotKey = String(window._nextUnitId++); 
     registerVillaFootprint(x, z, plotKey, "3 BED VILLA");
     placeVillaGLBWithLOD(x, z, ry, plotKey);
     addVillaContactShadow(x,z); 
@@ -1435,17 +1403,15 @@ function addVillaRing(){
 }
 
 function addLoftTerraces(){
-  
-  // New helper: Slices 1 physical block into 4 clickable units
   function placeLoftBlock(x, z, ry) {
-    placeLoftGLB(x, z, ry, null); // Place 1 physical building
+    placeLoftGLB(x, z, ry, null); 
     const offsets = [-13.5, -4.5, 4.5, 13.5]; 
     const cosR = Math.cos(ry), sinR = Math.sin(ry);
 
     offsets.forEach(offsetX => {
       const unitX = x + offsetX * cosR;
       const unitZ = z - offsetX * sinR; 
-      const key = String(window._nextUnitId++); // Registers 4 sequential IDs
+      const key = String(window._nextUnitId++); 
       
       const hitbox = new THREE.Mesh(
         new THREE.BoxGeometry(9, 10, 16),
@@ -1460,7 +1426,6 @@ function addLoftTerraces(){
     });
   }
 
-  // PRESERVED: Your exact Northern wrap-around lofts (12 Blocks)
   for(let x=-310; x<=-110; x+=36){ 
     placeLoftBlock(x, -162-Math.abs(x)*.05, Math.PI); 
   }
@@ -1468,41 +1433,35 @@ function addLoftTerraces(){
     placeLoftBlock(x, -162-Math.abs(x)*.05, Math.PI); 
   }
   
-  // PRESERVED: Your exact West Column Lofts (7 Blocks)
   [-75, -45, -15].forEach(z => { placeLoftBlock(-200, z, 0); });
   [15, 45, 75, 105].forEach(z => { placeLoftBlock(-200, z, 0); });
 
-  // NEW: The 5 Blocks on the Far East Column you were missing
   [-45, -15, 15, 45, 75].forEach(z => { placeLoftBlock(260, z, Math.PI); });
 }
+
 function addWestCompound() {
-  // 1. Training Field (Far West Layer)
   s(plane(120, 185, MATS.safetyBrown(), [-320, .06, 0])); 
   s(plane(100, 160, MAT_GRASS_FIELD(), [-320, .10, 0]));
   
-  // 2. Block of Flats (Middle Layer)
   placeAptGLB(-245, -45, Math.PI / 2); 
   placeAptGLB(-245, 45, Math.PI / 2);
 
-  // 3. Register Individual Apartment Units sequentially
-  // 24x 1 Bed Maisonette
   for (let i = 0; i < 24; i++) {
     const key = String(window._nextUnitId++);
     plotRegistry.set(key, { status: 'available', type: '1 BED MAISONETTE', x: -245, z: 0, isApt: true });
   }
   
-  // 48x 2 Bed Flat
   for (let i = 0; i < 48; i++) {
     const key = String(window._nextUnitId++);
     plotRegistry.set(key, { status: 'available', type: '2 BED FLAT', x: -245, z: 0, isApt: true });
   }
   
-  // 12x Studio
   for (let i = 0; i < 12; i++) {
     const key = String(window._nextUnitId++);
     plotRegistry.set(key, { status: 'available', type: 'STUDIO', x: -245, z: 0, isApt: true });
   }
 }
+
 function addPaddock() {
   s(plane(70, 60, MAT_GRASS_FIELD(), [240, 0.07, -30]));
   const postPos = [];
@@ -1623,13 +1582,12 @@ window._xixHoverState = null;
 window.setHoveredPlot = function(plotKey) {
   if (window._aerialModeActive || window._xixHoverState === plotKey) return;
   
-  // 1. RESTORE OLD PLOT (Remove the unique glowing material and restore the shared one)
   if (window._xixHoverState) {
     const old = plotRegistry.get(window._xixHoverState);
     if (old && old.villaClone && old.status !== 'reserved') {
       old.villaClone.traverse(c => {
         if (c.isMesh && c.userData.origMat) {
-          c.material = c.userData.origMat; // Snap back to the high-performance shared material
+          c.material = c.userData.origMat; 
           c.userData.origMat = null;
         }
       });
@@ -1638,16 +1596,12 @@ window.setHoveredPlot = function(plotKey) {
   
   window._xixHoverState = plotKey;
   
-  // 2. APPLY NEW PLOT GLOW (Clone material for this specific house only)
   if (window._xixHoverState) {
     const cur = plotRegistry.get(window._xixHoverState);
     if (cur && cur.villaClone && cur.status !== 'reserved') {
       cur.villaClone.traverse(c => {
         if (c.isMesh) {
-          // Backup the shared material
           if (!c.userData.origMat) c.userData.origMat = c.material;
-          
-          // Clone it so the green glow DOES NOT bleed to the rest of the row
           c.material = c.userData.origMat.clone();
           c.material.emissive.setHex(0x22cc44);
           c.material.emissiveIntensity = 0.35;
