@@ -1106,44 +1106,38 @@ function addLake() {
 
   const waterGeo = new THREE.ShapeGeometry(shape, 64);
   
-  // 1. FAST STARTUP: Spawn cheap PBR water on Frame 1 so the scene loads instantly
-  const wm = createWaterMat(); 
-  const lakeFallback = new THREE.Mesh(waterGeo, wm);
-  lakeFallback.position.set(0, 0.335, 0);
-  lakeFallback.rotation.x = -Math.PI / 2;
-  scene.add(lakeFallback);
-  waterMeshes.push(lakeFallback);
-
-  // 2. DEFERRED REALISM: Silently load the complex normal map in the background.
-  // This completely circumvents the "Texture marked for update" crash.
-  new THREE.TextureLoader().load('assets/textures/stone-normal.png', (normalTex) => {
-    normalTex.wrapS = normalTex.wrapT = THREE.RepeatWrapping;
-    normalTex.repeat.set(6, 6);
-
-    // Initialize the realistic planar reflection
-    const lakeReflection = new Water(waterGeo, {
-      textureWidth: 512, textureHeight: 512,
-      waterNormals: normalTex, 
-      // Matched perfectly to our new, glare-free sun position
-      sunDirection: new THREE.Vector3(120, 220, 100).normalize(), 
-      sunColor: 0xfff4e0, 
-      waterColor: 0x1a6a98,
-      distortionScale: 2.5, 
-      fog: scene.fog !== undefined
-    });
-    
-    lakeReflection.position.set(0, 0.335, 0);
-    lakeReflection.rotation.x = -Math.PI / 2;
-    lakeReflection.userData.isPlanarWater = true;
-    
-    // 3. SEAMLESS SWAP: Remove the cheap water and insert the real water
-    scene.remove(lakeFallback);
-    const index = waterMeshes.indexOf(lakeFallback);
-    if (index > -1) waterMeshes.splice(index, 1);
-    
-    scene.add(lakeReflection);
-    waterMeshes.push(lakeReflection);
+  // 1. Load the normal map for realistic ripples
+  const waterNormals = new THREE.TextureLoader().load('assets/textures/stone-normal.png', function(tex) {
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(6, 6);
   });
+  waterNormals.wrapS = waterNormals.wrapT = THREE.RepeatWrapping;
+
+  // 2. THE CRASH FIX: Give the texture a microscopic dummy image immediately.
+  // This stops the WebGL "Texture marked for update" crash loop while the real image downloads!
+  if (!waterNormals.image) {
+    const dummy = document.createElement('canvas');
+    dummy.width = 1; dummy.height = 1;
+    waterNormals.image = dummy;
+  }
+
+  // 3. Build the ultra-realistic Planar Water
+  const lakeReflection = new Water(waterGeo, {
+    textureWidth: 512, textureHeight: 512,
+    waterNormals: waterNormals, 
+    sunDirection: new THREE.Vector3(120, 220, 100).normalize(), // Matched to the new, glare-free sun
+    sunColor: 0xfff4e0, 
+    waterColor: 0x1a6a98,
+    distortionScale: 2.5, 
+    fog: scene.fog !== undefined
+  });
+  
+  lakeReflection.position.set(0, 0.335, 0);
+  lakeReflection.rotation.x = -Math.PI / 2;
+  lakeReflection.userData.isPlanarWater = true;
+  
+  scene.add(lakeReflection);
+  waterMeshes.push(lakeReflection);
 }
 
 function addEastLake(){
