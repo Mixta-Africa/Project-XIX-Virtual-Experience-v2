@@ -476,96 +476,61 @@ function bindMasterplan() {
   zoneLayer.appendChild(svg);
 }
 
-// ─── PHASE 4: PERSISTENT VILLA AVAILABILITY OVERLAYS ─────────────────────────
+// ─── PHASE 4: PERSISTENT VILLA AVAILABILITY OVERLAYS (ULTRA-OPTIMIZED) ───
+window._sharedBadgeMats = null;
+
 function buildVillaStatusOverlays() {
   const sc = getScene();
   if (!sc) return;
 
-  plotRegistry.forEach((plot, plotKey) => {
-    if (document.getElementById(`plot-badge-${plotKey}`)) return;
+  // 1. Create the canvases exactly ONCE to save 99% of mobile RAM
+  if (!window._sharedBadgeMats) {
+    const createMat = (isAvail) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 160; canvas.height = 48;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = isAvail ? 'rgba(6,18,8,0.88)' : 'rgba(28,10,10,0.88)';
+      ctx.beginPath(); ctx.roundRect(2, 2, 156, 44, 10); ctx.fill();
+      ctx.strokeStyle = isAvail ? '#C9A84C' : 'rgba(220,70,70,0.6)';
+      ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = isAvail ? '#C9A84C' : '#ff6666';
+      ctx.font = 'bold 15px Inter, sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(isAvail ? 'AVAILABLE' : 'RESERVED', 80, 24);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      return new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.9, depthWrite: false, sizeAttenuation: true });
+    };
+    window._sharedBadgeMats = { avail: createMat(true), res: createMat(false) };
+  }
 
-    const canvas = document.createElement('canvas');
-    canvas.width = 160; canvas.height = 48;
-    const ctx = canvas.getContext('2d');
+  // 2. Apply shared materials to all physical plots
+  plotRegistry.forEach((plot, plotKey) => {
+    // Skip abstract units (like inner apartment flats) that don't have physical X/Z coordinates
+    if (plot.x === undefined || plot.z === undefined) return;
+    if (plot.badgeSprite) return; // Already built
 
     const isAvail = plot.status === 'available';
+    const sprite = new THREE.Sprite(isAvail ? window._sharedBadgeMats.avail : window._sharedBadgeMats.res);
 
-    // Badge Pill Background
-    ctx.fillStyle = isAvail ? 'rgba(6,18,8,0.88)' : 'rgba(28,10,10,0.88)';
-    ctx.beginPath();
-    ctx.roundRect(2, 2, 156, 44, 10);
-    ctx.fill();
-
-    // Border
-    ctx.strokeStyle = isAvail ? '#C9A84C' : 'rgba(220,70,70,0.6)';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-
-    // Status Text
-    ctx.fillStyle = isAvail ? '#C9A84C' : '#ff6666';
-    ctx.font = 'bold 15px Inter, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(isAvail ? 'AVAILABLE' : 'RESERVED', 80, 24);
-
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    const mat = new THREE.SpriteMaterial({
-      map: tex, transparent: true, opacity: 0.9, depthWrite: false, sizeAttenuation: true
-    });
-    const sprite = new THREE.Sprite(mat);
-
-    // Position sprite above the villa roof level
     sprite.scale.set(6, 1.8, 1);
-    sprite.position.set(plot.x, 9.5, plot.z);
+    sprite.position.set(plot.x, 9.5, plot.z); // Hover 9.5m above ground
     sprite.userData = { isPlotBadge: true, plotKey };
-
+    
     sc.add(sprite);
+    plot.badgeSprite = sprite; // Store reference for fast updates
   });
 }
 
 window.updatePlotBadge = function(plotKey, status) {
-  const sc = typeof getScene === 'function' ? getScene() : null;
-  if (!sc) return;
-  
-  const isRes = status === 'RESERVED';
-  const canvas = document.createElement('canvas');
-  canvas.width = 180; canvas.height = 54;
-  const ctx = canvas.getContext('2d');
-  
-  // 1. Draw pill background & border
-  ctx.fillStyle = isRes ? 'rgba(40,10,10,0.92)' : 'rgba(10,40,18,0.92)';
-  ctx.beginPath(); ctx.roundRect(2, 2, 176, 50, 8); ctx.fill();
-  ctx.strokeStyle = isRes ? 'rgba(230,60,60,0.8)' : 'rgba(60,230,120,0.8)'; 
-  ctx.lineWidth = 2; ctx.stroke();
-  
-  // 2. Render badge status text
-  ctx.fillStyle = isRes ? '#ff6666' : '#66ff99'; 
-  ctx.font = 'bold 16px Inter, sans-serif';
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText(isRes ? 'RESERVED' : 'AVAILABLE', 90, 27);
-  
-  // 3. Attach or update the 3D sprite floating over the building
   const plot = typeof plotRegistry !== 'undefined' ? plotRegistry.get(plotKey) : null;
-  if (plot && plot.villaClone) {
-    let badge = plot.villaClone.getObjectByName('statusBadge');
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    
-    if (!badge) {
-      const mat = new THREE.SpriteMaterial({ map: tex, depthWrite: false });
-      badge = new THREE.Sprite(mat);
-      badge.name = 'statusBadge';
-      badge.scale.set(6, 1.8, 1);
-      badge.position.set(0, 10, 0); // Positioned 10m above building center
-      plot.villaClone.add(badge);
-    } else {
-      if (badge.material.map) badge.material.map.dispose(); // Prevent GPU memory leaks
-      badge.material.map = tex;
-      badge.material.needsUpdate = true;
-    }
-  }
+  if (!plot || !plot.badgeSprite || !window._sharedBadgeMats) return;
+  
+  // Instantly swap the shared material without drawing new canvases
+  const isRes = status === 'RESERVED';
+  plot.badgeSprite.material = isRes ? window._sharedBadgeMats.res : window._sharedBadgeMats.avail;
 };
+
 //           PLOT SYSTEM (INFINITY MODEL)
 function bindPlotSystem() {
   const canvas = document.getElementById("world-canvas");
@@ -1948,3 +1913,18 @@ function injectPropertyDirectory() {
     if (matchCount === 0) listContainer.innerHTML = 'No properties found.';
   }
 }
+
+// ─── MOBILE UI CLEANUP: DESTROY STUCK RECTANGLES ───
+document.addEventListener("DOMContentLoaded", () => {
+  const cleanupCss = document.createElement('style');
+  cleanupCss.textContent = `
+    /* Hides crosshairs, empty prompts, and stuck tooltips completely */
+    #crosshair, #reticle, .crosshair, .reticle { display: none !important; }
+    #enter-prompt:empty, #notification:empty, #viewpoint-caption:empty { 
+      display: none !important; 
+      opacity: 0 !important; 
+      pointer-events: none !important;
+    }
+  `;
+  document.head.appendChild(cleanupCss);
+});
