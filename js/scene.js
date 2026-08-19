@@ -1191,10 +1191,14 @@ function addClubhouse(){
 }
 
 // ─── GLB LOADERS ──────────────────────────────────────────────────────────────
+let _sharedGLTFLoader = null;
 function makeDracoLoader(){
+  if (_sharedGLTFLoader) return _sharedGLTFLoader; // Reuses the active connection!
   const draco=new DRACOLoader();
   draco.setDecoderPath("https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/libs/draco/");
-  const loader=new GLTFLoader(); loader.setDRACOLoader(draco); return loader;
+  const loader=new GLTFLoader(); loader.setDRACOLoader(draco); 
+  _sharedGLTFLoader = loader;
+  return _sharedGLTFLoader;
 }
 
 function loadOneGLB(path,scale,yOff,onDone,onFail){
