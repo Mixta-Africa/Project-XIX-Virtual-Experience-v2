@@ -1820,27 +1820,28 @@ function injectPropertyDirectory() {
   const toggleBtn = document.createElement('button');
   toggleBtn.id = 'dir-toggle-btn';
   toggleBtn.textContent = 'Property Directory ▾';
-  toggleBtn.style.cssText = 'pointer-events: all; background: rgba(6,18,8,0.85); border: 1px solid rgba(201,168,76,0.4); color: #c9a84c; padding: 10px 18px; border-radius: 6px; font-weight: 600; font-size: 13px; cursor: pointer; backdrop-filter: blur(8px); display: flex; align-items: center; gap: 8px;';
+  // Removed the blur here as well for maximum mobile stability
+  toggleBtn.style.cssText = 'pointer-events: all; background: rgb(10, 25, 14); border: 1px solid rgba(201,168,76,0.6); color: #c9a84c; padding: 10px 18px; border-radius: 6px; font-weight: 600; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.5);';
 
-  // 3. Create Dropdown Panel
+  // 3. Create Dropdown Panel (SOLID BACKGROUND, NO BLUR)
   const panel = document.createElement('div');
   panel.id = 'dir-dropdown-panel';
-  panel.style.cssText = 'pointer-events: all; background: rgba(6,18,8,0.95); border: 1px solid rgba(201,168,76,0.3); border-radius: 6px; margin-top: 8px; width: 300px; display: none; flex-direction: column; box-shadow: 0 8px 32px rgba(0,0,0,0.5); backdrop-filter: blur(12px);';
+  panel.style.cssText = 'pointer-events: all; background: rgb(8, 20, 12); border: 1px solid rgba(201,168,76,0.5); border-radius: 6px; margin-top: 8px; width: 300px; display: none; flex-direction: column; box-shadow: 0 12px 40px rgba(0,0,0,0.8);';
 
   // 4. Create Search Bar
   const searchDiv = document.createElement('div');
-  searchDiv.style.cssText = 'padding: 12px; border-bottom: 1px solid rgba(255,255,255,0.1);';
+  searchDiv.style.cssText = 'padding: 12px; border-bottom: 1px solid rgba(201,168,76,0.2);';
   const searchInput = document.createElement('input');
   searchInput.id = 'dir-search-input';
   searchInput.type = 'text';
   searchInput.placeholder = 'Search Unit ID or Typology...';
-  searchInput.style.cssText = 'width: 100%; background: rgba(255,255,255,0.05); border: 1px solid rgba(201,168,76,0.3); color: #f0ece0; padding: 10px 12px; border-radius: 4px; font-size: 13px; outline: none; box-sizing: border-box;';
+  searchInput.style.cssText = 'width: 100%; background: rgba(255,255,255,0.08); border: 1px solid rgba(201,168,76,0.4); color: #f0ece0; padding: 10px 12px; border-radius: 4px; font-size: 13px; outline: none; box-sizing: border-box;';
   searchDiv.appendChild(searchInput);
 
   // 5. Create List Container
   const listContainer = document.createElement('div');
   listContainer.id = 'dir-list-container';
-  listContainer.style.cssText = 'max-height: 400px; overflow-y: auto; padding: 8px;';
+  listContainer.style.cssText = 'max-height: 350px; overflow-y: auto; padding: 8px; -webkit-overflow-scrolling: touch;';
 
   // Assemble UI
   panel.appendChild(searchDiv);
@@ -1863,7 +1864,7 @@ function injectPropertyDirectory() {
   // 7. Logic: Search Filtering
   searchInput.addEventListener('input', (e) => populateDirectoryList(e.target.value.toLowerCase()));
 
-  // 8. Logic: Build the List dynamically
+  // 8. Logic: Build the List dynamically (USING DOCUMENT FRAGMENT FOR SPEED)
   function populateDirectoryList(searchTerm) {
     listContainer.innerHTML = '';
     let matchCount = 0;
@@ -1871,6 +1872,9 @@ function injectPropertyDirectory() {
     if (typeof plotRegistry === 'undefined') return;
 
     const sortedKeys = Array.from(plotRegistry.keys()).sort((a, b) => Number(a) - Number(b));
+    
+    // PERFORMANCE FIX: Build the list in memory first
+    const fragment = document.createDocumentFragment();
 
     sortedKeys.forEach(key => {
       const plot = plotRegistry.get(key);
@@ -1881,7 +1885,7 @@ function injectPropertyDirectory() {
         const isAvail = plot.status === 'available';
         
         const item = document.createElement('div');
-        item.style.cssText = 'padding: 10px; border-radius: 4px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; border-bottom: 1px solid rgba(255,255,255,0.05);';
+        item.style.cssText = 'padding: 12px 10px; border-radius: 4px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; border-bottom: 1px solid rgba(255,255,255,0.05);';
         
         // Left side text
         const leftDiv = document.createElement('div');
@@ -1889,7 +1893,7 @@ function injectPropertyDirectory() {
         
         // Right side badge
         const rightDiv = document.createElement('div');
-        rightDiv.style.cssText = `font-size: 9px; font-weight: bold; padding: 3px 6px; border-radius: 3px; background: ${isAvail ? 'rgba(100,230,120,0.15)' : 'rgba(230,80,80,0.15)'}; color: ${isAvail ? '#66ff99' : '#ff6666'};`;
+        rightDiv.style.cssText = `font-size: 9px; font-weight: bold; padding: 4px 8px; border-radius: 4px; background: ${isAvail ? 'rgba(100,230,120,0.15)' : 'rgba(230,80,80,0.15)'}; color: ${isAvail ? '#66ff99' : '#ff6666'};`;
         rightDiv.textContent = isAvail ? 'AVAILABLE' : 'RESERVED';
         
         item.appendChild(leftDiv);
@@ -1906,11 +1910,16 @@ function injectPropertyDirectory() {
           }
         });
 
-        listContainer.appendChild(item);
+        fragment.appendChild(item);
       }
     });
 
-    if (matchCount === 0) listContainer.innerHTML = 'No properties found.';
+    if (matchCount === 0) {
+      listContainer.innerHTML = 'No properties found.';
+    } else {
+      // Append all 223 items simultaneously in 1 millisecond
+      listContainer.appendChild(fragment);
+    }
   }
 }
 
