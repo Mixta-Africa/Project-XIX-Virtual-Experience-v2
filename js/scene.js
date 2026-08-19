@@ -1185,7 +1185,6 @@ function addLake() {
   scene.add(lakeMesh);
   waterMeshes.push(lakeMesh);
 }
-
 function addEastLake(){
   const wm=createWaterMat();
   const el=new THREE.Mesh(new THREE.BoxGeometry(10,.25,38),wm);
@@ -1432,6 +1431,9 @@ function registerVillaFootprint(x, z, customId, type = "3 BED VILLA") {
 }
 
 // 3. Collision logic
+const NO_BUILD_ZONES=[[0,128,75,55],[-375,90,55,45],[-248,-25,50,22],[-248,55,50,22],
+  [-390,0,65,100],[270,65,28,18],[218,0,28,28],[218,52,30,26],[0,0,140,76],[30,-115,105,18]];
+
 function isInNoBuildZone(x,z){
   for(const [cx,cz,hw,hd] of NO_BUILD_ZONES) if(Math.abs(x-cx)<=hw&&Math.abs(z-cz)<=hd) return true;
   for(const {cx,cz,r} of villaFootprints) if((x-cx)*(x-cx)+(z-cz)*(z-cz)<=r*r) return true;
