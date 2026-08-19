@@ -31,7 +31,7 @@ export function initPostProcessing(renderer, scene, camera) {
   _scene = scene; 
   _camera = camera;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.88;
+  renderer.toneMappingExposure = 0.72; // Reduced from 0.88 — cuts harsh lower-left glare
 
   const w = Math.max(renderer.domElement.width || window.innerWidth, 1);
   const h = Math.max(renderer.domElement.height || window.innerHeight, 1);
@@ -50,7 +50,9 @@ export function initPostProcessing(renderer, scene, camera) {
   }
 
   try {
-    bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.22, 0.55, 0.75);
+    // threshold raised to 0.92 so only true highlights (sun disc, lamps) bloom.
+    // strength halved from 0.22 — kills the milky ground glare in daylight.
+    bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.10, 0.40, 0.92);
     bloomPass.enabled = true;
     composer.addPass(bloomPass);
   } catch(e) { 
@@ -154,14 +156,17 @@ export function setBloomForTime(name) {
 
   let params;
   if (_perfMode === 'fast') {
-    params = { strength: 0.15, threshold: 0.95, radius: 0.40 };
+    params = { strength: 0.07, threshold: 0.97, radius: 0.35 };
   } else {
     // High threshold (0.95+) prevents the ground/grass from glowing. Only the actual sun will bloom.
     const timePresets = {
-      morning:   { strength: 0.15, threshold: 0.95, radius: 0.40 },
-      afternoon: { strength: 0.12, threshold: 0.98, radius: 0.40 },
-      sunset:    { strength: 0.35, threshold: 0.85, radius: 0.60 },
-      night:     { strength: 0.60, threshold: 0.60, radius: 0.80 },
+      // Threshold kept very high for daytime so only the actual sun disc blooms
+      morning:   { strength: 0.08, threshold: 0.96, radius: 0.35 },
+      afternoon: { strength: 0.06, threshold: 0.98, radius: 0.35 },
+      // Sunset gets a warm glow but not cartoonish
+      sunset:    { strength: 0.22, threshold: 0.88, radius: 0.55 },
+      // Night: lamps need to pop — lower threshold OK because scene is dark
+      night:     { strength: 0.45, threshold: 0.65, radius: 0.75 },
     };
     params = timePresets[name] || { strength: 0.12, threshold: 0.98, radius: 0.40 };
   }
@@ -255,10 +260,10 @@ export function createAtmosphericSky(scene, renderer) {
 
 export function setSkyForTime(skyUniforms, sun, sunLight, time) {
   const presets = {
-    morning:   { phi: 18,  theta: 95,  turb: 3.5, ray: 1.2, exp: 0.72, sunCol: 0xffd080, sunInt: 1.8 },
-    afternoon: { phi: 68,  theta: 195, turb: 2.5, ray: 0.9, exp: 0.88, sunCol: 0xfff4e0, sunInt: 2.6 },
-    sunset:    { phi: 5,   theta: 268, turb: 5.5, ray: 2.0, exp: 0.95, sunCol: 0xff6820, sunInt: 1.6 },
-    night:     { phi: -12, theta: 180, turb: 1.0, ray: 0.4, exp: 0.18, sunCol: 0x304870, sunInt: 0.08 },
+    morning:   { phi: 18,  theta: 95,  turb: 3.5, ray: 1.2, exp: 0.68, sunCol: 0xffd080, sunInt: 1.3 },
+    afternoon: { phi: 68,  theta: 195, turb: 2.5, ray: 0.9, exp: 0.75, sunCol: 0xfff4e0, sunInt: 1.6 }, // was exp:0.88 sunInt:2.6 — source of harsh glare
+    sunset:    { phi: 5,   theta: 268, turb: 5.5, ray: 2.0, exp: 0.85, sunCol: 0xff6820, sunInt: 1.2 },
+    night:     { phi: -12, theta: 180, turb: 1.0, ray: 0.4, exp: 0.15, sunCol: 0x304870, sunInt: 0.06 },
   };
   
   const p = presets[time] || presets.afternoon;
@@ -289,15 +294,33 @@ _emptyCtx.fillStyle = '#8080FF';
 _emptyCtx.fillRect(0,0,1,1);
 
 function loadTex(name, repeat, sRGB = true) {
-  const t = tl.load(T + name, undefined, undefined, () => {
-    console.warn('[XIX] Texture missing, using safe fallback:', name);
-    t.image = _emptyCanvas; 
-    t.needsUpdate = true;
-  });
-  t.wrapS = t.wrapT = THREE.RepeatWrapping; 
+  // Pre-assign a safe 1×1 canvas image so the texture is GPU-ready immediately.
+  // This eliminates the "Texture marked for update but no image data found" spam —
+  // the loader will overwrite .image when the real asset arrives.
+  const safeCanvas = document.createElement('canvas');
+  safeCanvas.width = 4; safeCanvas.height = 4;
+  const safeCtx = safeCanvas.getContext('2d');
+  safeCtx.fillStyle = sRGB ? '#7a9a60' : '#8080FF';
+  safeCtx.fillRect(0, 0, 4, 4);
+
+  const t = new THREE.CanvasTexture(safeCanvas);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.repeat.set(repeat, repeat);
-  if (sRGB) t.colorSpace = THREE.SRGBColorSpace; 
-  t.anisotropy = 4; 
+  if (sRGB) t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+
+  tl.load(T + name,
+    (loaded) => {
+      // Swap in the real image without replacing the texture object
+      t.image = loaded.image;
+      t.needsUpdate = true;
+    },
+    undefined,
+    () => {
+      console.warn('[XIX] Texture missing, keeping safe fallback:', name);
+      // Already has the safe canvas — no further action needed
+    }
+  );
   return t;
 }
 
@@ -367,14 +390,38 @@ let _grassMesh = null, _grassCount = 0, _grassPos = null;
 const _dummy = new THREE.Object3D();
 
 const _grassTexture = (() => {
-  const gc = document.createElement("canvas"); gc.width = 64; gc.height = 128;
+  // 128×256 atlas — 4 overlapping blades per card, colour-varied for realism
+  const gc = document.createElement("canvas"); gc.width = 128; gc.height = 256;
   const gx = gc.getContext("2d");
-  const gg = gx.createLinearGradient(0, 128, 0, 0);
-  gg.addColorStop(0, "#2a5a1e"); gg.addColorStop(0.3, "#3a7228");
-  gg.addColorStop(0.7, "#5a9448"); gg.addColorStop(1, "rgba(80,140,60,0)");
-  gx.fillStyle = gg; gx.beginPath(); gx.moveTo(30, 128); gx.quadraticCurveTo(20, 55, 32, 0);
-  gx.quadraticCurveTo(44, 55, 34, 128); gx.fill();
-  const t = new THREE.CanvasTexture(gc); t.colorSpace = THREE.SRGBColorSpace; return t;
+  gx.clearRect(0, 0, 128, 256);
+
+  function drawBlade(baseX, lean, colorBot, colorTop) {
+    const gg = gx.createLinearGradient(baseX, 256, baseX + lean * 0.5, 0);
+    gg.addColorStop(0,   colorBot);
+    gg.addColorStop(0.25, colorTop);
+    gg.addColorStop(0.75, colorTop);
+    gg.addColorStop(1,   "rgba(100,160,60,0)");
+    gx.fillStyle = gg;
+    gx.beginPath();
+    // Wide base, tapers and curls at tip
+    gx.moveTo(baseX - 5, 256);
+    gx.quadraticCurveTo(baseX - 10 + lean * 0.3, 140, baseX + lean, 0);
+    gx.quadraticCurveTo(baseX + lean + 4, 0, baseX + lean + 2, 2);
+    gx.quadraticCurveTo(baseX + 8 + lean * 0.3, 140, baseX + 9, 256);
+    gx.closePath();
+    gx.fill();
+  }
+
+  // 4 blades per card — different leans and two green shades for richness
+  drawBlade(18,  -8, "#1e4a12", "#4a8a30");
+  drawBlade(42,   5, "#224f14", "#52963a");
+  drawBlade(70, -12, "#1a4510", "#3d7825");
+  drawBlade(95,   9, "#26561a", "#5aa040");
+
+  const t = new THREE.CanvasTexture(gc);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.premultiplyAlpha = false;
+  return t;
 })();
 
 export function addGrassField(centerX, centerZ, radiusX, radiusZ, density = 400) {
@@ -385,8 +432,8 @@ export function addGrassField(centerX, centerZ, radiusX, radiusZ, density = 400)
     const rz = (Math.random() * 0.5 + 0.5) * radiusZ;
     const x = centerX + Math.cos(angle) * rx;
     const z = centerZ + Math.sin(angle) * rz;
-    const h = 0.38 + Math.random() * 0.48;
-    const w = 0.16 + Math.random() * 0.20;
+    const h = 0.55 + Math.random() * 0.65; // taller blades — lusher field
+    const w = 0.28 + Math.random() * 0.30; // wider cards — more visible texture
     newCards.push({ x, y: h / 2, z, h, w });
   }
   return newCards; 
@@ -436,7 +483,7 @@ export function tickGrass(camera) {
       const rot = Math.atan2(dx, dz);
       _dummy.position.set(px, py, pz); _dummy.rotation.set(0, rot, 0);
       const op = dist2 < FADE_START2 ? 1 : 1 - (dist2 - FADE_START2) / RANGE;
-      _dummy.scale.set(op * 0.2, op * 0.42, 1); 
+      _dummy.scale.set(op * 0.55, op * 0.60, 1); // wider + taller blades for visible texture
       _dummy.updateMatrix(); _grassMesh.setMatrixAt(i, _dummy.matrix); needsUpdate = true;
     }
   }
