@@ -1,7 +1,7 @@
 /**
  * Project XIX — Scene (Production Standard v25)
  * Upgrades: 
- * - Real-time Planar Water reflections
+ * - Real-time Planar Water reflections removed for speed
  * - 3D Spatial Audio (Web Audio API PannerNodes)
  * - LOD instancing, Atmospheric Sky, and guided tour integration
  */
@@ -9,7 +9,6 @@
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
 import { GLTFLoader }  from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/GLTFLoader.js";
 import { DRACOLoader } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/DRACOLoader.js";
-import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/objects/Water.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
   buildPalmInstances, tickPalms,
@@ -43,7 +42,6 @@ export function setPerfMode(mode) {
     }
   }
   
-  // FIX: Only set performance-based fog if the user does NOT have clear weather active
   if (scene && scene.fog) {
     const isClear = (window._currentWeather === 'clear');
     scene.fog.density = isClear ? 0.000008 : s.fogDensity;
@@ -277,28 +275,6 @@ function _injectTourUI() {
 window.__tourNext = () => { if(!_tourActive)return; _tourStop=(_tourStop+1)%TOUR_STOPS.length; _pauseT=0; _startFly(_tourStop); _speakStop(_tourStop); };
 window.__tourPrev = () => { if(!_tourActive)return; _tourStop=(_tourStop-1+TOUR_STOPS.length)%TOUR_STOPS.length; _pauseT=0; _startFly(_tourStop); _speakStop(_tourStop); };
 window.__tourStop = () => stopTour();
-
-function tickTour(delta, cam) {
-  if (!_tourActive) return;
-  if (_flying) {
-    _flyT = Math.min(_flyT + delta / _FLY_DUR, 1);
-    const e = _easeInOut(_flyT);
-    const p0 = _flyFrom.pos, p2 = _flyTo.pos;
-    const p1 = [(p0[0]+p2[0])/2, Math.max(p0[1],p2[1]) + 25, (p0[2]+p2[2])/2];
-    const bp = _bezierPoint(p0, p1, p2, e);
-    let dy = (_flyTo.yaw||0) - (_flyFrom.yaw||0);
-    if (dy >  Math.PI) dy -= Math.PI*2;
-    if (dy < -Math.PI) dy += Math.PI*2;
-    if (_tourOnSetCam) _tourOnSetCam(bp, (_flyFrom.yaw||0) + dy * e, (_flyFrom.pitch||0) + ((_flyTo.pitch||0) - (_flyFrom.pitch||0)) * e);
-    if (_flyT >= 1) { _flying = false; _pauseT = 0; }
-  } else {
-    _pauseT += delta;
-    if (_pauseT >= _PAUSE_DUR) {
-      _pauseT = 0; _tourStop = (_tourStop + 1) % TOUR_STOPS.length;
-      _startFly(_tourStop); _speakStop(_tourStop);
-    }
-  }
-}
 
 // ─── IMPROVEMENT 2: 3D SPATIAL AMBIENT SOUND (PANNER NODES) ───────────────────
 let _audioCtx = null;
@@ -548,6 +524,7 @@ function placeVillaGLBWithLOD(x, z, ry, plotKey) {
 
   scene.add(lod);
   if (plotKey) addPlotOverlay(x, z, ry, plotKey, lod);
+  _villaInstData.push({ x, z, ry });
 }
 
 let _aerialModeActive = false;
@@ -809,9 +786,6 @@ export function initScene(canvas) {
   addSafetyZone();
 
   // ── All geometry that doesn't depend on async GLBs — single RAF ──
-  // Using one deferred frame keeps the first render fast (no jank) while
-  // still building the scene in the same second. Previously 3+ nested RAFs
-  // delayed GLB kicks by ~150 ms and caused the "empty scene until night" bug.
   requestAnimationFrame(() => {
     addGrassRing();
     addYardMarkings();
@@ -822,26 +796,31 @@ export function initScene(canvas) {
     addEstateSignage();
     addLandmarkHotspots();
 
-   // 1. PRIORITY ZERO: Load the most important/heaviest model first
-    loadVillaGLB();
+    // Procedural geometry — synchronous, no network cost
     addVillaRing();
-    _buildVillaImpostors(); 
-
-    // 2. STAGGER THE REST: Space them out by 400ms so the CPU and Network don't choke
-    setTimeout(() => { loadLoftGLB(); addLoftTerraces(); }, 400);
-    setTimeout(() => { loadApartmentGLB(); addWestCompound(); }, 800);
-    setTimeout(() => { loadClubhouseGLB(); }, 1200);
-    setTimeout(() => { loadStablesGLB(); }, 1600);
-    setTimeout(() => { loadHorseGLB(); }, 2000);
+    _buildVillaImpostors();
+    addLoftTerraces();
+    addWestCompound();
     addPaddock();
     addGamePark();
     addCommercialBlock();
     addServiceCompound();
     addLandscaping();
 
-    // NPC horses staggered but now triggered earlier (same RAF instead of RAF+RAF+RAF)
+    // GLBs staggered loading — fires in sequence, saving CPU and Network bandwidth
+    // 1. PRIORITY ZERO: Load the most important/heaviest model first
+    loadVillaGLB();
+
+    // 2. STAGGER THE REST: Space them out by 400ms so the CPU and Network don't choke
+    setTimeout(() => { loadLoftGLB(); }, 400);
+    setTimeout(() => { loadApartmentGLB(); }, 800);
+    setTimeout(() => { loadClubhouseGLB(); }, 1200);
+    setTimeout(() => { loadStablesGLB(); }, 1600);
+    setTimeout(() => { loadHorseGLB(); }, 2000);
+
+    // NPC horses staggered but now triggered later
     for (let i = 0; i < 8; i++) {
-      setTimeout(() => spawnNPCHorse(i), i * 400);
+      setTimeout(() => spawnNPCHorse(i), 2400 + (i * 400));
     }
   });
 
@@ -1185,6 +1164,7 @@ function addLake() {
   scene.add(lakeMesh);
   waterMeshes.push(lakeMesh);
 }
+
 function addEastLake(){
   const wm=createWaterMat();
   const el=new THREE.Mesh(new THREE.BoxGeometry(10,.25,38),wm);
@@ -1266,7 +1246,8 @@ function loadVillaGLB(){
 
   }, null, err => {
     console.warn('[XIX] villa-mesh.glb failed, using fallbacks:', err);
-    pendingVillas.forEach(({x, z, ry}) => {
+    pendingVillas.forEach(({x, z, ry, placeholder}) => {
+      if (placeholder) scene.remove(placeholder);
       const v = _createVillaFallback();
       v.position.set(x, 0, z);
       v.rotation.y = ry;
