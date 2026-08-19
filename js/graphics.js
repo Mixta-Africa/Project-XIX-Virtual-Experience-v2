@@ -31,7 +31,7 @@ export function initPostProcessing(renderer, scene, camera) {
   _scene = scene; 
   _camera = camera;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.72; // Reduced from 0.88 — cuts harsh lower-left glare
+  renderer.toneMappingExposure = 0.62; // Reduced further — kills lower-left glare, closer to real-world luminance
 
   const w = Math.max(renderer.domElement.width || window.innerWidth, 1);
   const h = Math.max(renderer.domElement.height || window.innerHeight, 1);
@@ -68,7 +68,6 @@ export function initPostProcessing(renderer, scene, camera) {
   }
 
   try {
-    try {
     lutPass = new LUTPass();
     lutPass.enabled = false;
     /* Temporarily disabled to prevent console warnings until the LUT file is uploaded
@@ -83,6 +82,7 @@ export function initPostProcessing(renderer, scene, camera) {
   } catch(e) { 
     console.warn('[XIX] LUT pass init:', e.message); 
   }
+
   try {
     smaaPass = new SMAAPass(w, h);
     smaaPass.enabled = false;
@@ -95,7 +95,6 @@ export function initPostProcessing(renderer, scene, camera) {
   setPerfModeGraphics(_perfMode);
   return composer;
 }
-
 export function setInteriorDOF(active, focusDistance = 3.5) {
   if (!bokehPass) return;
   bokehPass.enabled = active;
