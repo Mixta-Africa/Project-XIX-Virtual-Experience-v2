@@ -1124,20 +1124,19 @@ function addPoloField() {
       // Lagos polo pitch: bright saturated turf — think Guards Polo Club, not a football pitch
       // Light band: #5DA83C (the well-lit mow pass), Dark band: #3A7028 (the shadow-lean pass)
       // ~30% luminance difference matches real turf photography from elevation
-      vec3 dryLight  = vec3(0.365, 0.659, 0.235);   // #5DA83C — bright mow pass
-      vec3 dryDark   = vec3(0.227, 0.439, 0.157);   // #3A7028 — shadow mow pass
-      vec3 wetLight  = vec3(0.165, 0.380, 0.110);   // darkened wet pass
-      vec3 wetDark   = vec3(0.100, 0.250, 0.075);
+      vec3 dryLight  = vec3(0.357, 0.659, 0.271);
+      vec3 dryDark   = vec3(0.259, 0.478, 0.188);
+      vec3 wetLight  = vec3(0.188, 0.400, 0.141);
+      vec3 wetDark   = vec3(0.122, 0.282, 0.094);
       vec3 colLight  = mix(dryLight, wetLight, uWetness);
       vec3 colDark   = mix(dryDark,  wetDark,  uWetness);
-
-      // FBM: reduce micro influence at aerial — micro is too dark from overhead
-      // Blend micro in only at 20% — mostly macro variation which is gentler
-      float fbmBlend = mix(micro * 0.5 + 0.5, macro, 0.72);
-      float shade    = mix(0.93, 1.0, fbmBlend);   // floor at 0.93 (was 0.88 — too dark)
+      float fbmBlend = mix(micro * 0.6 + 0.4, macro, 0.80);
+      float shade    = mix(0.94, 1.0, fbmBlend);
       vec3 albedo    = mix(colDark, colLight, isEven) * shade;
-
-      // ── 4. MICRO ROUGHNESS VARIATION (prevents plastic look) ──────────
+      // Retroreflection: grass brightens at grazing angles — far field stays visible
+      vec3 V_dir = normalize(cameraPosition - vWorldPos);
+      float grazingFactor = 1.0 - max(dot(V_dir, vec3(0.0, 1.0, 0.0)), 0.0);
+      albedo = albedo * (1.0 + grazingFactor * 0.28);
       float roughness = mix(0.92, 0.42, uWetness);
       roughness      *= mix(0.94, 1.0, meso);
 
@@ -1194,15 +1193,14 @@ function addPoloField() {
 
       // Sky ambient: Lagos blue sky contributes significant fill from overhead
       // Strong ambient prevents the field looking black when sun angle is low
-      vec3 skyAmb = albedo * vec3(0.28, 0.34, 0.32);  // raised from 0.18/0.22/0.20
-      // Sun direct — Lagos 6.5°N lat means sun is near-overhead (high NdL) at afternoon
-      float directStr = NdL * 1.15;  // slight boost for tropical sun intensity
+      vec3 skyAmb = albedo * vec3(0.32, 0.38, 0.36);
+      float directStr = NdL * 1.18;
+      float tipHighlight = pow(max(dot(normalize(uSunDir + V_dir), vNormal), 0.0), 48.0) * (0.12 + isEven * 0.08);
       vec3 color = albedo * uSunColor * directStr
-                 + vec3(specStr + sheen) * uSunColor
+                 + vec3(specStr + sheen + tipHighlight) * uSunColor
                  + skyAmb;
-      // Minimum luminance floor — prevents any area going below 22% value from aerial
       float lum = dot(color, vec3(0.299, 0.587, 0.114));
-      color = mix(color, albedo * 0.38, max(0.0, 0.22 - lum));
+      color = mix(color, albedo * 0.42, max(0.0, 0.28 - lum));
 
       // ── 9. EDGE AO (slight darkening near boundary) ───────────────────
       float edgeAO = smoothstep(0.0, 7.0,
@@ -1239,10 +1237,15 @@ function addPoloField() {
   // Note: yard line boxes removed — rendered in shader above (−8 draw calls)
 }
 
-function addSafetyZone(){
-  const dm = new THREE.MeshStandardMaterial({color:0x8B4513,roughness:.95});
-  s(plane(298,25,dm,[0,.11,-85.5])); s(plane(298,25,dm,[0,.11,85.5]));
-  s(plane(11,146,dm,[-142.5,.11,0])); s(plane(11,146,dm,[142.5,.11,0]));
+function addSafetyZone() {
+  // Lagos laterite: ochre-terracotta compacted earth
+  const safetyMat = new THREE.MeshStandardMaterial({
+    color: 0xC4724A, roughness: 0.96, metalness: 0.0, envMapIntensity: 0.05
+  });
+  s(plane(298, 25, safetyMat, [0, .11, -85.5]));
+  s(plane(298, 25, safetyMat, [0, .11,  85.5]));
+  s(plane(11,  146, safetyMat, [-142.5, .11, 0]));
+  s(plane(11,  146, safetyMat, [ 142.5, .11, 0]));
 }
 
 function addYardMarkings() {
