@@ -190,18 +190,51 @@ export function setPerfModeGraphics(mode) {
   }
 
   // Pass gate: GTAO only on Rich (too expensive for Balanced on mid-GPU)
-  if (gtaoPass)  gtaoPass.enabled  = (mode !== 'fast');  // Balanced + Rich
-  // SMAA: Balanced + Rich (off on Fast — composer bypassed anyway)
+  // ── GTAO: Rich gets a wider radius and stronger blend ───────────────────
+  if (gtaoPass) {
+    gtaoPass.enabled = (mode !== 'fast');
+    if (mode === 'rich') {
+      gtaoPass.updateGtaoMaterial({ radius: 3.2, distanceExponent: 1.6, thickness: 2.0, scale: 1.15 });
+      gtaoPass.blendIntensity = 0.85;
+      if (gtaoPass.updatePdMaterial) gtaoPass.updatePdMaterial({ lumaPhi: 14, depthPhi: 3, normalPhi: 5, radius: 6, rings: 3, samples: 16 });
+    } else if (mode === 'balanced') {
+      gtaoPass.updateGtaoMaterial({ radius: 2.0, distanceExponent: 1.4, thickness: 1.5, scale: 1.0 });
+      gtaoPass.blendIntensity = 0.6;
+      if (gtaoPass.updatePdMaterial) gtaoPass.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 4, rings: 2, samples: 8 });
+    }
+  }
+
   if (smaaPass)  smaaPass.enabled  = (mode !== 'fast');
-  // DOF stays off by default (only interior view enables it)
   if (bokehPass) bokehPass.enabled = false;
-  // Vignette + CA: Balanced (gentle) / Rich (full cinema)
+
+  // ── Vignette + chromatic aberration ─────────────────────────────────────
   if (vignettePass) {
     vignettePass.enabled = (mode !== 'fast');
     if (vignettePass.uniforms) {
-      vignettePass.uniforms.uVignette.value   = mode === 'rich' ? 0.42 : 0.28;
-      vignettePass.uniforms.uCAStrength.value = mode === 'rich' ? 0.003 : 0.0015;
+      vignettePass.uniforms.uVignette.value   = mode === 'rich' ? 0.46 : 0.26;
+      vignettePass.uniforms.uCAStrength.value = mode === 'rich' ? 0.0035 : 0.0012;
     }
+  }
+
+  // ── Renderer-level quality: this is where Rich earns its name ───────────
+  if (_renderer) {
+    if (mode === 'rich') {
+      _renderer.shadowMap.type      = THREE.PCFSoftShadowMap;
+      _renderer.toneMappingExposure = 0.68;   // slightly brighter, more headroom
+    } else if (mode === 'balanced') {
+      _renderer.shadowMap.type      = THREE.PCFShadowMap;  // cheaper filter
+      _renderer.toneMappingExposure = 0.62;
+    } else {
+      _renderer.toneMappingExposure = 0.60;
+    }
+  }
+
+  // ── IBL strength: Rich gets fuller environment lighting ─────────────────
+  if (_scene && _scene.environmentIntensity !== undefined) {
+    const base = _scene.environmentIntensity || 1.0;
+    _scene.environmentIntensity = mode === 'rich' ? Math.min(base * 1.18, 1.6)
+                                : mode === 'balanced' ? base
+                                : base * 0.85;
   }
 
   setBloomForTime(_currentTimePreset);
@@ -876,16 +909,38 @@ export function buildPalmInstances(scene, palmDefs) {
   `;
 
   // Shared palm texture (loaded once, shared across both meshes)
+  // ══════════════════════════════════════════════════════════════════════
+  //  PALM TEXTURE — placeholder MUST be fully transparent
+  // ══════════════════════════════════════════════════════════════════════
+  //  The fragment shader does `if (tex.a < 0.08) discard;`. A placeholder
+  //  with alpha 1.0 never discards, so every billboard quad renders as a
+  //  solid green rectangle — two rows of them along the clubhouse approach.
+  //  The placeholder is now RGBA(0,0,0,0): invisible until the sprite loads.
+  //  Swapping `.image` on a CanvasTexture is also unreliable — we assign the
+  //  loaded texture to the uniform directly instead.
+  // ══════════════════════════════════════════════════════════════════════
   const palmTexPlaceholder = (() => {
     const c = document.createElement('canvas'); c.width = c.height = 2;
-    const ctx = c.getContext('2d'); ctx.fillStyle = '#4a8030'; ctx.fillRect(0,0,2,2);
-    return new THREE.CanvasTexture(c);
-  })();
-  new THREE.TextureLoader().load('assets/palm-sprite.png', t => {
+    const ctx = c.getContext('2d');
+    ctx.clearRect(0, 0, 2, 2);              // fully transparent
+    const t = new THREE.CanvasTexture(c);
     t.colorSpace = THREE.SRGBColorSpace;
-    palmTexPlaceholder.image = t.image;
-    palmTexPlaceholder.needsUpdate = true;
-  });
+    return t;
+  })();
+  new THREE.TextureLoader().load(
+    'assets/palm-sprite.png',
+    t => {
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.generateMipmaps = true;
+      t.minFilter = THREE.LinearMipmapLinearFilter;
+      if (window._xixPalmUniforms) {
+        window._xixPalmUniforms.uPalmTex.value = t;   // swap the uniform, not .image
+      }
+      palmTexPlaceholder.dispose();
+    },
+    undefined,
+    () => console.warn('[XIX] palm-sprite.png missing — palms stay invisible (correct fallback)')
+  );
 
   const palmUniforms = {
     uTime:     { value: 0.0 },
