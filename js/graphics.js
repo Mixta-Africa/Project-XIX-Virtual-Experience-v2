@@ -866,7 +866,7 @@ export function MAT_WHITE_TRIM()  { return new THREE.MeshStandardMaterial({color
 export function MAT_GOLD()        { return new THREE.MeshStandardMaterial({color:0xC9A84C,roughness:.28,metalness:.88,envMapIntensity:2.5}); }
 export function MAT_DARK_METAL()  { return new THREE.MeshStandardMaterial({color:0x282820,roughness:.45,metalness:.92,envMapIntensity:2.0}); }
 export function MAT_WATER()       { return createWaterMat(); }
-export { scheduleEnvMapRefresh };
+// scheduleEnvMapRefresh exported at declaration (line 304)
 
 // ─── POLO FIELD WETNESS BRIDGE ────────────────────────────────────────────────
 // Called by applyWeather in app.js — drives the uWetness uniform on the
