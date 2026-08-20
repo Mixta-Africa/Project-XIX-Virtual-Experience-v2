@@ -912,11 +912,11 @@ export function buildPalmInstances(scene, palmDefs) {
   // ══════════════════════════════════════════════════════════════════════
   //  PALM TEXTURE — placeholder MUST be fully transparent
   // ══════════════════════════════════════════════════════════════════════
-  //  The fragment shader does `if (tex.a < 0.08) discard;`. A placeholder
+  //  The fragment shader does an alpha-test discard below 0.08. A placeholder
   //  with alpha 1.0 never discards, so every billboard quad renders as a
   //  solid green rectangle — two rows of them along the clubhouse approach.
   //  The placeholder is now RGBA(0,0,0,0): invisible until the sprite loads.
-  //  Swapping `.image` on a CanvasTexture is also unreliable — we assign the
+  //  Swapping .image on a CanvasTexture is also unreliable — we assign the
   //  loaded texture to the uniform directly instead.
   // ══════════════════════════════════════════════════════════════════════
   const palmTexPlaceholder = (() => {
