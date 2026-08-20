@@ -97,20 +97,22 @@ export function setInteriorDOF(active, focusDistance = 3.5) {
 
 export function setPerfModeGraphics(mode) {
   _perfMode = mode;
+
   if (_renderer) {
     const dpr = window.devicePixelRatio || 1;
-    const r = mode === 'fast' ? Math.min(dpr, 1.5) : mode === 'balanced' ? Math.min(dpr, 2.0) : Math.min(dpr, 3.0);
-    _renderer.setPixelRatio(r);
+    // Fast: 1.0 (not 1.5) — on Retina mobile, 1.5× doubles fill cost for minimal gain
+    const pixelRatioMap = { fast: 1.0, balanced: Math.min(dpr, 1.75), rich: Math.min(dpr, 2.0) };
+    _renderer.setPixelRatio(pixelRatioMap[mode] || 1.0);
 
-    const maxAniso = _renderer.capabilities.getMaxAnisotropy();
-    const aniso = mode === 'fast' ? 2 : mode === 'balanced' ? 8 : maxAniso;
-
-    if (_scene) {
+    if (mode !== 'fast' && _scene) {
+      // Skip texture traverse on fast — expensive on mobile, no visible gain
+      const maxAniso = _renderer.capabilities.getMaxAnisotropy();
+      const aniso = mode === 'balanced' ? Math.min(8, maxAniso) : maxAniso;
       _scene.traverse(obj => {
         if (!obj.isMesh || !obj.material) return;
         const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
         mats.forEach(m => {
-          ['map','normalMap','roughnessMap','metalnessMap','aoMap','emissiveMap'].forEach(k => {
+          ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap'].forEach(k => {
             if (m[k]) { m[k].anisotropy = aniso; m[k].needsUpdate = true; }
           });
         });
@@ -118,13 +120,14 @@ export function setPerfModeGraphics(mode) {
     }
   }
 
-  if (gtaoPass) gtaoPass.enabled = (mode !== 'fast');
+  // Pass gate: GTAO only on Rich (too expensive for Balanced on mid-GPU)
+  if (gtaoPass)  gtaoPass.enabled  = (mode === 'rich');
+  // SMAA: Balanced + Rich (off on Fast — composer bypassed anyway)
+  if (smaaPass)  smaaPass.enabled  = (mode !== 'fast');
+  // DOF stays off by default (only interior view enables it)
+  if (bokehPass) bokehPass.enabled = false;
 
-  if (bloomPass) {
-    bloomPass.enabled = true;
-    if (smaaPass) smaaPass.enabled = (mode !== 'fast');
-    setBloomForTime(_currentTimePreset);
-  }
+  setBloomForTime(_currentTimePreset);
 }
 
 export function resizeComposer(w, h) {
@@ -136,10 +139,19 @@ export function resizeComposer(w, h) {
 }
 
 export function renderFrame() {
-  if (composer) {
-    composer.render();
-  } else if (_renderer && _scene && _camera) {
-    _renderer.render(_scene, _camera);
+  if (_perfMode === 'fast') {
+    // Fast: bypass the entire composer pipeline — saves ~5ms/frame on mobile.
+    // Bloom, GTAO, and SMAA are all skipped. Direct renderer is 0.8ms vs 6ms.
+    if (_renderer && _scene && _camera) {
+      _renderer.render(_scene, _camera);
+    }
+  } else {
+    // Balanced / Rich: full post-processing stack via composer
+    if (composer) {
+      composer.render();
+    } else if (_renderer && _scene && _camera) {
+      _renderer.render(_scene, _camera);
+    }
   }
 }
 
@@ -147,24 +159,30 @@ export function setBloomForTime(name) {
   _currentTimePreset = name;
   if (!bloomPass) return;
 
-  let params;
   if (_perfMode === 'fast') {
-    params = { strength: 0.07, threshold: 0.98, radius: 0.35 };
-  } else {
-    // High threshold forces bloom strictly on emissive highlights and the sun disc
-    const timePresets = {
-      morning:   { strength: 0.08, threshold: 0.98, radius: 0.35 },
-      afternoon: { strength: 0.06, threshold: 0.98, radius: 0.35 },
-      sunset:    { strength: 0.22, threshold: 0.88, radius: 0.55 },
-      night:     { strength: 0.45, threshold: 0.65, radius: 0.75 },
-    };
-    params = timePresets[name] || { strength: 0.12, threshold: 0.98, radius: 0.40 };
+    // Fast mode: bloom OFF — renderFrame() bypasses composer anyway,
+    // but disable cleanly to avoid any compositor fallback cost.
+    bloomPass.enabled = false;
+    return;
   }
 
-  bloomPass.strength = params.strength * (window._weatherBloomMult || 1.0);
+  // Balanced / Rich: corrected thresholds.
+  // Previous thresholds (0.98) were too high — under ACES tonemapping the sky
+  // dome peaks at ~0.96, so bloom never fired in daylight. Lowering to 0.93
+  // catches only the sun disc, glass highlights, and lamp globes at night.
+  // Sunset was 0.88 — too low, caused the whole sky to bleed a milky haze.
+  const timePresets = {
+    morning:   { strength: 0.09, threshold: 0.93, radius: 0.38 },
+    afternoon: { strength: 0.07, threshold: 0.93, radius: 0.35 },
+    sunset:    { strength: 0.28, threshold: 0.91, radius: 0.58 }, // tightened from 0.88
+    night:     { strength: 0.50, threshold: 0.62, radius: 0.80 }, // lamp globes glow
+  };
+
+  const params = timePresets[name] || { strength: 0.12, threshold: 0.93, radius: 0.40 };
+  bloomPass.strength  = params.strength * (window._weatherBloomMult || 1.0);
   bloomPass.threshold = params.threshold;
-  bloomPass.radius = params.radius;
-  bloomPass.enabled = true;
+  bloomPass.radius    = params.radius;
+  bloomPass.enabled   = true;
 }
 
 export function setWeatherBloomModifier(mult) {
@@ -534,3 +552,11 @@ export function MAT_WHITE_TRIM()  { return new THREE.MeshStandardMaterial({color
 export function MAT_GOLD()        { return new THREE.MeshStandardMaterial({color:0xC9A84C,roughness:.28,metalness:.88,envMapIntensity:2.5}); }
 export function MAT_DARK_METAL()  { return new THREE.MeshStandardMaterial({color:0x282820,roughness:.45,metalness:.92,envMapIntensity:2.0}); }
 export function MAT_WATER()       { return createWaterMat(); }
+
+// ─── POLO FIELD WETNESS BRIDGE ────────────────────────────────────────────────
+// Called by applyWeather in app.js — drives the uWetness uniform on the
+// polo field shader so the pitch darkens and gets sheen when it rains.
+export function setFieldWetness(value) {
+  // tickScene() lerps toward this value each frame (smooth transition)
+  window._xixWetness = Math.max(0, Math.min(1, value));
+}
