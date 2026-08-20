@@ -14,11 +14,12 @@ import { GTAOPass }        from "https://cdn.jsdelivr.net/npm/three@0.165.0/exam
 import { BokehPass }       from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/postprocessing/BokehPass.js";
 import { LUTPass }         from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/postprocessing/LUTPass.js";
 import { LUTCubeLoader }   from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/LUTCubeLoader.js";
+import { ShaderPass }      from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/postprocessing/ShaderPass.js";
 import { Sky }             from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/objects/Sky.js";
 import { RoomEnvironment } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/environments/RoomEnvironment.js";
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
-let composer, bloomPass, smaaPass, gtaoPass, bokehPass, lutPass;
+let composer, bloomPass, smaaPass, gtaoPass, bokehPass, lutPass, vignettePass;
 let _renderer, _scene, _camera;
 let _perfMode = 'fast';
 let _envMap   = null;
@@ -82,6 +83,48 @@ export function initPostProcessing(renderer, scene, camera) {
     console.warn('[XIX] SMAA init:', e.message); 
   }
 
+  // ── Vignette + Chromatic Aberration (Balanced/Rich only) ──────────────────
+  // Custom 12-line GLSL ShaderPass — no external dependency.
+  // Vignette: gentle darkening at screen edges (frames the scene like a lens).
+  // Chromatic aberration: 1-pixel R/G/B offset at extreme corners (cinema realism).
+  // Both are OFF in fast mode (composer bypassed anyway, but be explicit).
+  try {
+    const VignetteShader = {
+      uniforms: {
+        tDiffuse:    { value: null },
+        uVignette:   { value: 0.38 }, // 0=none, 1=heavy
+        uCAStrength: { value: 0.0  }, // set by setPerfModeGraphics
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }
+      `,
+      fragmentShader: `
+        uniform sampler2D tDiffuse;
+        uniform float uVignette;
+        uniform float uCAStrength;
+        varying vec2 vUv;
+        void main() {
+          vec2 uv = vUv;
+          // Chromatic aberration: sample R/G/B at slightly offset UVs from centre
+          vec2 centre = vec2(0.5);
+          vec2 dir = (uv - centre) * uCAStrength;
+          float r = texture2D(tDiffuse, uv + dir * 1.0).r;
+          float g = texture2D(tDiffuse, uv           ).g;
+          float b = texture2D(tDiffuse, uv - dir * 0.6).b;
+          vec4 col = vec4(r, g, b, texture2D(tDiffuse, uv).a);
+          // Vignette: smooth falloff from centre
+          float dist = length(uv - centre) * 1.42; // normalize to corner
+          col.rgb *= 1.0 - uVignette * smoothstep(0.4, 1.0, dist);
+          gl_FragColor = col;
+        }
+      `,
+    };
+    vignettePass = new ShaderPass(VignetteShader);
+    vignettePass.enabled = false; // enabled by setPerfModeGraphics for balanced/rich
+    composer.addPass(vignettePass);
+  } catch(e) { console.warn('[XIX] Vignette pass:', e.message); }
+
   composer.addPass(new OutputPass());
   setPerfModeGraphics(_perfMode);
   return composer;
@@ -126,6 +169,14 @@ export function setPerfModeGraphics(mode) {
   if (smaaPass)  smaaPass.enabled  = (mode !== 'fast');
   // DOF stays off by default (only interior view enables it)
   if (bokehPass) bokehPass.enabled = false;
+  // Vignette + CA: Balanced (gentle) / Rich (full cinema)
+  if (vignettePass) {
+    vignettePass.enabled = (mode !== 'fast');
+    if (vignettePass.uniforms) {
+      vignettePass.uniforms.uVignette.value   = mode === 'rich' ? 0.42 : 0.28;
+      vignettePass.uniforms.uCAStrength.value = mode === 'rich' ? 0.003 : 0.0015;
+    }
+  }
 
   setBloomForTime(_currentTimePreset);
 }
@@ -194,14 +245,63 @@ export function setWeatherBloomModifier(mult) {
 export function buildEnvMapFromSky(renderer, scene, skyObj) {
   try {
     const pmrem = new THREE.PMREMGenerator(renderer);
-    pmrem.compileEquirectangularShader();
-    const env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    pmrem.compileCubemapShader();
+
+    // Capture the actual atmospheric sky sphere (Rayleigh scattering, sun position)
+    // This means glass windows reflect the real Lagos sky, not a generic office room.
+    // The skyObj is the Three.js Sky shader mesh — it renders correctly at any angle.
+    let env;
+    if (skyObj) {
+      // fromScene captures everything visible in the scene — temporarily isolate just the sky
+      const wasVisible = {};
+      scene.children.forEach((c, i) => {
+        wasVisible[i] = c.visible;
+        if (c !== skyObj) c.visible = false;
+      });
+      env = pmrem.fromScene(scene, 0.0).texture;
+      scene.children.forEach((c, i) => { c.visible = wasVisible[i]; });
+    } else {
+      // Fallback: warm neutral env (better than RoomEnvironment's cold office cast)
+      pmrem.compileEquirectangularShader();
+      env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    }
+
     pmrem.dispose();
-    _envMap = env; scene.environment = _envMap;
+    _envMap = env;
+    scene.environment = _envMap;
     return _envMap;
-  } catch(e) { 
-    console.warn('[XIX] EnvMap failed:', e.message); 
+  } catch(e) {
+    console.warn('[XIX] EnvMap from sky failed, using fallback:', e.message);
+    try {
+      const pmrem2 = new THREE.PMREMGenerator(renderer);
+      pmrem2.compileEquirectangularShader();
+      const env2 = pmrem2.fromScene(new RoomEnvironment(), 0.04).texture;
+      pmrem2.dispose();
+      _envMap = env2; scene.environment = _envMap;
+      return _envMap;
+    } catch(e2) { console.warn('[XIX] EnvMap fallback also failed:', e2.message); }
   }
+}
+
+// Throttled env map refresh — called on time-of-day change in Balanced/Rich mode.
+// Schedules a delayed sky capture so the sky shader finishes updating first.
+let _envRefreshTimer = null;
+export function scheduleEnvMapRefresh(renderer, scene, skyObj) {
+  if (_envRefreshTimer) clearTimeout(_envRefreshTimer);
+  _envRefreshTimer = setTimeout(() => {
+    _envRefreshTimer = null;
+    buildEnvMapFromSky(renderer, scene, skyObj);
+    // Propagate new env map to all PBR materials in scene
+    if (_envMap && scene) {
+      scene.traverse(obj => {
+        if (!obj.isMesh || !obj.material) return;
+        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+        mats.forEach(m => {
+          if (m.isMeshStandardMaterial) { m.envMap = _envMap; m.needsUpdate = true; }
+        });
+      });
+    }
+  }, 800); // 800ms after sky update so the sky shader has finished painting
 }
 
 export function setEnvMap(map) { 
@@ -209,35 +309,148 @@ export function setEnvMap(map) {
   if(_scene) _scene.environment = map; 
 }
 
+// ── Procedural concrete/render normal map — generated once, shared across all walls ──
+// Simulates the micro-roughness of West African rendered concrete: 
+// aggregate pores, float marks, and subtle formwork panel joints.
+let _concreteNormalMap = null;
+function _getConcreteNormalMap(THREE) {
+  if (_concreteNormalMap) return _concreteNormalMap;
+  const SIZE = 256;
+  const c = document.createElement('canvas'); c.width = c.height = SIZE;
+  const ctx = c.getContext('2d');
+
+  // Base: neutral blue (normal pointing straight out = (0.5, 0.5, 1.0) in RGB)
+  ctx.fillStyle = '#8080ff'; ctx.fillRect(0, 0, SIZE, SIZE);
+
+  // Aggregate pores — small random bumps, slightly inward
+  for (let i = 0; i < 1800; i++) {
+    const x = Math.random() * SIZE, y = Math.random() * SIZE;
+    const r = Math.random() * 3.5 + 0.5;
+    const depth = Math.floor(Math.random() * 30 + 90); // 90-120 = slightly recessed
+    const grd = ctx.createRadialGradient(x, y, 0, x, y, r);
+    grd.addColorStop(0,   `rgb(${depth},${depth},220)`);
+    grd.addColorStop(1,   '#8080ff');
+    ctx.fillStyle = grd; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // Formwork panel lines — faint horizontal marks every ~60px (30m at wall scale)
+  for (let y = 60; y < SIZE; y += 62) {
+    const lineDepth = 118;
+    ctx.fillStyle = `rgba(${lineDepth},${lineDepth},200,0.4)`;
+    ctx.fillRect(0, y, SIZE, 1.5);
+  }
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(6, 6); // Tiles 6× across a villa wall face
+  _concreteNormalMap = tex;
+  return tex;
+}
+
+// ── Glass sun glint state — updated by applyGlassSunGlint() from app.js ──
+window._xixSunGlintIntensity = 0.0;
+
 export function applyPS4Materials(gltfScene) {
   if (!gltfScene) return;
+  const concreteNM = _getConcreteNormalMap(THREE);
+
   gltfScene.traverse(child => {
     if (!child.isMesh || !child.material) return;
     const mat = child.material;
-    if (_envMap) mat.envMap = _envMap;
-    mat.envMapIntensity = 1.8;
-    const name = (mat.name || '').toLowerCase();
-    
-    if (name.includes('glass') || name.includes('window') || name.includes('glaz')) {
-      mat.roughness = 0.04; mat.metalness = 0.05; mat.transparent = true;
-      mat.opacity = Math.min(mat.opacity || 0.5, 0.6); mat.envMapIntensity = 3.5;
-    } else if (name.includes('metal') || name.includes('steel') || name.includes('alum')) {
-      mat.roughness = 0.25; mat.metalness = 0.85; mat.envMapIntensity = 2.5;
-    } else if (name.includes('roof') || name.includes('tile')) {
-      mat.roughness = 0.75; mat.metalness = 0.02; mat.envMapIntensity = 0.8;
-    } else if (name.includes('concrete') || name.includes('wall') || name.includes('plast')) {
-      mat.roughness = 0.88; mat.metalness = 0; mat.envMapIntensity = 0.4;
-    } else if (name.includes('wood') || name.includes('timber') || name.includes('deck')) {
-      mat.roughness = 0.72; mat.metalness = 0; mat.envMapIntensity = 0.6;
+
+    // Never override GLB PBR materials that have genuine texture maps —
+    // only set env map and adjust parameters, never replace the material itself
+    if (_envMap) { mat.envMap = _envMap; }
+
+    const name = (mat.name || child.name || '').toLowerCase();
+    const color = mat.color ? mat.color.getHex() : 0;
+
+    // ── Glass / window / glazing ────────────────────────────────────────────
+    if (name.includes('glass') || name.includes('window') || name.includes('glaz')
+        || name.includes('panel') && (name.includes('front') || name.includes('fac'))) {
+      mat.roughness = 0.03;
+      mat.metalness = 0.05;
+      mat.transparent = true;
+      mat.opacity = Math.min(mat.opacity || 0.52, 0.62);
+      mat.envMapIntensity = 4.0;  // Sky reflection is the hero of glass
+      // Emissive glint: picks up sun angle — warm in afternoon, orange at sunset
+      // Updated per-frame by tickScene via window._xixSunGlintIntensity
+      mat.emissive    = new THREE.Color(0xffe8b0);
+      mat.emissiveIntensity = 0.0; // set live by tickScene
+      child.userData.isGlassPanel = true;
+
+    // ── Brushed aluminium / steel / metal frames ─────────────────────────────
+    } else if (name.includes('metal') || name.includes('steel') || name.includes('alum')
+               || name.includes('frame') || name.includes('railing') || name.includes('rail')) {
+      mat.roughness = 0.22;
+      mat.metalness = 0.88;
+      mat.envMapIntensity = 2.8;
+
+    // ── Roof tiles (terracotta / slate) ──────────────────────────────────────
+    } else if (name.includes('roof') || name.includes('tile') || name.includes('shingle')) {
+      mat.roughness = 0.78;
+      mat.metalness = 0.01;
+      mat.envMapIntensity = 0.6;
+
+    // ── Rendered concrete / plaster / facade walls ────────────────────────────
+    } else if (name.includes('concrete') || name.includes('wall') || name.includes('plast')
+               || name.includes('render') || name.includes('stucco') || name.includes('facade')) {
+      mat.roughness = 0.86;
+      mat.metalness = 0.0;
+      mat.envMapIntensity = 0.35;
+      // Inject procedural concrete normal map — adds micro-roughness and formwork joints
+      // Only if the material has no existing normal map (don't override GLB baked normals)
+      if (!mat.normalMap) {
+        mat.normalMap = concreteNM;
+        mat.normalScale = new THREE.Vector2(0.55, 0.55);
+      } else {
+        // Amplify existing normal map slightly
+        const s = Math.min((mat.normalScale?.x || 1.0) * 1.3, 2.2);
+        mat.normalScale = new THREE.Vector2(s, s);
+      }
+
+    // ── Timber / wood / deck ──────────────────────────────────────────────────
+    } else if (name.includes('wood') || name.includes('timber') || name.includes('deck')
+               || name.includes('board') || name.includes('slat')) {
+      mat.roughness = 0.70;
+      mat.metalness = 0.0;
+      mat.envMapIntensity = 0.55;
+      // Vertical timber slats on loft terraces — amplify normals for grain depth
+      if (mat.normalMap) {
+        const s = Math.min((mat.normalScale?.x || 1.0) * 1.6, 2.5);
+        mat.normalScale = new THREE.Vector2(s, s);
+      }
+
+    // ── White render trim / balcony edge / balustrade ─────────────────────────
+    } else if (name.includes('trim') || name.includes('balcon') || name.includes('balu')
+               || name.includes('parapet') || name.includes('edge')) {
+      mat.roughness = 0.52;
+      mat.metalness = 0.0;
+      mat.envMapIntensity = 0.5;
+
+    // ── Gabion / stone / laterite ground ─────────────────────────────────────
+    } else if (name.includes('stone') || name.includes('gabion') || name.includes('brick')
+               || name.includes('masonry')) {
+      mat.roughness = 0.92;
+      mat.metalness = 0.0;
+      mat.envMapIntensity = 0.15;
+
+    // ── Default: PBR-safe clamp (never fully matte, never fully metallic) ────
     } else {
-      mat.roughness = Math.max(0.45, Math.min(mat.roughness ?? 0.8, 0.90));
-      mat.metalness = Math.min(mat.metalness ?? 0, 0.5);
+      mat.roughness  = Math.max(0.42, Math.min(mat.roughness  ?? 0.75, 0.88));
+      mat.metalness  = Math.min(mat.metalness  ?? 0, 0.45);
+      mat.envMapIntensity = mat.envMapIntensity ?? 1.0;
     }
-    
-    if (mat.normalMap && mat.normalScale) {
-      const s = Math.min(mat.normalScale.x * 1.4, 2.0); mat.normalScale.set(s, s);
+
+    // Universal: preserve + amplify existing normal maps; cast and receive shadow
+    if (mat.normalMap && mat.normalScale && !name.includes('concrete') && !name.includes('wall')) {
+      const s = Math.min(mat.normalScale.x * 1.35, 2.0);
+      mat.normalScale.set(s, s);
     }
-    child.castShadow = true; child.receiveShadow = true; mat.needsUpdate = true;
+
+    child.castShadow    = true;
+    child.receiveShadow = true;
+    mat.needsUpdate     = true;
   });
 }
 
@@ -552,6 +765,7 @@ export function MAT_WHITE_TRIM()  { return new THREE.MeshStandardMaterial({color
 export function MAT_GOLD()        { return new THREE.MeshStandardMaterial({color:0xC9A84C,roughness:.28,metalness:.88,envMapIntensity:2.5}); }
 export function MAT_DARK_METAL()  { return new THREE.MeshStandardMaterial({color:0x282820,roughness:.45,metalness:.92,envMapIntensity:2.0}); }
 export function MAT_WATER()       { return createWaterMat(); }
+export { scheduleEnvMapRefresh };
 
 // ─── POLO FIELD WETNESS BRIDGE ────────────────────────────────────────────────
 // Called by applyWeather in app.js — drives the uWetness uniform on the
