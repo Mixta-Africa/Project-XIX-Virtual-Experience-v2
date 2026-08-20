@@ -486,7 +486,8 @@ function buildInstancedCypress(positions) {
 }
 
 // ─── INSTANCED VILLA RENDERING WITH LOD ───────────────────────────────────────
-const _impostorMat   = new THREE.MeshStandardMaterial({ color:0xF5E6B0, roughness:.8 });
+// Impostor material: fully transparent — if LOD kicks in at extreme distance, invisible not beige box
+const _impostorMat   = new THREE.MeshStandardMaterial({ color:0xF5E6B0, roughness:.8, transparent:true, opacity:0.0 });
 const _impostorGeo   = new THREE.BoxGeometry(14, 8, 12);
 
 function placeVillaGLBWithLOD(x, z, ry, plotKey) {
@@ -514,10 +515,10 @@ function placeVillaGLBWithLOD(x, z, ry, plotKey) {
   highDetail.rotation.y = 0;
   lod.addLevel(highDetail, 0);          
   
-  // Proper LOD Design: After 180m, swap the high-poly house for a cheap box
+  // LOD swap at 400m — well beyond walking range, prevents boxes showing inside estate
   const lowDetail = new THREE.Mesh(_impostorGeo, _impostorMat);
   lowDetail.position.y = 4;
-  lod.addLevel(lowDetail, 180); 
+  lod.addLevel(lowDetail, 400); 
 
   scene.add(lod);
   if (plotKey) addPlotOverlay(x, z, ry, plotKey, lod);
@@ -807,8 +808,9 @@ export function initScene(canvas) {
     addServiceCompound();
     addLandscaping();
 
-    for (let i = 0; i < 8; i++) {
-      setTimeout(() => spawnNPCHorse(i), 2500 + i * 400);
+    // Cap NPC horses at 4 — each is a separate GLB+Draco load; 8 was too expensive
+    for (let i = 0; i < 4; i++) {
+      setTimeout(() => spawnNPCHorse(i), 3000 + i * 600);
     }
   });
 
@@ -1119,20 +1121,25 @@ function addPoloField() {
       float macro = fbm(vUv *  20.0);                   // colour drift
 
       // ── 3. GRASS BASE COLOUR — dry vs wet ────────────────────────────
-      vec3 dryLight  = vec3(0.330, 0.545, 0.265);   // lighter mow pass
-      vec3 dryDark   = vec3(0.200, 0.380, 0.155);   // darker mow pass
-      vec3 wetLight  = vec3(0.145, 0.320, 0.105);
-      vec3 wetDark   = vec3(0.090, 0.220, 0.070);
+      // Lagos polo pitch: bright saturated turf — think Guards Polo Club, not a football pitch
+      // Light band: #5DA83C (the well-lit mow pass), Dark band: #3A7028 (the shadow-lean pass)
+      // ~30% luminance difference matches real turf photography from elevation
+      vec3 dryLight  = vec3(0.365, 0.659, 0.235);   // #5DA83C — bright mow pass
+      vec3 dryDark   = vec3(0.227, 0.439, 0.157);   // #3A7028 — shadow mow pass
+      vec3 wetLight  = vec3(0.165, 0.380, 0.110);   // darkened wet pass
+      vec3 wetDark   = vec3(0.100, 0.250, 0.075);
       vec3 colLight  = mix(dryLight, wetLight, uWetness);
       vec3 colDark   = mix(dryDark,  wetDark,  uWetness);
 
-      float fbmBlend = mix(micro, macro, 0.38);
-      float shade    = mix(0.88, 1.0, fbmBlend);
+      // FBM: reduce micro influence at aerial — micro is too dark from overhead
+      // Blend micro in only at 20% — mostly macro variation which is gentler
+      float fbmBlend = mix(micro * 0.5 + 0.5, macro, 0.72);
+      float shade    = mix(0.93, 1.0, fbmBlend);   // floor at 0.93 (was 0.88 — too dark)
       vec3 albedo    = mix(colDark, colLight, isEven) * shade;
 
       // ── 4. MICRO ROUGHNESS VARIATION (prevents plastic look) ──────────
-      float roughness = mix(0.95, 0.45, uWetness);   // wet turf gets sheen
-      roughness      *= mix(0.92, 1.0, meso);
+      float roughness = mix(0.92, 0.42, uWetness);
+      roughness      *= mix(0.94, 1.0, meso);
 
       // ── 5. YARD LINES IN SHADER (world-space SDF) ─────────────────────
       // Centre line
@@ -1185,10 +1192,17 @@ function addPoloField() {
         sheen = pow(vDotM, 14.0) * 0.16 * (1.0 - isEven * 0.5);
       }
 
-      vec3 amb   = albedo * vec3(0.18, 0.22, 0.20);  // sky ambient
-      vec3 color = albedo * uSunColor * NdL
+      // Sky ambient: Lagos blue sky contributes significant fill from overhead
+      // Strong ambient prevents the field looking black when sun angle is low
+      vec3 skyAmb = albedo * vec3(0.28, 0.34, 0.32);  // raised from 0.18/0.22/0.20
+      // Sun direct — Lagos 6.5°N lat means sun is near-overhead (high NdL) at afternoon
+      float directStr = NdL * 1.15;  // slight boost for tropical sun intensity
+      vec3 color = albedo * uSunColor * directStr
                  + vec3(specStr + sheen) * uSunColor
-                 + amb;
+                 + skyAmb;
+      // Minimum luminance floor — prevents any area going below 22% value from aerial
+      float lum = dot(color, vec3(0.299, 0.587, 0.114));
+      color = mix(color, albedo * 0.38, max(0.0, 0.22 - lum));
 
       // ── 9. EDGE AO (slight darkening near boundary) ───────────────────
       float edgeAO = smoothstep(0.0, 7.0,
@@ -1604,10 +1618,9 @@ function addVillaRing(){
     if(!isInNoBuildZone(x-rx+fx,z-rz+fz)) cypressPositions.push([x-rx+fx,z-rz+fz]);
   }
   
+  // South row: west and east sides — straight villas facing north
   [-86, -108, -130, -152].forEach(x => { placeV(x, -120, 0); });
-  placeV(-160, -104, -Math.PI / 4); 
   [86, 108, 130, 152].forEach(x => { placeV(x, -120, 0); });
-  placeV(160, -104, Math.PI / 4); 
 
   for (let i = 0; i < 11; i++) {
     const t = 0.05 + (i / 10) * 0.90; 
