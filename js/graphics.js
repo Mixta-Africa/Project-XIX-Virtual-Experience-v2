@@ -45,16 +45,32 @@ export function initPostProcessing(renderer, scene, camera) {
 
   try {
     gtaoPass = new GTAOPass(scene, camera, w, h);
-    gtaoPass.output = GTAOPass.OUTPUT.Denoise;
+
+    // OUTPUT.Default composites the AO into the rendered scene.
+    // OUTPUT.Denoise is a DEBUG view that replaces the frame with the raw
+    // denoised AO buffer — white wherever nothing occludes (sky, open ground),
+    // dark only in creases. That is what produced the harsh white overlay in
+    // Balanced/Rich. Never ship anything other than Default here.
+    gtaoPass.output = GTAOPass.OUTPUT.Default;
+
     // Tuned for architectural scale: radius 2.0m (building corners, window reveals)
     // not 0.8m (object-level AO only). Thickness 1.5 reduces false AO on open ground.
     gtaoPass.updateGtaoMaterial({
       radius: 2.0,           // architectural-scale AO — catches building corners
-      distanceExponent: 1.4, // stronger falloff — avoids halos on open terrain  
+      distanceExponent: 1.4, // stronger falloff — avoids halos on open terrain
       thickness: 1.5,        // reduces false darkening on flat ground
       scale: 1.0,
     });
-    gtaoPass.enabled = (_perfMode !== 'fast'); // Balanced + Rich (was Rich only)
+
+    // Denoise settings — softens the AO so it reads as contact shadow, not noise
+    if (typeof gtaoPass.updatePdMaterial === 'function') {
+      gtaoPass.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 4, rings: 2, samples: 8 });
+    }
+
+    // Strength of the AO blended into the scene (0 = none, 1 = full)
+    gtaoPass.blendIntensity = 0.65;
+
+    gtaoPass.enabled = (_perfMode !== 'fast'); // Balanced + Rich
     composer.addPass(gtaoPass);
   } catch(e) {
     console.warn('[XIX] GTAO init:', e.message);
