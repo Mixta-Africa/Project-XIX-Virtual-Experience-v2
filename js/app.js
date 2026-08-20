@@ -12,6 +12,16 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
 
 window.plotRegistry = plotRegistry;
 
+// ── setCaption filter: suppress stale/unhelpful captions from data.js ──────────
+const _BAD_CAPTIONS = new Set([
+  'Drag right to look', 'drag to look', 'Click to look',
+  'field_centre', 'field_south', 'lake_north', 'stables', 'training', 'lofts', 'paddock',
+]);
+function setCaption(text) {
+  if (!text || _BAD_CAPTIONS.has(text.trim())) { _setCaption_raw(''); return; }
+  _setCaption_raw(text);
+}
+
 import { VIEWPOINTS, ZONES, WORLD } from "./data.js";
 import { buildVillaInterior, VILLA_VIEWPOINTS } from "./villa-interior.js";
 import {
@@ -912,6 +922,103 @@ async function openWorldAt(viewKey) {
     setPerfModeGraphics('fast');
     setLoadingProgress(90);
     buildViewpointStrip(document.getElementById("viewpoint-strip"), (key, vp) => teleportTo(key, vp));
+
+    // ── VIEWPOINTS PRECISION OVERRIDE ──────────────────────────────────────────
+    // Override data.js VIEWPOINTS with exact camera positions for each strip button.
+    // This replaces whatever coordinates data.js has with ground-truth estate coords.
+    const VP_OVERRIDES = {
+      'field_centre': { pos:[0,    1.72, 0],      yaw: 0,           pitch: 0,     caption: 'Main polo field — facing north' },
+      'field_south':  { pos:[0,    1.72, 95],     yaw: Math.PI,     pitch: -0.04, caption: 'South goal — Clubhouse behind you' },
+      'clubhouse':    { pos:[0,    1.72, 135],    yaw: Math.PI,     pitch: -0.05, caption: 'Clubhouse — estate social anchor' },
+      'lake_north':   { pos:[0,    1.72, -108],   yaw: 0,           pitch: -0.04, caption: 'Crescent lake — north shore' },
+      'stables':      { pos:[-280, 1.72, 80],     yaw: Math.PI/2,   pitch: 0,     caption: 'Equestrian quarter — 56 stalls' },
+      'training':     { pos:[-260, 1.72, -40],    yaw: Math.PI/2,   pitch: 0,     caption: 'Training field — polo academy' },
+      'lofts':        { pos:[-218, 1.72, -5],     yaw: -Math.PI/2,  pitch: 0,     caption: 'Loft terraces — south precinct' },
+      'paddock':      { pos:[155,  1.72, -60],    yaw: -Math.PI/2,  pitch: 0,     caption: 'Paddock — east precinct' },
+    };
+    Object.entries(VP_OVERRIDES).forEach(([k, v]) => {
+      if (VIEWPOINTS[k]) Object.assign(VIEWPOINTS[k], v);
+    });
+
+    // ── VILLAS DROPDOWN: rebuild with styled, clickable sub-items ──────────────
+    // The raw data.js sub-items render as unstyled inline text. Replace entirely.
+    setTimeout(() => {
+      const villasWrapper = document.querySelector('.vp-wrapper[data-key="villas"], [data-key="villas"]');
+      const allWrappers = document.querySelectorAll('[class*="vp-wrapper"], [class*="vp-btn"]');
+      
+      // Find the villas button by text content
+      allWrappers.forEach(el => {
+        if (el.textContent && el.textContent.trim().toUpperCase().startsWith('VILLAS')) {
+          // Find or create its dropdown
+          let dropdown = el.parentElement?.querySelector('.vp-dropdown');
+          if (!dropdown) { dropdown = el.nextElementSibling; }
+          if (!dropdown) return;
+          
+          // Inject clean CSS for the dropdown
+          if (!document.getElementById('xix-villa-dropdown-css')) {
+            const s = document.createElement('style');
+            s.id = 'xix-villa-dropdown-css';
+            s.textContent = `
+              .vp-dropdown { 
+                display: none; 
+                position: absolute;
+                bottom: 100%;
+                left: 0;
+                background: rgba(6,18,8,0.96);
+                border: 1px solid rgba(201,168,76,0.35);
+                border-radius: 8px 8px 0 0;
+                overflow: hidden;
+                min-width: 160px;
+                z-index: 400;
+                backdrop-filter: blur(10px);
+              }
+              .vp-dropdown.open { display: block !important; }
+              .xix-villa-sub {
+                display: block;
+                width: 100%;
+                padding: 10px 16px;
+                background: none;
+                border: none;
+                border-bottom: 1px solid rgba(255,255,255,0.06);
+                color: rgba(240,236,224,0.85);
+                font-family: Inter, sans-serif;
+                font-size: 11px;
+                font-weight: 500;
+                letter-spacing: .08em;
+                text-align: left;
+                cursor: pointer;
+                transition: background .15s, color .15s;
+              }
+              .xix-villa-sub:last-child { border-bottom: none; }
+              .xix-villa-sub:hover { background: rgba(201,168,76,0.15); color: #C9A84C; }
+            `;
+            document.head.appendChild(s);
+          }
+
+          // Replace dropdown content with our 4 precise sub-items
+          dropdown.innerHTML = '';
+          const villaSubItems = [
+            { label: 'West Row',  key: 'villa_west'  },
+            { label: 'East Row',  key: 'villa_east'  },
+            { label: 'North Arc', key: 'villa_north' },
+            { label: 'South Arc', key: 'villa_south' },
+          ];
+          villaSubItems.forEach(item => {
+            const btn = document.createElement('button');
+            btn.className = 'xix-villa-sub';
+            btn.textContent = item.label;
+            btn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              dropdown.classList.remove('open');
+              dropdown.style.display = 'none';
+              teleportTo(item.key, null);
+            });
+            dropdown.appendChild(btn);
+          });
+        }
+      });
+    }, 400); // After strip renders
+
     sceneReady = true; setLoadingProgress(100);
   }
 
@@ -1586,13 +1693,32 @@ function teleportTo(key, vp){
 
     // 3. Resolve position data
     // Villa sub-zone keys: override with meaningful in-world positions
-    const VILLA_ZONE_POSITIONS = {
-      'villa_west':  { pos:[-162,  1.72,   0], yaw:  Math.PI/2,  pitch: 0, caption: 'West villa row — polo field ahead' },
-      'villa_east':  { pos:[ 162,  1.72,   0], yaw: -Math.PI/2,  pitch: 0, caption: 'East villa row — polo field ahead' },
-      'villa_north': { pos:[   0,  1.72, -120], yaw:  0,          pitch: 0, caption: 'North arc — crescent lake view' },
-      'villa_south': { pos:[   0,  1.72,   90], yaw:  Math.PI,    pitch: 0, caption: 'South villas — looking toward the field' },
+    // All bottom-strip viewpoint overrides — ground-truth estate coordinates
+    const PRECISE_VIEWPOINTS = {
+      // Polo field
+      'field_centre': { pos:[0,    1.72,  0],    yaw: 0,           pitch: 0,     caption: 'Main polo field — facing north' },
+      'field_south':  { pos:[0,    1.72,  95],   yaw: Math.PI,     pitch:-0.04,  caption: 'South goal — Clubhouse behind you' },
+      // Clubhouse
+      'clubhouse':    { pos:[0,    1.72,  135],  yaw: Math.PI,     pitch:-0.05,  caption: 'Clubhouse — estate social anchor' },
+      // Lake
+      'lake_north':   { pos:[0,    1.72,  -108], yaw: 0,           pitch:-0.04,  caption: 'Crescent lake — north shore' },
+      // Stables
+      'stables':      { pos:[-280, 1.72,  80],   yaw: Math.PI/2,   pitch: 0,     caption: 'Equestrian quarter — 56 stalls' },
+      // Training
+      'training':     { pos:[-260, 1.72,  -40],  yaw: Math.PI/2,   pitch: 0,     caption: 'Training field — polo academy' },
+      // Lofts
+      'lofts':        { pos:[-218, 1.72,  -5],   yaw: -Math.PI/2,  pitch: 0,     caption: 'Loft terraces — south precinct' },
+      // Paddock
+      'paddock':      { pos:[155,  1.72,  -60],  yaw: -Math.PI/2,  pitch: 0,     caption: 'Paddock — east precinct' },
+      // Villa sub-zones
+      'villa_west':   { pos:[-162, 1.72,   0],   yaw:  Math.PI/2,  pitch: 0,     caption: 'West villa row — polo field ahead' },
+      'villa_east':   { pos:[ 162, 1.72,   0],   yaw: -Math.PI/2,  pitch: 0,     caption: 'East villa row — polo field ahead' },
+      'villa_north':  { pos:[  0,  1.72, -120],  yaw:  0,          pitch: 0,     caption: 'North arc — crescent lake view' },
+      'villa_south':  { pos:[  0,  1.72,   90],  yaw:  Math.PI,    pitch: 0,     caption: 'South villas — looking toward the field' },
+      // Villas (main button)
+      'villas':       { pos:[-162, 1.72,   0],   yaw:  Math.PI/2,  pitch: 0,     caption: 'West villa row — polo field ahead' },
     };
-    const resolved = VILLA_ZONE_POSITIONS[key] || (vp && vp.pos ? vp : (VIEWPOINTS[key] || null));
+    const resolved = PRECISE_VIEWPOINTS[key] || (vp && vp.pos ? vp : (VIEWPOINTS[key] || null));
     if (!resolved || !Array.isArray(resolved.pos) || resolved.pos.length < 3) {
       console.warn('[XIX] teleportTo: bad viewpoint for key', key, resolved);
       return;
