@@ -1322,6 +1322,7 @@ function addPoloField() {
     uniform sampler2D uGrassNrm;
     uniform sampler2D uGrassRgh;
     uniform sampler2D uGrassAO;
+    uniform sampler2D uGrassHgt;
     uniform float uHasTex;    // 1.0 when colour + normal are loaded
 
     varying vec2 vUv;
@@ -1408,46 +1409,95 @@ function addPoloField() {
       albedo = mix(albedo, lineCol, arcLine * 0.90 * insideField);
 
       // ── 7. BLADE DETAIL ───────────────────────────────────────────────
-      // (a) PHOTOGRAPHIC TURF — ambientCG Grass004
-      //     Sampled at two scales with an offset so the 3.9m tile never reads
-      //     as a repeating grid. We keep OUR chevron mow colour and take the
-      //     photo's *detail* (luminance + normal), which is what sells blades.
-      vec3  turfN = vec3(0.0, 0.0, 1.0);
+      // ══════════════════════════════════════════════════════════════════
+      //  (a) PHOTOGRAPHIC TURF — hyper-real multi-scale sampling
+      // ══════════════════════════════════════════════════════════════════
+      //  Three sampling scales, blended by camera distance:
+      //    MICRO  ×4.0  — individual blades, only near the camera
+      //    MESO   ×1.0  — clump structure, the base layer
+      //    MACRO  ×0.22 — broad health/colour drift across the pitch
+      //  Plus parallax offset from the height map so blades occlude each
+      //  other with real depth as you move, and an anisotropic sheen along
+      //  the mow direction.
+      // ══════════════════════════════════════════════════════════════════
+      vec3  turfN  = vec3(0.0, 0.0, 1.0);
       float turfAO = 1.0;
+
       if (uHasTex > 0.5) {
-        vec2 uvA = vUv;
-        vec2 uvB = vUv * 2.63 + vec2(0.41, 0.17);
+        vec3  Vw   = normalize(cameraPosition - vWorldPos);
+        float dist = length(cameraPosition - vWorldPos);
 
-        vec3 cA = texture2D(uGrassCol, uvA).rgb;
-        vec3 cB = texture2D(uGrassCol, uvB).rgb;
-        vec3 turfCol = mix(cA, cB, 0.38);
+        // Near-field weight: full blade detail under ~28m, fading out by ~90m.
+        // Beyond that the micro layer would alias into shimmer, so we drop it.
+        float nearW = 1.0 - smoothstep(28.0, 90.0, dist);
 
-        // Luminance detail modulates our mow-stripe albedo
+        // ── PARALLAX ────────────────────────────────────────────────────
+        // Offset the lookup along the view vector by the height map. This is
+        // what makes blades feel like they have thickness rather than being
+        // printed on a flat plane.
+        vec2 pdir = vec2(Vw.x, Vw.z) / max(abs(Vw.y), 0.28);
+        float h0  = texture2D(uGrassHgt, vUv).r;
+        vec2  pUV = vUv - pdir * (h0 - 0.5) * 0.016 * nearW;
+
+        // ── THREE SCALES ────────────────────────────────────────────────
+        vec2 uvMicro = pUV * 4.0  + vec2(0.13, 0.71);
+        vec2 uvMeso  = pUV;
+        vec2 uvMacro = pUV * 0.22 + vec2(0.55, 0.29);
+
+        vec3 cMicro = texture2D(uGrassCol, uvMicro).rgb;
+        vec3 cMeso  = texture2D(uGrassCol, uvMeso ).rgb;
+        vec3 cMacro = texture2D(uGrassCol, uvMacro).rgb;
+
+        // Meso is the backbone; micro sharpens it up close; macro adds drift.
+        vec3 turfCol = cMeso;
+        turfCol = mix(turfCol, turfCol * cMicro * 2.0, 0.42 * nearW);
+        turfCol = mix(turfCol, turfCol * cMacro * 1.85, 0.22);
+
+        // ── ALBEDO ──────────────────────────────────────────────────────
+        // Much stronger photo influence than before (was 34%). The mow
+        // chevron survives because we modulate rather than replace.
         float lum = dot(turfCol, vec3(0.299, 0.587, 0.114));
-        albedo *= (0.58 + lum * 0.92);
-        // Then blend a little of the real hue back in for authenticity
-        albedo = mix(albedo, albedo * turfCol * 2.25, 0.34);
+        albedo *= (0.44 + lum * 1.18);
+        albedo  = mix(albedo, albedo * turfCol * 2.5, 0.62);
 
-        // Normal map — this is what makes individual blades catch light
-        vec3 nA = texture2D(uGrassNrm, uvA).rgb * 2.0 - 1.0;
-        vec3 nB = texture2D(uGrassNrm, uvB).rgb * 2.0 - 1.0;
-        turfN = normalize(mix(nA, nB, 0.38));
+        // Health variation — patches of richer and drier turf across the pitch
+        float health = fbm(vWorldPos.xz * 0.014 + 41.0);
+        albedo *= mix(0.90, 1.10, health);
+        albedo  = mix(albedo, albedo * vec3(1.06, 1.02, 0.86), health * 0.20);
 
-        // Roughness map — wet blades vs dry blades vary across the surface
-        float rTex = texture2D(uGrassRgh, uvA).r;
-        roughness = mix(roughness, roughness * (0.72 + rTex * 0.56), 0.65);
+        // ── NORMALS ─────────────────────────────────────────────────────
+        // Three-scale normal accumulation. This is the single biggest
+        // contributor to blades reading as three-dimensional.
+        vec3 nMicro = texture2D(uGrassNrm, uvMicro).rgb * 2.0 - 1.0;
+        vec3 nMeso  = texture2D(uGrassNrm, uvMeso ).rgb * 2.0 - 1.0;
+        vec3 nMacro = texture2D(uGrassNrm, uvMacro).rgb * 2.0 - 1.0;
+        turfN = normalize(
+            nMeso * 1.00
+          + nMicro * (1.35 * nearW)
+          + nMacro * 0.30
+        );
 
-        // AO map — darkens the gaps between blade clumps
-        turfAO = mix(1.0, texture2D(uGrassAO, uvA).r, 0.55);
+        // ── ROUGHNESS ───────────────────────────────────────────────────
+        float rTex = texture2D(uGrassRgh, uvMeso).r;
+        roughness = mix(roughness, 0.52 + rTex * 0.46, 0.80);
+
+        // ── AMBIENT OCCLUSION ───────────────────────────────────────────
+        // Two scales — clump-level shadowing plus deep inter-blade darkening.
+        float aoMeso  = texture2D(uGrassAO, uvMeso ).r;
+        float aoMicro = texture2D(uGrassAO, uvMicro).r;
+        turfAO = mix(1.0, aoMeso * mix(1.0, aoMicro, 0.55 * nearW), 0.72);
         albedo *= turfAO;
+
+        // Height-based crevice darkening — the gaps between blades go dark
+        albedo *= mix(0.78, 1.06, h0);
       }
 
-      // (b) Procedural blade streaks — carry the look when no texture is present,
-      //     and add sub-texel variation on top of it when there is one.
+      // (b) Procedural blade streaks — carry the look with no texture, and add
+      //     sub-texel variation on top when there is one.
       float bladeNoise  = noise(vec2(wx * 7.5, wz * 7.5));
       float bladeStreak = noise(vec2(wx * 26.0 + wz * 4.0, wz * 3.0));
       float bladeDetail = (bladeNoise * 0.55 + bladeStreak * 0.45);
-      albedo *= mix(0.80 + bladeDetail * 0.40, 0.92 + bladeDetail * 0.16, uHasTex);
+      albedo *= mix(0.80 + bladeDetail * 0.40, 0.94 + bladeDetail * 0.12, uHasTex);
 
       // (c) Tip brightening from the vertex blade displacement
       float tipBright = vBladeTop * vBladeTop * 0.30;
@@ -1457,7 +1507,10 @@ function addPoloField() {
       // Tangent space here is effectively world XZ since the pitch is flat.
       vec3 N = vNormal;
       if (uHasTex > 0.5) {
-        N = normalize(vNormal + vec3(turfN.x, 0.0, turfN.y) * 0.85);
+        // Strength raised from 0.85 → 1.9. Blade relief is what sells realism;
+        // the pitch is flat so there is no silhouette to give the game away,
+        // meaning the normal map has to do all the three-dimensional work.
+        N = normalize(vNormal + vec3(turfN.x, 0.0, turfN.y) * 1.9);
       }
 
       // ── 8. PBR LIGHTING (Lambert + specular) ──────────────────────────
@@ -1480,11 +1533,45 @@ function addPoloField() {
 
       // Sky ambient: Lagos blue sky contributes significant fill from overhead
       // Strong ambient prevents the field looking black when sun angle is low
-      vec3 skyAmb = albedo * vec3(0.32, 0.38, 0.36);
-      float directStr = NdL * 1.18;
-      float tipHighlight = pow(max(dot(normalize(uSunDir + V_dir), vNormal), 0.0), 48.0) * (0.12 + isEven * 0.08);
+      // ══════════════════════════════════════════════════════════════════
+      //  GRASS LIGHTING — beyond Lambert
+      // ══════════════════════════════════════════════════════════════════
+      vec3 H_grass = normalize(L + V_dir);
+
+      // 1. TRANSLUCENCY / SUBSURFACE SCATTER
+      //    Grass blades are thin and let light through. When the sun is behind
+      //    a blade relative to the camera it glows a bright yellow-green. This
+      //    is the single most recognisable property of real turf and it is
+      //    completely absent from a Lambert-only surface.
+      float backLit = max(dot(V_dir, -L), 0.0);
+      float sss     = pow(backLit, 3.2) * 0.34;
+      sss *= (0.5 + vBladeTop * 0.5);          // stronger at blade tips
+      vec3 sssColor = vec3(0.62, 0.92, 0.36);  // fresh chlorophyll transmission
+
+      // 2. ANISOTROPIC SHEEN along the mow direction
+      //    Blades lie in a common direction within each chevron band, so the
+      //    specular lobe stretches perpendicular to that direction rather than
+      //    forming a round highlight.
+      vec3  mowAxis  = normalize(vec3(0.7071, 0.0, 0.7071));
+      float dotTH    = dot(mowAxis, H_grass);
+      float sinTH    = sqrt(max(1.0 - dotTH * dotTH, 0.001));
+      float aniso    = pow(sinTH, 42.0) * 0.30;
+      aniso *= (1.0 - isEven * 0.45);          // band-dependent
+
+      // 3. TIP HIGHLIGHT — sharp glint off the very ends of blades
+      float tipHighlight = pow(max(dot(H_grass, N), 0.0), 72.0)
+                         * (0.10 + vBladeTop * 0.22);
+
+      // 4. WRAPPED DIFFUSE — light bleeds slightly past the terminator on
+      //    fine geometry, softening the shadow edge the way real turf does.
+      float wrapped = max((dot(N, L) + 0.34) / 1.34, 0.0);
+
+      vec3 skyAmb     = albedo * vec3(0.34, 0.40, 0.37);
+      float directStr = wrapped * 1.16;
+
       vec3 color = albedo * uSunColor * directStr
-                 + vec3(specStr + sheen + tipHighlight) * uSunColor
+                 + sssColor * albedo * sss * uSunColor
+                 + vec3(specStr + sheen + aniso + tipHighlight) * uSunColor
                  + skyAmb;
       float lum = dot(color, vec3(0.299, 0.587, 0.114));
       color = mix(color, albedo * 0.42, max(0.0, 0.28 - lum));
@@ -1512,6 +1599,7 @@ function addPoloField() {
       uGrassNrm:  { value: null },  // normal (GL convention)
       uGrassRgh:  { value: null },  // roughness
       uGrassAO:   { value: null },  // ambient occlusion
+      uGrassHgt:  { value: null },  // displacement — drives parallax depth
       uHasTex:    { value: 0.0 },   // 1.0 once colour + normal have loaded
     },
   });
@@ -1561,6 +1649,10 @@ function addPoloField() {
 
     L.load('assets/textures/grass-ao.jpg',
       t => { fieldMat.uniforms.uGrassAO.value = setup(t, false); },
+      undefined, () => {});
+
+    L.load('assets/textures/grass-height.jpg',
+      t => { fieldMat.uniforms.uGrassHgt.value = setup(t, false); },
       undefined, () => {});
   })();
 
