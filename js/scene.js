@@ -722,6 +722,30 @@ function addVillaContactShadow(x, z) {
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 let sunLight, hemiLight;
+
+// ─── MOBILE / GPU TIER AUTO-DETECTION ────────────────────────────────────────
+// Call detectMobileTier() immediately after renderer is created in initScene().
+// On mobile UA: locks PERF_MODE to 'fast' regardless of user setting.
+// On low-end GPU: caps at 'balanced' if max texture size < 4096.
+function detectMobileTier() {
+  const isMobile = /iPhone|iPad|Android|Mobile/i.test(navigator.userAgent);
+  if (isMobile) {
+    PERF_MODE = 'fast';
+    if (typeof setPerfModeGraphics === 'function') setPerfModeGraphics('fast');
+    console.log('[XIX] Mobile UA detected → PERF_MODE locked to fast');
+    return;
+  }
+  if (renderer) {
+    const gl     = renderer.getContext();
+    const maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+    if (maxTex < 4096 && PERF_MODE === 'rich') {
+      PERF_MODE = 'balanced';
+      console.log('[XIX] Low-end GPU (maxTex:', maxTex, ') → PERF_MODE capped to balanced');
+    }
+  }
+}
+
+
 export function getSunLight() { return sunLight; }
 
 export function initScene(canvas) {
@@ -735,6 +759,7 @@ export function initScene(canvas) {
   renderer.toneMapping         = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 0.85; 
   renderer.outputColorSpace    = THREE.SRGBColorSpace;
+  detectMobileTier(); // Auto-lock PERF_MODE for mobile/low-end GPU
 
   scene  = new THREE.Scene();
   scene.fog = new THREE.FogExp2(0x8ab8cc, perfS.fogDensity);
@@ -809,27 +834,57 @@ export function updateSky(top, hor, gnd) {
 
 function buildLighting() {
   const perfS = PERF_SETTINGS[PERF_MODE];
-  hemiLight = new THREE.HemisphereLight(0xd4e8ff, 0x4a6a30, 0.4); // Reduced to fix glare
+
+  // Sky dome ambient — blue above, warm laterite bounce below (Lagos ground colour)
+  hemiLight = new THREE.HemisphereLight(0x7CB8D4, 0x4a6a30, 0.45);
   scene.add(hemiLight);
-  
-  sunLight = new THREE.DirectionalLight(0xfff4e0, 1.2); 
-  sunLight.position.set(120, 220, 100); // Moved out of lower-left view
-  sunLight.castShadow = true; 
-  sunLight.shadow.camera.left = sunLight.shadow.camera.bottom = -380;
-  sunLight.shadow.camera.right = sunLight.shadow.camera.top   =  380;
-  sunLight.shadow.camera.near  = 0.5;
-  sunLight.shadow.camera.far   = 800;
-  sunLight.shadow.mapSize.set(perfS.shadowMapSize, perfS.shadowMapSize);
-  sunLight.shadow.bias        = -0.00015; 
-  sunLight.shadow.normalBias  =  0.018;
-  sunLight.shadow.radius      =  2.5;    
+
+  // Ground bounce — warm terracotta fill from Lagos laterite soil
+  const groundBounce = new THREE.HemisphereLight(0xFFFFFF, 0xD4803A, 0.25);
+  groundBounce.position.set(0, -10, 0);
+  scene.add(groundBounce);
+
+  sunLight = new THREE.DirectionalLight(0xfff4e0, 1.2);
+  sunLight.position.set(120, 220, 100);
+
+  if (PERF_MODE === 'fast') {
+    // ── FAST: shadows OFF entirely — saves 4-8ms/frame on mobile ──────────
+    sunLight.castShadow = false;
+  } else {
+    // ── BALANCED / RICH: tight frustum = far better shadow texel density ──
+    // Current: ±380m frustum on 2048 map = 2.7mm/texel (blurry)
+    // New: ±100m frustum on 2048 = 0.5mm/texel (crisp architectural shadows)
+    const fHalf = PERF_MODE === 'rich' ? 120 : 100;
+    sunLight.castShadow = true;
+    sunLight.shadow.camera.left   = -fHalf;
+    sunLight.shadow.camera.right  =  fHalf;
+    sunLight.shadow.camera.top    =  fHalf;
+    sunLight.shadow.camera.bottom = -fHalf;
+    sunLight.shadow.camera.near   = 0.5;
+    sunLight.shadow.camera.far    = 600;
+    sunLight.shadow.mapSize.set(perfS.shadowMapSize, perfS.shadowMapSize);
+    // Tuned per mode — eliminates acne without peter-panning
+    if (PERF_MODE === 'balanced') {
+      sunLight.shadow.bias       = -0.00012;
+      sunLight.shadow.normalBias =  0.012;
+      sunLight.shadow.radius     =  2.0;
+    } else {
+      sunLight.shadow.bias       = -0.00008;
+      sunLight.shadow.normalBias =  0.008;
+      sunLight.shadow.radius     =  1.5;
+    }
+  }
   scene.add(sunLight);
 
-  const fill = new THREE.DirectionalLight(0xd4b890, 0.25); 
-  fill.position.set(100, 60, -120); scene.add(fill);
+  // Warm fill (opposite sun — prevents pure black shadows)
+  const fill = new THREE.DirectionalLight(0xd4b890, 0.25);
+  fill.position.set(100, 60, -120);
+  scene.add(fill);
 
-  const ambient = new THREE.DirectionalLight(0xb8d0ff, 0.15); 
-  ambient.position.set(-80, 20, 80); scene.add(ambient);
+  // Blue sky fill from north
+  const ambient = new THREE.DirectionalLight(0xb8d0ff, 0.15);
+  ambient.position.set(-80, 20, 80);
+  scene.add(ambient);
 }
 
 // ─── NIGHT SECURITY LIGHTS ────────────────────────────────────────────────────
@@ -1002,24 +1057,172 @@ function addGrassRing(){
   commitGrass(scene, allCards);
 }
 
-function addPoloField(){
-  const sc=document.createElement("canvas"); sc.width=512; sc.height=256;
-  const ctx=sc.getContext("2d");
-  for(let i=0;i<14;i++){
-    ctx.fillStyle=i%2===0?"#5a9448":"#4a8038";
-    ctx.fillRect(0,i*(256/14),512,256/14+1);
-  }
-  const st=new THREE.CanvasTexture(sc);
-  st.colorSpace=THREE.SRGBColorSpace; st.wrapS=st.wrapT=THREE.RepeatWrapping;
-  const fm = MAT_GRASS_FIELD(); 
-  fm.map = st;
-  fm.roughness = 1.0; 
-  fm.metalness = 0.0; 
-  fm.envMapIntensity = 0.0; 
-  const fp = plane(274, 146, fm, [0, .12, 0]); 
-  scene.add(fp); _terrainMeshes.push(fp);
-  const lm=new THREE.MeshStandardMaterial({color:0xf8f5e0,roughness:.4});
-  s(box(.5,.05,146,lm,[0,.14,0],0,false)); s(box(274,.05,.5,lm,[0,.14,0],0,false));
+function addPoloField() {
+  // ─── Vertex shader — passes world position and UV ───────────────────────
+  const vertexShader = /* glsl */`
+    varying vec2 vUv;
+    varying vec3 vWorldPos;
+    varying vec3 vNormal;
+    void main() {
+      vUv       = uv;
+      vWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;
+      vNormal   = normalize(normalMatrix * normal);
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `;
+
+  // ─── Fragment shader — FBM turf, chevron mow, yard lines, sheen ─────────
+  const fragmentShader = /* glsl */`
+    precision highp float;
+
+    uniform float uTime;
+    uniform vec3  uSunDir;
+    uniform vec3  uSunColor;
+    uniform float uWetness;   // 0 = dry, 1 = wet (rain weather)
+    uniform float uSheen;     // 0 = fast (off), 1 = balanced/rich
+
+    varying vec2 vUv;
+    varying vec3 vWorldPos;
+    varying vec3 vNormal;
+
+    // ── Noise helpers (from realism-upgrade.js — 5-octave FBM) ───────────
+    float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+    float noise(vec2 p) {
+      vec2 i = floor(p), f = fract(p);
+      f = f * f * (3.0 - 2.0 * f);
+      return mix(mix(hash(i), hash(i + vec2(1,0)), f.x),
+                 mix(hash(i + vec2(0,1)), hash(i + vec2(1,1)), f.x), f.y);
+    }
+    float fbm(vec2 p) {
+      float v = 0.0, a = 0.5;
+      for (int i = 0; i < 5; i++) { v += a * noise(p); p *= 2.1; a *= 0.5; }
+      return v;
+    }
+
+    // ── Smooth line helper ────────────────────────────────────────────────
+    float sdLine(float pos, float halfW) {
+      return smoothstep(halfW + 0.15, halfW - 0.05, abs(pos));
+    }
+
+    void main() {
+      float wx = vWorldPos.x;   // −137 → +137 (long axis)
+      float wz = vWorldPos.z;   // −73  → +73  (short axis)
+
+      // ── 1. CHEVRON MOW PATTERN (45° diagonal, 10m bands) ─────────────
+      float chevronAxis = (wx + wz) * 0.7071;
+      float band        = floor(chevronAxis / 10.0);
+      float isEven      = mod(band, 2.0);
+
+      // ── 2. FBM TURF DETAIL (3 scales — blade / patch / macro) ────────
+      float micro = fbm(vUv * 800.0 + uTime * 0.018);  // blade clumping
+      float meso  = fbm(vUv * 120.0);                   // patch variation
+      float macro = fbm(vUv *  20.0);                   // colour drift
+
+      // ── 3. GRASS BASE COLOUR — dry vs wet ────────────────────────────
+      vec3 dryLight  = vec3(0.330, 0.545, 0.265);   // lighter mow pass
+      vec3 dryDark   = vec3(0.200, 0.380, 0.155);   // darker mow pass
+      vec3 wetLight  = vec3(0.145, 0.320, 0.105);
+      vec3 wetDark   = vec3(0.090, 0.220, 0.070);
+      vec3 colLight  = mix(dryLight, wetLight, uWetness);
+      vec3 colDark   = mix(dryDark,  wetDark,  uWetness);
+
+      float fbmBlend = mix(micro, macro, 0.38);
+      float shade    = mix(0.88, 1.0, fbmBlend);
+      vec3 albedo    = mix(colDark, colLight, isEven) * shade;
+
+      // ── 4. MICRO ROUGHNESS VARIATION (prevents plastic look) ──────────
+      float roughness = mix(0.95, 0.45, uWetness);   // wet turf gets sheen
+      roughness      *= mix(0.92, 1.0, meso);
+
+      // ── 5. YARD LINES IN SHADER (world-space SDF) ─────────────────────
+      // Centre line
+      float centreLine = sdLine(wx, 0.22);
+      // Yard lines: 27.4m, 36.6m, 54.9m from each goal line (x = ±137)
+      float yl1 = sdLine(abs(wx) - (137.0 - 27.4), 0.22);
+      float yl2 = sdLine(abs(wx) - (137.0 - 36.6), 0.22);
+      float yl3 = sdLine(abs(wx) - (137.0 - 54.9), 0.22);
+      // Goal lines
+      float gl  = sdLine(abs(wx) - 137.0, 0.30);
+      // Side board lines
+      float sl  = sdLine(abs(wz) - 73.0,  0.22);
+
+      float allLines = max(max(max(max(centreLine, yl1), max(yl2, yl3)), gl), sl);
+      vec3  lineCol  = vec3(0.952, 0.945, 0.890) * (0.92 + 0.08 * micro);
+      albedo = mix(albedo, lineCol, allLines * 0.94);
+
+      // ── 6. GOAL MOUTH PENALTY ARCS (FIP standard, r ≈ 36m) ───────────
+      // Arc centres are at the goal lines (x = ±137), centred on z = 0
+      float arcDist1 = length(vec2(wx - 137.0, wz)) - 36.0;
+      float arcDist2 = length(vec2(wx + 137.0, wz)) - 36.0;
+      float arcLine  = max(sdLine(arcDist1, 0.22), sdLine(arcDist2, 0.22));
+      // Only draw arc where it falls inside the field bounds
+      float insideField = step(abs(wx), 137.0) * step(abs(wz), 73.0);
+      albedo = mix(albedo, lineCol, arcLine * 0.90 * insideField);
+
+      // ── 7. WIND MICRO-SWAY (normal perturbation, disabled in fast) ────
+      vec3 N = vNormal;
+      if (uSheen > 0.5) {
+        float wx2 = noise(vUv * 50.0 + uTime * vec2(0.28, 0.10)) * 0.038;
+        float wz2 = noise(vUv * 50.0 + uTime * vec2(0.10, 0.24) + 3.7) * 0.038;
+        N = normalize(vNormal + vec3(wx2, 0.0, wz2));
+      }
+
+      // ── 8. PBR LIGHTING (Lambert + specular) ──────────────────────────
+      vec3 L   = normalize(uSunDir);
+      float NdL = max(dot(N, L), 0.0);
+      vec3  V   = normalize(cameraPosition - vWorldPos);
+      vec3  H   = normalize(L + V);
+      float NdH = max(dot(N, H), 0.0);
+
+      // Specular — only on low-roughness (wet) turf
+      float specStr = pow(NdH, 32.0) * (1.0 - roughness) * 0.25;
+
+      // Anisotropic chevron sheen — only Balanced/Rich (uSheen)
+      float sheen = 0.0;
+      if (uSheen > 0.5) {
+        vec3  mowDir = normalize(vec3(0.7071, 0.0, 0.7071));
+        float vDotM  = max(dot(V, mowDir), 0.0);
+        sheen = pow(vDotM, 14.0) * 0.16 * (1.0 - isEven * 0.5);
+      }
+
+      vec3 amb   = albedo * vec3(0.18, 0.22, 0.20);  // sky ambient
+      vec3 color = albedo * uSunColor * NdL
+                 + vec3(specStr + sheen) * uSunColor
+                 + amb;
+
+      // ── 9. EDGE AO (slight darkening near boundary) ───────────────────
+      float edgeAO = smoothstep(0.0, 7.0,
+        min(min(137.0 - abs(wx), 73.0 - abs(wz)), 7.0));
+      color *= mix(0.87, 1.0, edgeAO);
+
+      gl_FragColor = vec4(color, 1.0);
+    }
+  `;
+
+  const fieldMat = new THREE.ShaderMaterial({
+    vertexShader,
+    fragmentShader,
+    uniforms: {
+      uTime:     { value: 0.0 },
+      uSunDir:   { value: new THREE.Vector3(120, 220, 100).normalize() },
+      uSunColor: { value: new THREE.Color(0xfff4e0) },
+      uWetness:  { value: 0.0 },
+      uSheen:    { value: PERF_MODE === 'fast' ? 0.0 : 1.0 },
+    },
+  });
+
+  // Expose for tickScene() uniform updates and weather system
+  window._xixFieldMat = fieldMat;
+
+  const fieldGeo  = new THREE.PlaneGeometry(274, 146, 1, 1);
+  const fieldMesh = new THREE.Mesh(fieldGeo, fieldMat);
+  fieldMesh.rotation.x = -Math.PI / 2;
+  fieldMesh.position.set(0, 0.12, 0);
+  fieldMesh.receiveShadow = true;
+  fieldMesh.name = 'poloField';
+  scene.add(fieldMesh);
+  _terrainMeshes.push(fieldMesh);
+  // Note: yard line boxes removed — rendered in shader above (−8 draw calls)
 }
 
 function addSafetyZone(){
@@ -1028,12 +1231,15 @@ function addSafetyZone(){
   s(plane(11,146,dm,[-142.5,.11,0])); s(plane(11,146,dm,[142.5,.11,0]));
 }
 
-function addYardMarkings(){
-  const lm=new THREE.MeshStandardMaterial({color:0xf8f5e0,roughness:.4});
-  for(const side of[-1,1]) for(const d of[27.4,36.6,54.9])
-    s(box(.5,.05,146,lm,[side*(137-d),.14,0],0,false));
-  const postPositions=[];
-  for(const gx of[-137,137]) for(const pz of[0,-7.3,7.3]) postPositions.push([gx,1.5,pz]);
+function addYardMarkings() {
+  // Yard lines and goal lines are now rendered inside the polo field fragment shader.
+  // Only the physical goal posts remain as geometry (6 posts, 1 instanced draw call).
+  const postPositions = [];
+  for (const gx of [-137, 137]) {
+    for (const pz of [0, -7.3, 7.3]) {
+      postPositions.push([gx, 1.5, pz]);
+    }
+  }
   buildInstancedFencePosts(postPositions);
 }
 
@@ -1570,11 +1776,44 @@ function _createFlatBlock(x,z){
 let _tickFrame=0;
 let _prevElapsed=0;
 
-export function tickScene(elapsed, camera){
+export function tickScene(elapsed, camera) {
   _tickFrame++;
-  
+
+  // ── a. POLO FIELD SHADER UNIFORMS ────────────────────────────────────────
+  if (window._xixFieldMat) {
+    const u = window._xixFieldMat.uniforms;
+    u.uTime.value  = elapsed;
+    u.uSheen.value = (PERF_MODE === 'fast') ? 0.0 : 1.0;
+    // Sync sun direction and colour from the live sun light
+    if (sunLight) {
+      u.uSunColor.value.copy(sunLight.color);
+      u.uSunDir.value.copy(sunLight.position).normalize();
+    }
+    // Wetness from weather state (set by app.js via window._xixWetness)
+    if (window._xixWetness !== undefined) {
+      u.uWetness.value += (window._xixWetness - u.uWetness.value) * 0.04;
+    }
+  }
+
+  // ── b. CAMERA-FOLLOWING SHADOW FRUSTUM (Balanced/Rich, every 30 frames) ──
+  // Keeps shadows sharp around the player instead of across the whole 760m estate.
+  // Uses lerp to avoid any visible shadow pop between updates.
+  if (sunLight && sunLight.castShadow && camera && _tickFrame % 30 === 0) {
+    const cam  = sunLight.shadow.camera;
+    const px   = camera.position.x;
+    const pz   = camera.position.z;
+    const half = PERF_MODE === 'rich' ? 120 : 100;
+    const L = 0.06; // lerp factor — smooth drift, no snap
+    cam.left   += (px - half - cam.left)   * L;
+    cam.right  += (px + half - cam.right)  * L;
+    cam.bottom += (pz - half - cam.bottom) * L;
+    cam.top    += (pz + half - cam.top)    * L;
+    cam.updateProjectionMatrix();
+  }
+
+  // ── EXISTING TICK LOGIC (unchanged) ──────────────────────────────────────
   tickWater(waterMeshes, elapsed);
-  
+
   waterMeshes.forEach(m => {
     if (m.userData.isPlanarWater && m.material.uniforms && m.material.uniforms['time']) {
       m.material.uniforms['time'].value += 1.0 / 60.0;
@@ -1582,17 +1821,17 @@ export function tickScene(elapsed, camera){
   });
 
   tickGrass(camera);
-  
+
   const palmDiv = PERF_SETTINGS[PERF_MODE].palmTickDiv;
   if (_tickFrame % palmDiv === 0) {
     tickPalms(camera);
   }
-  
+
   tickHotspots(elapsed);
-  
+
   const _frameDelta = Math.min(elapsed - (_prevElapsed || 0), 0.033);
   _prevElapsed = elapsed;
-  
+
   tickNPCHorses(_frameDelta);
   if (_tourActive) tickTour(_frameDelta, camera);
 }
