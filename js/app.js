@@ -948,90 +948,132 @@ async function openWorldAt(viewKey) {
       if (VIEWPOINTS[k]) Object.assign(VIEWPOINTS[k], v);
     });
 
-    // ── VILLAS DROPDOWN: rebuild with styled, clickable sub-items ──────────────
-    // The raw data.js sub-items render as unstyled inline text. Replace entirely.
+    // ── VILLAS BUTTON: inject our own replacement after strip renders ──────────
+    // ui.js renders the villas button with broken inline sub-items.
+    // We hide it with CSS and inject our own button directly into #viewpoint-strip.
     setTimeout(() => {
-      const villasWrapper = document.querySelector('.vp-wrapper[data-key="villas"], [data-key="villas"]');
-      const allWrappers = document.querySelectorAll('[class*="vp-wrapper"], [class*="vp-btn"]');
-      
-      // Find the villas button by text content — only direct labels, not parent wrappers
-      allWrappers.forEach(el => {
-        const directText = Array.from(el.childNodes)
-          .filter(n => n.nodeType === Node.TEXT_NODE)
-          .map(n => n.textContent.trim()).join('').toUpperCase();
-        const labelEl = el.querySelector('span, label, [class*="label"], [class*="text"]');
-        const labelText = (labelEl?.textContent || '').trim().toUpperCase();
-        const matchText = directText || labelText;
-        if (matchText.startsWith('VILLAS')) {
-          // Find or create its dropdown
-          let dropdown = el.parentElement?.querySelector('.vp-dropdown');
-          if (!dropdown) { dropdown = el.nextElementSibling; }
-          if (!dropdown) return;
-          
-          // Inject clean CSS for the dropdown
-          if (!document.getElementById('xix-villa-dropdown-css')) {
-            const s = document.createElement('style');
-            s.id = 'xix-villa-dropdown-css';
-            s.textContent = `
-              .vp-dropdown { 
-                display: none; 
-                position: absolute;
-                bottom: 100%;
-                left: 0;
-                background: rgba(6,18,8,0.96);
-                border: 1px solid rgba(201,168,76,0.35);
-                border-radius: 8px 8px 0 0;
-                overflow: hidden;
-                min-width: 160px;
-                z-index: 400;
-                backdrop-filter: blur(10px);
-              }
-              .vp-dropdown.open { display: block !important; }
-              .xix-villa-sub {
-                display: block;
-                width: 100%;
-                padding: 10px 16px;
-                background: none;
-                border: none;
-                border-bottom: 1px solid rgba(255,255,255,0.06);
-                color: rgba(240,236,224,0.85);
-                font-family: Inter, sans-serif;
-                font-size: 11px;
-                font-weight: 500;
-                letter-spacing: .08em;
-                text-align: left;
-                cursor: pointer;
-                transition: background .15s, color .15s;
-              }
-              .xix-villa-sub:last-child { border-bottom: none; }
-              .xix-villa-sub:hover { background: rgba(201,168,76,0.15); color: #C9A84C; }
-            `;
-            document.head.appendChild(s);
-          }
+      const strip = document.getElementById('viewpoint-strip');
+      if (!strip) return;
 
-          // Replace dropdown content with our 4 precise sub-items
-          dropdown.innerHTML = '';
-          const villaSubItems = [
-            { label: 'West Row',  key: 'villa_west'  },
-            { label: 'East Row',  key: 'villa_east'  },
-            { label: 'North Arc', key: 'villa_north' },
-            { label: 'South Arc', key: 'villa_south' },
-          ];
-          villaSubItems.forEach(item => {
-            const btn = document.createElement('button');
-            btn.className = 'xix-villa-sub';
-            btn.textContent = item.label;
-            btn.addEventListener('click', (e) => {
-              e.stopPropagation();
-              dropdown.classList.remove('open');
-              dropdown.style.display = 'none';
-              teleportTo(item.key, null);
-            });
-            dropdown.appendChild(btn);
-          });
-        }
+      // Inject style once
+      if (!document.getElementById('xix-villas-style')) {
+        const st = document.createElement('style');
+        st.id = 'xix-villas-style';
+        st.textContent = `
+          /* Hide the original broken VILLAS button from ui.js */
+          #viewpoint-strip [data-key="villas"],
+          #viewpoint-strip .vp-btn[data-key="villas"],
+          #viewpoint-strip .vp-wrapper[data-key="villas"] {
+            display: none !important;
+          }
+          /* Our replacement */
+          #xix-villas-btn {
+            position: relative;
+            display: inline-flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            padding: 10px 16px;
+            background: rgba(6,18,8,0.85);
+            border: 1px solid rgba(201,168,76,0.35);
+            border-radius: 6px;
+            color: #C9A84C;
+            font-family: Inter, sans-serif;
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: .10em;
+            text-transform: uppercase;
+            cursor: pointer;
+            flex-shrink: 0;
+            min-width: 88px;
+          }
+          #xix-villas-btn svg { width:18px; height:18px; stroke:#C9A84C; fill:none; stroke-width:1.5; }
+          #xix-villas-btn:hover { border-color: rgba(201,168,76,0.7); }
+          #xix-villas-btn.active { border-color: #C9A84C; color: #C9A84C; }
+          #xix-villas-menu {
+            display: none;
+            position: absolute;
+            bottom: calc(100% + 6px);
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(6,18,8,0.97);
+            border: 1px solid rgba(201,168,76,0.4);
+            border-radius: 8px;
+            overflow: hidden;
+            min-width: 148px;
+            z-index: 500;
+            backdrop-filter: blur(12px);
+            box-shadow: 0 -4px 24px rgba(0,0,0,0.5);
+          }
+          #xix-villas-menu.open { display: block; }
+          .xix-vsub {
+            display: block; width: 100%;
+            padding: 11px 18px;
+            background: none; border: none;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+            color: rgba(240,236,224,0.88);
+            font-family: Inter, sans-serif;
+            font-size: 11px; font-weight: 500;
+            letter-spacing: .07em; text-align: left;
+            cursor: pointer; transition: background .15s, color .15s;
+          }
+          .xix-vsub:last-child { border-bottom: none; }
+          .xix-vsub:hover { background: rgba(201,168,76,0.14); color: #C9A84C; }
+        `;
+        document.head.appendChild(st);
+      }
+
+      // Remove stale injection if re-running
+      document.getElementById('xix-villas-btn')?.remove();
+
+      // Build the replacement button
+      const villasBtn = document.createElement('button');
+      villasBtn.id = 'xix-villas-btn';
+      villasBtn.innerHTML = `
+        <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        VILLAS ▾
+        <div id="xix-villas-menu">
+          <button class="xix-vsub" data-vkey="villa_west">West Row</button>
+          <button class="xix-vsub" data-vkey="villa_east">East Row</button>
+          <button class="xix-vsub" data-vkey="villa_north">North Arc</button>
+          <button class="xix-vsub" data-vkey="villa_south">South Arc</button>
+        </div>
+      `;
+
+      // Toggle dropdown
+      villasBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const menu = document.getElementById('xix-villas-menu');
+        menu?.classList.toggle('open');
       });
-    }, 400); // After strip renders
+
+      // Sub-item teleport
+      villasBtn.querySelectorAll('.xix-vsub').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          document.getElementById('xix-villas-menu')?.classList.remove('open');
+          teleportTo(btn.dataset.vkey, null);
+        });
+      });
+
+      // Close when clicking outside
+      document.addEventListener('pointerdown', (e) => {
+        if (!villasBtn.contains(e.target)) {
+          document.getElementById('xix-villas-menu')?.classList.remove('open');
+        }
+      }, { passive: true });
+
+      // Insert into strip — find position relative to STABLES button
+      const stablesEl = [...strip.querySelectorAll('*')]
+        .find(el => el.textContent?.trim().toUpperCase() === 'STABLES');
+      if (stablesEl) {
+        const parent = stablesEl.closest('[class]') || stablesEl.parentElement;
+        strip.insertBefore(villasBtn, parent);
+      } else {
+        strip.appendChild(villasBtn);
+      }
+    }, 500);
 
     sceneReady = true; setLoadingProgress(100);
   }
