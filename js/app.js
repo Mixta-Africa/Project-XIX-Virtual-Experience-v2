@@ -948,132 +948,12 @@ async function openWorldAt(viewKey) {
       if (VIEWPOINTS[k]) Object.assign(VIEWPOINTS[k], v);
     });
 
-    // ── VILLAS BUTTON: inject our own replacement after strip renders ──────────
-    // ui.js renders the villas button with broken inline sub-items.
-    // We hide it with CSS and inject our own button directly into #viewpoint-strip.
-    setTimeout(() => {
-      const strip = document.getElementById('viewpoint-strip');
-      if (!strip) return;
-
-      // Inject style once
-      if (!document.getElementById('xix-villas-style')) {
-        const st = document.createElement('style');
-        st.id = 'xix-villas-style';
-        st.textContent = `
-          /* Hide the original broken VILLAS button from ui.js */
-          #viewpoint-strip [data-key="villas"],
-          #viewpoint-strip .vp-btn[data-key="villas"],
-          #viewpoint-strip .vp-wrapper[data-key="villas"] {
-            display: none !important;
-          }
-          /* Our replacement */
-          #xix-villas-btn {
-            position: relative;
-            display: inline-flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            gap: 4px;
-            padding: 10px 16px;
-            background: rgba(6,18,8,0.85);
-            border: 1px solid rgba(201,168,76,0.35);
-            border-radius: 6px;
-            color: #C9A84C;
-            font-family: Inter, sans-serif;
-            font-size: 10px;
-            font-weight: 600;
-            letter-spacing: .10em;
-            text-transform: uppercase;
-            cursor: pointer;
-            flex-shrink: 0;
-            min-width: 88px;
-          }
-          #xix-villas-btn svg { width:18px; height:18px; stroke:#C9A84C; fill:none; stroke-width:1.5; }
-          #xix-villas-btn:hover { border-color: rgba(201,168,76,0.7); }
-          #xix-villas-btn.active { border-color: #C9A84C; color: #C9A84C; }
-          #xix-villas-menu {
-            display: none;
-            position: absolute;
-            bottom: calc(100% + 6px);
-            left: 50%;
-            transform: translateX(-50%);
-            background: rgba(6,18,8,0.97);
-            border: 1px solid rgba(201,168,76,0.4);
-            border-radius: 8px;
-            overflow: hidden;
-            min-width: 148px;
-            z-index: 500;
-            backdrop-filter: blur(12px);
-            box-shadow: 0 -4px 24px rgba(0,0,0,0.5);
-          }
-          #xix-villas-menu.open { display: block; }
-          .xix-vsub {
-            display: block; width: 100%;
-            padding: 11px 18px;
-            background: none; border: none;
-            border-bottom: 1px solid rgba(255,255,255,0.06);
-            color: rgba(240,236,224,0.88);
-            font-family: Inter, sans-serif;
-            font-size: 11px; font-weight: 500;
-            letter-spacing: .07em; text-align: left;
-            cursor: pointer; transition: background .15s, color .15s;
-          }
-          .xix-vsub:last-child { border-bottom: none; }
-          .xix-vsub:hover { background: rgba(201,168,76,0.14); color: #C9A84C; }
-        `;
-        document.head.appendChild(st);
-      }
-
-      // Remove stale injection if re-running
-      document.getElementById('xix-villas-btn')?.remove();
-
-      // Build the replacement button
-      const villasBtn = document.createElement('button');
-      villasBtn.id = 'xix-villas-btn';
-      villasBtn.innerHTML = `
-        <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-        VILLAS ▾
-        <div id="xix-villas-menu">
-          <button class="xix-vsub" data-vkey="villa_west">West Row</button>
-          <button class="xix-vsub" data-vkey="villa_east">East Row</button>
-          <button class="xix-vsub" data-vkey="villa_north">North Arc</button>
-          <button class="xix-vsub" data-vkey="villa_south">South Arc</button>
-        </div>
-      `;
-
-      // Toggle dropdown
-      villasBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const menu = document.getElementById('xix-villas-menu');
-        menu?.classList.toggle('open');
-      });
-
-      // Sub-item teleport
-      villasBtn.querySelectorAll('.xix-vsub').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          document.getElementById('xix-villas-menu')?.classList.remove('open');
-          teleportTo(btn.dataset.vkey, null);
-        });
-      });
-
-      // Close when clicking outside
-      document.addEventListener('pointerdown', (e) => {
-        if (!villasBtn.contains(e.target)) {
-          document.getElementById('xix-villas-menu')?.classList.remove('open');
-        }
-      }, { passive: true });
-
-      // Insert into strip — find position relative to STABLES button
-      const stablesEl = [...strip.querySelectorAll('*')]
-        .find(el => el.textContent?.trim().toUpperCase() === 'STABLES');
-      if (stablesEl) {
-        const parent = stablesEl.closest('[class]') || stablesEl.parentElement;
-        strip.insertBefore(villasBtn, parent);
-      } else {
-        strip.appendChild(villasBtn);
-      }
-    }, 500);
+    // ── UNIFIED DROPDOWN SYSTEM ───────────────────────────────────────────────
+    // Builds ALL dropdowns (villas strip button + topbar TIME/WEATHER/QUALITY)
+    // using valid HTML structure: <div> wrapper > <button> trigger + <div> menu.
+    // The previous approach nested <button> inside <button>, which the HTML parser
+    // hoists apart — that was the cause of the broken empty menu pane.
+    setTimeout(() => _buildXixDropdowns(), 500);
 
     sceneReady = true; setLoadingProgress(100);
   }
@@ -1093,6 +973,10 @@ async function openWorldAt(viewKey) {
   // Bind TIME / WEATHER / QUALITY / TOUR topbar dropdowns and their sub-buttons.
   // This runs each time the world opens (sceneReady check means it's idempotent).
   _bindTopbarControls();
+
+  // Build all dropdowns now that the overlay (and topbar) are in the DOM.
+  // Idempotent — skips anything already built during scene init.
+  setTimeout(() => _buildXixDropdowns(), 250);
 
   // Initialize the searchable property directory
   injectPropertyDirectory();
@@ -1803,6 +1687,234 @@ function teleportTo(key, vp){
 }
 
 function injectPerfToggle() { /* wired via ui.js or topbar.js */ }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  UNIFIED DROPDOWN SYSTEM
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Builds every dropdown in the experience with VALID HTML structure:
+//      <div class="xix-dd">            ← wrapper (position: relative)
+//        <button class="xix-dd-trigger">  ← the visible button
+//        <div class="xix-dd-menu">        ← the menu (position: absolute)
+//          <button class="xix-dd-item">   ← menu items — siblings, NOT nested
+//
+//  Nesting <button> inside <button> is invalid HTML; browsers hoist the inner
+//  buttons out of the outer one, which silently destroys the menu. That was the
+//  bug behind both the broken villas pane and the dead topbar dropdowns.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function _injectDropdownCSS() {
+  if (document.getElementById('xix-dd-style')) return;
+  const st = document.createElement('style');
+  st.id = 'xix-dd-style';
+  st.textContent = `
+    /* Hide the original broken villas button from ui.js */
+    #viewpoint-strip [data-key="villas"],
+    #viewpoint-strip .vp-btn[data-key="villas"],
+    #viewpoint-strip .vp-wrapper[data-key="villas"] { display: none !important; }
+
+    .xix-dd { position: relative; display: inline-block; flex-shrink: 0; }
+
+    .xix-dd-trigger {
+      display: inline-flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 4px;
+      padding: 10px 16px; min-width: 88px;
+      background: rgba(6,18,8,0.85);
+      border: 1px solid rgba(201,168,76,0.32);
+      border-radius: 6px; color: rgba(240,236,224,0.82);
+      font-family: Inter, sans-serif; font-size: 10px; font-weight: 600;
+      letter-spacing: .10em; text-transform: uppercase;
+      cursor: pointer; transition: border-color .15s, color .15s;
+    }
+    .xix-dd-trigger svg { width:18px; height:18px; stroke:currentColor; fill:none; stroke-width:1.5; }
+    .xix-dd-trigger:hover { border-color: rgba(201,168,76,0.65); color:#C9A84C; }
+    .xix-dd.open .xix-dd-trigger { border-color:#C9A84C; color:#C9A84C; }
+
+    /* Topbar variant — horizontal layout, menu drops DOWN */
+    .xix-dd-topbar .xix-dd-trigger {
+      flex-direction: row; gap: 8px; padding: 11px 18px; min-width: 0;
+    }
+    .xix-dd-topbar .xix-dd-menu { top: calc(100% + 6px); bottom: auto; }
+
+    .xix-dd-menu {
+      display: none; position: absolute;
+      bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+      background: rgba(6,18,8,0.97);
+      border: 1px solid rgba(201,168,76,0.4);
+      border-radius: 8px; overflow: hidden;
+      min-width: 152px; z-index: 9999;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 4px 28px rgba(0,0,0,0.55);
+    }
+    .xix-dd.open .xix-dd-menu { display: block; }
+
+    .xix-dd-item {
+      display: block; width: 100%;
+      padding: 11px 18px;
+      background: none; border: none;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      color: rgba(240,236,224,0.88);
+      font-family: Inter, sans-serif; font-size: 11px; font-weight: 500;
+      letter-spacing: .07em; text-align: left; white-space: nowrap;
+      cursor: pointer; transition: background .15s, color .15s;
+    }
+    .xix-dd-item:last-child { border-bottom: none; }
+    .xix-dd-item:hover  { background: rgba(201,168,76,0.14); color:#C9A84C; }
+    .xix-dd-item.active { color:#C9A84C; background: rgba(201,168,76,0.08); }
+  `;
+  document.head.appendChild(st);
+}
+
+// Build one dropdown. Returns the wrapper element.
+//   opts.id        unique element id
+//   opts.label     button text
+//   opts.icon      optional inline SVG string
+//   opts.topbar    true = horizontal topbar style, menu drops down
+//   opts.items     [{ label, value, onSelect }]
+function _makeDropdown(opts) {
+  const wrap = document.createElement('div');
+  wrap.className = 'xix-dd' + (opts.topbar ? ' xix-dd-topbar' : '');
+  if (opts.id) wrap.id = opts.id;
+
+  const trigger = document.createElement('button');
+  trigger.type = 'button';
+  trigger.className = 'xix-dd-trigger';
+  trigger.innerHTML = (opts.icon || '') + '<span>' + opts.label + ' \u25BE</span>';
+  wrap.appendChild(trigger);
+
+  const menu = document.createElement('div');
+  menu.className = 'xix-dd-menu';
+  wrap.appendChild(menu);   // SIBLING of trigger — never nested inside it
+
+  opts.items.forEach(item => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'xix-dd-item';
+    b.textContent = item.label;
+    b.dataset.value = item.value;
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      wrap.classList.remove('open');
+      menu.querySelectorAll('.xix-dd-item').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      try { item.onSelect && item.onSelect(item.value); }
+      catch (err) { console.warn('[XIX] dropdown action failed:', err); }
+    });
+    menu.appendChild(b);
+  });
+
+  trigger.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const wasOpen = wrap.classList.contains('open');
+    document.querySelectorAll('.xix-dd.open').forEach(d => d.classList.remove('open'));
+    if (!wasOpen) wrap.classList.add('open');
+  });
+
+  return wrap;
+}
+
+// Close any open dropdown when clicking elsewhere (bound once)
+if (!window._xixDDOutsideBound) {
+  window._xixDDOutsideBound = true;
+  document.addEventListener('pointerdown', (e) => {
+    if (!e.target.closest('.xix-dd')) {
+      document.querySelectorAll('.xix-dd.open').forEach(d => d.classList.remove('open'));
+    }
+  }, { passive: true });
+}
+
+function _buildXixDropdowns() {
+  _injectDropdownCSS();
+
+  // ── 1. VILLAS (bottom viewpoint strip) ────────────────────────────────────
+  const strip = document.getElementById('viewpoint-strip');
+  if (strip && !document.getElementById('xix-dd-villas')) {
+    const villas = _makeDropdown({
+      id: 'xix-dd-villas',
+      label: 'Villas',
+      icon: '<svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>',
+      items: [
+        { label: 'West Row',  value: 'villa_west',  onSelect: k => teleportTo(k, null) },
+        { label: 'East Row',  value: 'villa_east',  onSelect: k => teleportTo(k, null) },
+        { label: 'North Arc', value: 'villa_north', onSelect: k => teleportTo(k, null) },
+        { label: 'South Arc', value: 'villa_south', onSelect: k => teleportTo(k, null) },
+      ],
+    });
+    // Insert before STABLES if we can find it, else append
+    const stablesEl = [...strip.children].find(el =>
+      (el.textContent || '').trim().toUpperCase().startsWith('STABLES'));
+    if (stablesEl) strip.insertBefore(villas, stablesEl);
+    else strip.appendChild(villas);
+  }
+
+  // ── 2. TOPBAR: TIME / WEATHER / QUALITY ───────────────────────────────────
+  // Locate the topbar by finding the EXIT or AERIAL button's parent container.
+  const topbarAnchor = [...document.querySelectorAll('button, a, div')]
+    .find(el => (el.textContent || '').trim().toUpperCase() === 'EXIT');
+  const topbar = topbarAnchor ? topbarAnchor.parentElement : null;
+  if (!topbar) { console.warn('[XIX] Topbar not found — dropdowns not injected'); return; }
+
+  // Hide the original dead TIME / WEATHER / QUALITY buttons
+  ['TIME', 'WEATHER', 'QUALITY'].forEach(name => {
+    [...topbar.children].forEach(el => {
+      const t = (el.textContent || '').trim().toUpperCase();
+      if (t === name && !el.classList.contains('xix-dd')) el.style.display = 'none';
+    });
+  });
+
+  const firstChild = topbar.firstElementChild;
+
+  // TIME
+  if (!document.getElementById('xix-dd-time')) {
+    const timeDD = _makeDropdown({
+      id: 'xix-dd-time', label: 'Time', topbar: true,
+      icon: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
+      items: [
+        { label: 'Morning',   value: 'morning',   onSelect: v => { applyTimePreset(v, false); window._dayPauseEnd = performance.now() + 120000; } },
+        { label: 'Afternoon', value: 'afternoon', onSelect: v => { applyTimePreset(v, false); window._dayPauseEnd = performance.now() + 120000; } },
+        { label: 'Sunset',    value: 'sunset',    onSelect: v => { applyTimePreset(v, false); window._dayPauseEnd = performance.now() + 120000; } },
+        { label: 'Night',     value: 'night',     onSelect: v => { applyTimePreset(v, false); window._dayPauseEnd = performance.now() + 120000; } },
+      ],
+    });
+    topbar.insertBefore(timeDD, firstChild);
+  }
+
+  // WEATHER
+  if (!document.getElementById('xix-dd-weather')) {
+    const wxDD = _makeDropdown({
+      id: 'xix-dd-weather', label: 'Weather', topbar: true,
+      icon: '<svg viewBox="0 0 24 24"><path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z"/></svg>',
+      items: [
+        { label: 'Clear',  value: 'clear',  onSelect: v => applyWeather(v) },
+        { label: 'Cloudy', value: 'cloudy', onSelect: v => applyWeather(v) },
+        { label: 'Rain',   value: 'rain',   onSelect: v => applyWeather(v) },
+      ],
+    });
+    topbar.insertBefore(wxDD, firstChild);
+  }
+
+  // QUALITY
+  if (!document.getElementById('xix-dd-quality')) {
+    const qDD = _makeDropdown({
+      id: 'xix-dd-quality', label: 'Quality', topbar: true,
+      icon: '<svg viewBox="0 0 24 24"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>',
+      items: [
+        { label: 'Fast \u2014 mobile',    value: 'fast',     onSelect: v => window.switchPerfMode && window.switchPerfMode(v) },
+        { label: 'Balanced \u2014 laptop',value: 'balanced', onSelect: v => window.switchPerfMode && window.switchPerfMode(v) },
+        { label: 'Rich \u2014 desktop',   value: 'rich',     onSelect: v => window.switchPerfMode && window.switchPerfMode(v) },
+      ],
+    });
+    topbar.insertBefore(qDD, firstChild);
+  }
+
+  // Mark the currently active quality mode
+  const activeMode = (typeof PERF_MODE !== 'undefined') ? PERF_MODE : 'fast';
+  document.querySelectorAll('#xix-dd-quality .xix-dd-item').forEach(b => {
+    if (b.dataset.value === activeMode) b.classList.add('active');
+  });
+
+  console.log('[XIX] Dropdowns built: villas, time, weather, quality');
+}
+window._buildXixDropdowns = _buildXixDropdowns;
 
 // ── Topbar controls — binds TIME, WEATHER, QUALITY, TOUR buttons ─────────────
 // Finds buttons by data-time / data-weather / data-mode attributes and
