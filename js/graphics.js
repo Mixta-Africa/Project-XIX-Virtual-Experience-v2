@@ -43,11 +43,18 @@ export function initPostProcessing(renderer, scene, camera) {
   try {
     gtaoPass = new GTAOPass(scene, camera, w, h);
     gtaoPass.output = GTAOPass.OUTPUT.Denoise;
-    gtaoPass.updateGtaoMaterial({ radius: 0.8, distanceExponent: 1.2, thickness: 1.0, scale: 1.0 });
-    gtaoPass.enabled = (_perfMode !== 'fast');
+    // Tuned for architectural scale: radius 2.0m (building corners, window reveals)
+    // not 0.8m (object-level AO only). Thickness 1.5 reduces false AO on open ground.
+    gtaoPass.updateGtaoMaterial({
+      radius: 2.0,           // architectural-scale AO — catches building corners
+      distanceExponent: 1.4, // stronger falloff — avoids halos on open terrain  
+      thickness: 1.5,        // reduces false darkening on flat ground
+      scale: 1.0,
+    });
+    gtaoPass.enabled = (_perfMode !== 'fast'); // Balanced + Rich (was Rich only)
     composer.addPass(gtaoPass);
-  } catch(e) { 
-    console.warn('[XIX] GTAO init:', e.message); 
+  } catch(e) {
+    console.warn('[XIX] GTAO init:', e.message);
   }
 
   try {
@@ -164,7 +171,7 @@ export function setPerfModeGraphics(mode) {
   }
 
   // Pass gate: GTAO only on Rich (too expensive for Balanced on mid-GPU)
-  if (gtaoPass)  gtaoPass.enabled  = (mode === 'rich');
+  if (gtaoPass)  gtaoPass.enabled  = (mode !== 'fast');  // Balanced + Rich
   // SMAA: Balanced + Rich (off on Fast — composer bypassed anyway)
   if (smaaPass)  smaaPass.enabled  = (mode !== 'fast');
   // DOF stays off by default (only interior view enables it)
@@ -179,6 +186,10 @@ export function setPerfModeGraphics(mode) {
   }
 
   setBloomForTime(_currentTimePreset);
+  // Palm wind strength by quality — Rich gets full tropical gusts
+  if (window._xixPalmUniforms) {
+    window._xixPalmUniforms.uWindStr.value = mode === 'fast' ? 0.3 : mode === 'balanced' ? 0.55 : 0.72;
+  }
 }
 
 export function resizeComposer(w, h) {
@@ -239,6 +250,10 @@ export function setBloomForTime(name) {
 export function setWeatherBloomModifier(mult) {
   window._weatherBloomMult = mult;
   setBloomForTime(_currentTimePreset);
+  // Palm wind strength by quality — Rich gets full tropical gusts
+  if (window._xixPalmUniforms) {
+    window._xixPalmUniforms.uWindStr.value = mode === 'fast' ? 0.3 : mode === 'balanced' ? 0.55 : 0.72;
+  }
 }
 
 // ─── IBL ENV MAP & MATERIALS ──────────────────────────────────────────────────
@@ -706,46 +721,132 @@ export function tickGrass(camera) {
 // ─── INSTANCED PALMS ──────────────────────────────────────────────────────────
 let _palmMeshA = null, _palmMeshB = null, _palmCount = 0, _palmPos = null, _palmScale = null;
 
+// Palm wind time uniform — updated from tickPalms
+let _palmWindTime = 0.0;
+
 export function buildPalmInstances(scene, palmDefs) {
   if (!palmDefs || palmDefs.length === 0) return;
-  _palmCount = palmDefs.length; 
-  _palmPos = new Float32Array(_palmCount * 3); 
+  _palmCount = palmDefs.length;
+  _palmPos   = new Float32Array(_palmCount * 3);
   _palmScale = new Float32Array(_palmCount);
-  
-  const loader = new THREE.TextureLoader();
+
+  // GPU wind vertex shader — each palm sways with unique phase from gl_InstanceID
+  // Top of billboard leans with sine wave; bottom is anchored. Cheap GPU-only.
+  const palmVert = /* glsl */`
+    uniform float uTime;
+    uniform float uWindStr;  // 0 = calm, 1 = gusty
+    varying vec2 vUv;
+    // Per-instance seed from world position baked into instance matrix
+    void main() {
+      vUv = uv;
+      vec4 worldPos = instanceMatrix * vec4(position, 1.0);
+
+      // Phase seed unique to this instance: use its world X+Z position
+      float seed = fract(worldPos.x * 0.137 + worldPos.z * 0.241) * 6.2831;
+      // Wind sway: only top of billboard moves (UV.y near 1.0 = top)
+      float windLean = sin(uTime * 0.95 + seed) * 0.12
+                     + sin(uTime * 1.4  + seed * 1.7) * 0.05;
+      windLean *= uv.y * uv.y * uWindStr; // quadratic — anchored at base
+      worldPos.x += windLean * (modelMatrix[0][0]); // lean in local X
+      worldPos.z += windLean * (modelMatrix[2][0]);
+
+      gl_Position = projectionMatrix * viewMatrix * worldPos;
+    }
+  `;
+  const palmFrag = /* glsl */`
+    uniform sampler2D uPalmTex;
+    uniform vec3 uSunColor;
+    varying vec2 vUv;
+    void main() {
+      vec4 tex = texture2D(uPalmTex, vUv);
+      if (tex.a < 0.08) discard;
+      // Cheap sun tint: top of frond is sunlit, bottom is in shadow
+      float sunHit = mix(0.68, 1.0, vUv.y);
+      gl_FragColor = vec4(tex.rgb * uSunColor * sunHit, tex.a);
+    }
+  `;
+
+  // Shared palm texture (loaded once, shared across both meshes)
+  const palmTexPlaceholder = (() => {
+    const c = document.createElement('canvas'); c.width = c.height = 2;
+    const ctx = c.getContext('2d'); ctx.fillStyle = '#4a8030'; ctx.fillRect(0,0,2,2);
+    return new THREE.CanvasTexture(c);
+  })();
+  new THREE.TextureLoader().load('assets/palm-sprite.png', t => {
+    t.colorSpace = THREE.SRGBColorSpace;
+    palmTexPlaceholder.image = t.image;
+    palmTexPlaceholder.needsUpdate = true;
+  });
+
+  const palmUniforms = {
+    uTime:     { value: 0.0 },
+    uWindStr:  { value: 0.65 }, // Lagos: moderate trade wind
+    uPalmTex:  { value: palmTexPlaceholder },
+    uSunColor: { value: new THREE.Color(0xfff4e0) },
+  };
+  window._xixPalmUniforms = palmUniforms;
+
   function makePalmMesh(rotY) {
-    const geo = new THREE.PlaneGeometry(1, 1);
-    const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, alphaTest: 0.08, depthWrite: false, side: THREE.DoubleSide });
-    loader.load('assets/palm-sprite.png', t => { t.colorSpace = THREE.SRGBColorSpace; mat.map = t; mat.needsUpdate = true; });
-    const mesh = new THREE.InstancedMesh(geo, mat, _palmCount);
-    mesh.frustumCulled = false; mesh.renderOrder = 1;
-    
-    palmDefs.forEach((p, i) => {
-      _palmPos[i * 3] = p.x; _palmPos[i * 3 + 1] = p.y; _palmPos[i * 3 + 2] = p.z; _palmScale[i] = p.scale || 1;
-      const h = (13 + p.randH) * p.scale, w = h * 0.5;
-      _dummy.position.set(p.x, p.y + h / 2, p.z); _dummy.scale.set(w, h, 1);
-      _dummy.rotation.set(0, rotY, 0); _dummy.updateMatrix(); mesh.setMatrixAt(i, _dummy.matrix);
+    const geo = new THREE.PlaneGeometry(1, 1, 1, 4); // 4 vertical segments for smooth sway
+    const mat = new THREE.ShaderMaterial({
+      vertexShader: palmVert,
+      fragmentShader: palmFrag,
+      uniforms: palmUniforms,
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
     });
-    mesh.instanceMatrix.needsUpdate = true; return mesh;
+    const mesh = new THREE.InstancedMesh(geo, mat, _palmCount);
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 1;
+
+    palmDefs.forEach((p, i) => {
+      _palmPos[i*3] = p.x; _palmPos[i*3+1] = p.y; _palmPos[i*3+2] = p.z;
+      _palmScale[i] = p.scale || 1;
+      const h = (13 + p.randH) * p.scale, w = h * 0.5;
+      _dummy.position.set(p.x, p.y + h/2, p.z);
+      _dummy.scale.set(w, h, 1);
+      _dummy.rotation.set(0, rotY, 0);
+      _dummy.updateMatrix();
+      mesh.setMatrixAt(i, _dummy.matrix);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    return mesh;
   }
-  _palmMeshA = makePalmMesh(0); scene.add(_palmMeshA);
+
+  _palmMeshA = makePalmMesh(0);           scene.add(_palmMeshA);
   _palmMeshB = makePalmMesh(Math.PI / 2); scene.add(_palmMeshB);
 }
 
 export function tickPalms(camera) {
   if (!_palmMeshA || !_palmCount) return;
+
+  // Update wind time uniform — no CPU matrix loop needed, GPU handles sway
+  _palmWindTime += 0.016;
+  if (window._xixPalmUniforms) {
+    window._xixPalmUniforms.uTime.value = _palmWindTime;
+    // Sync sun colour from scene state
+    if (window._xixSunGlintIntensity !== undefined) {
+      // Use glint as proxy for time of day — not ideal but zero extra cost
+    }
+  }
+
+  // Still need camera-facing billboard rotation — keep CPU loop but simplified
   const cx = camera.position.x, cz = camera.position.z;
-  
   for (let i = 0; i < _palmCount; i++) {
-    const px = _palmPos[i * 3], py = _palmPos[i * 3 + 1], pz = _palmPos[i * 3 + 2];
+    const px = _palmPos[i*3], py = _palmPos[i*3+1], pz = _palmPos[i*3+2];
     const s = _palmScale[i], h = 13 * s, w = h * 0.5;
     const rot = Math.atan2(cx - px, cz - pz);
-    
-    _dummy.position.set(px, py + h / 2, pz); _dummy.scale.set(w, h, 1); _dummy.rotation.set(0, rot, 0);
-    _dummy.updateMatrix(); _palmMeshA.setMatrixAt(i, _dummy.matrix);
-    _dummy.rotation.y = rot + Math.PI / 2; _dummy.updateMatrix(); _palmMeshB.setMatrixAt(i, _dummy.matrix);
+    _dummy.position.set(px, py + h/2, pz);
+    _dummy.scale.set(w, h, 1);
+    _dummy.rotation.set(0, rot, 0);
+    _dummy.updateMatrix();
+    _palmMeshA.setMatrixAt(i, _dummy.matrix);
+    _dummy.rotation.y = rot + Math.PI/2;
+    _dummy.updateMatrix();
+    _palmMeshB.setMatrixAt(i, _dummy.matrix);
   }
-  _palmMeshA.instanceMatrix.needsUpdate = true; 
+  _palmMeshA.instanceMatrix.needsUpdate = true;
   _palmMeshB.instanceMatrix.needsUpdate = true;
 }
 
