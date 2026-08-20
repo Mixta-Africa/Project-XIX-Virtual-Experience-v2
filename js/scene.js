@@ -1314,6 +1314,7 @@ function addPoloField() {
     varying vec2 vUv;
     varying vec3 vWorldPos;
     varying vec3 vNormal;
+    varying float vBladeTop;
 
     // ── Noise helpers (from realism-upgrade.js — 5-octave FBM) ───────────
     float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
