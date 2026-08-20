@@ -161,10 +161,12 @@ function applyWeather(w) {
     sc.fog.density = (w === 'clear') ? 0.000008 : (w === 'cloudy' ? 0.00035 : 0.00085);
   }
 
-  // Drive polo field wetness shader uniform (0 = dry, 1 = soaked)
-  // tickScene() lerps smoothly toward this value — no hard snap
+  // Drive polo field + lake wetness shader uniform (0 = dry, 1 = soaked)
+  // Both lerp smoothly toward this value in tickScene — no harsh snap
   const wetnessMap = { clear: 0.0, cloudy: 0.2, rain: 0.85 };
-  if (typeof setFieldWetness === 'function') setFieldWetness(wetnessMap[w] || 0.0);
+  const wetnessVal = wetnessMap[w] || 0.0;
+  if (typeof setFieldWetness === 'function') setFieldWetness(wetnessVal);
+  // Lake: rain makes it darker and choppier — same uniform path via window._xixWetness
 
   if (typeof setWeatherBloomModifier === 'function') setWeatherBloomModifier(bloomMult);
   if (_lastDayApplied) applyTimePreset(_lastDayApplied, true);
