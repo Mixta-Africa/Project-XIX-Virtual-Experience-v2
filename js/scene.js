@@ -15,6 +15,7 @@ import {
   buildPalmInstances, tickPalms,
   setPerfModeGraphics, setBloomForTime, setSkyForTime, createAtmosphericSky,
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
+  loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
 } from "./graphics.js";
 
@@ -771,10 +772,31 @@ export function initScene(canvas) {
 
   const { skyObj, sun, skyUniforms } = createAtmosphericSky(scene, renderer);
   _skyObj = skyObj; _skySun = sun; _skyUniforms = skyUniforms;
+  window._xixSkyObj = skyObj;
   setSkyForTime(_skyUniforms, _skySun, sunLight, 'afternoon');
 
+  // ── HDRI IBL — async, non-blocking ──────────────────────────────────────
+  // The HDR file loads in the background. Scene renders immediately.
+  // Once baked, HDRI replaces sky-capture IBL on every PBR material.
+  // All four time presets are driven by intensity/tint modulation — one file.
+  loadHDRI(renderer, scene, (envMap) => {
+    scene.traverse(obj => {
+      if (!obj.isMesh || !obj.material) return;
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      mats.forEach(m => {
+        if (m.isMeshStandardMaterial) { m.envMap = envMap; m.needsUpdate = true; }
+      });
+    });
+    applyHDRITimeModulation(window._currentTimeOfDay || 'afternoon', scene);
+    window._hdriReady = true;
+    console.log('[XIX] HDRI IBL active');
+  });
+
+  // Sky PMREM fallback — fires only if HDRI hasn't loaded within 4 seconds
   requestAnimationFrame(() => requestAnimationFrame(() => {
-    buildEnvMapFromSky(renderer, scene, skyObj);
+    if (!window._hdriReady) buildEnvMapFromSky(renderer, scene, skyObj);
+    // Retry fallback after 4s
+    setTimeout(() => { if (!window._hdriReady) buildEnvMapFromSky(renderer, scene, skyObj); }, 4000);
   }));
 
   // ── Ground + field always first — visible within frame 1 ──
@@ -829,9 +851,10 @@ export function updateSkyForTime(timeName) {
   updateNightLights(timeName);
   updateBuildingNightGlow(timeName);
 
-  // Refresh IBL env map from the updated sky — Balanced/Rich only
-  // Captures the new sky colour (warm sunset, blue morning) into the PMREM cube.
-  // Glass and metal surfaces will reflect the correct time-of-day sky after 800ms.
+  // HDRI time modulation — adjusts IBL intensity for this time of day (instant, no re-bake)
+  window._currentTimeOfDay = timeName;
+  applyHDRITimeModulation(timeName, scene);
+  // Sky PMREM re-capture only fires if HDRI hasn't loaded (scheduleEnvMapRefresh is a no-op when HDRI active)
   if (PERF_MODE !== 'fast' && renderer && scene && _skyObj) {
     scheduleEnvMapRefresh(renderer, scene, _skyObj);
   }
