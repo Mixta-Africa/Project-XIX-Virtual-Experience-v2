@@ -954,9 +954,15 @@ async function openWorldAt(viewKey) {
       const villasWrapper = document.querySelector('.vp-wrapper[data-key="villas"], [data-key="villas"]');
       const allWrappers = document.querySelectorAll('[class*="vp-wrapper"], [class*="vp-btn"]');
       
-      // Find the villas button by text content
+      // Find the villas button by text content — only direct labels, not parent wrappers
       allWrappers.forEach(el => {
-        if (el.textContent && el.textContent.trim().toUpperCase().startsWith('VILLAS')) {
+        const directText = Array.from(el.childNodes)
+          .filter(n => n.nodeType === Node.TEXT_NODE)
+          .map(n => n.textContent.trim()).join('').toUpperCase();
+        const labelEl = el.querySelector('span, label, [class*="label"], [class*="text"]');
+        const labelText = (labelEl?.textContent || '').trim().toUpperCase();
+        const matchText = directText || labelText;
+        if (matchText.startsWith('VILLAS')) {
           // Find or create its dropdown
           let dropdown = el.parentElement?.querySelector('.vp-dropdown');
           if (!dropdown) { dropdown = el.nextElementSibling; }
@@ -1040,6 +1046,11 @@ async function openWorldAt(viewKey) {
 
   // Phase 4: Mount persistent sales badges once the world opens
   setTimeout(() => buildVillaStatusOverlays(), 100);
+
+  // ── TOPBAR CONTROLS BINDING ──────────────────────────────────────────────────
+  // Bind TIME / WEATHER / QUALITY / TOUR topbar dropdowns and their sub-buttons.
+  // This runs each time the world opens (sceneReady check means it's idempotent).
+  _bindTopbarControls();
 
   // Initialize the searchable property directory
   injectPropertyDirectory();
@@ -1750,6 +1761,102 @@ function teleportTo(key, vp){
 }
 
 function injectPerfToggle() { /* wired via ui.js or topbar.js */ }
+
+// ── Topbar controls — binds TIME, WEATHER, QUALITY, TOUR buttons ─────────────
+// Finds buttons by data-time / data-weather / data-mode attributes and
+// wires them to the correct window functions. Also opens dropdown menus.
+function _bindTopbarControls() {
+  // Prevent double-binding
+  if (window._topbarBound) return;
+  window._topbarBound = true;
+
+  // TIME buttons: data-time="morning|afternoon|sunset|night"
+  document.querySelectorAll('[data-time]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const t = btn.dataset.time;
+      if (t && typeof applyTimePreset === 'function') {
+        applyTimePreset(t, false);
+        // Pause auto-cycle for 2 minutes after manual selection
+        window._dayPauseEnd = performance.now() + 120_000;
+      }
+    });
+  });
+
+  // WEATHER buttons: data-weather="clear|cloudy|rain"
+  document.querySelectorAll('[data-weather]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const w = btn.dataset.weather;
+      if (w && typeof applyWeather === 'function') applyWeather(w);
+    });
+  });
+
+  // QUALITY buttons: data-mode="fast|balanced|rich"  
+  document.querySelectorAll('[data-mode]').forEach(btn => {
+    // Skip walk/aerial/ride mode buttons (they have data-mode too)
+    if (btn.classList.contains('move-mode-btn')) return;
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const m = btn.dataset.mode;
+      if (m && ['fast','balanced','rich'].includes(m)) {
+        if (typeof window.switchPerfMode === 'function') window.switchPerfMode(m);
+      }
+    });
+  });
+
+  // TOUR button
+  document.querySelectorAll('[data-action="tour"], .btn-tour, #btn-tour').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (typeof startTour === 'function') {
+        startTour(() => {
+          const cam = typeof getCamera === 'function' ? getCamera() : null;
+          if (!cam) return { pos:[0,3.1,0], yaw:0, pitch:0 };
+          return { pos:[cam.position.x, cam.position.y, cam.position.z], yaw:typeof getYaw==='function'?getYaw():0, pitch:0 };
+        }, (pos, yaw, pitch) => {
+          if (typeof setView === 'function') setView(pos, yaw, pitch || 0);
+        });
+      }
+    });
+  });
+
+  // Topbar dropdown OPEN: clicking the parent button toggles the menu
+  // Matches buttons that contain a dropdown-menu sibling
+  document.querySelectorAll('.topbar-dropdown').forEach(wrapper => {
+    const trigger = wrapper.querySelector('button, [role="button"]');
+    const menu    = wrapper.querySelector('.topbar-dropdown-menu');
+    if (!trigger || !menu) return;
+    trigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isOpen = menu.classList.contains('open');
+      // Close all menus first
+      document.querySelectorAll('.topbar-dropdown-menu').forEach(m => m.classList.remove('open'));
+      // Toggle this one
+      if (!isOpen) menu.classList.add('open');
+    });
+  });
+
+  // wx-time-btn / wx-weather-btn fallback (class-based binding from HTML)
+  document.querySelectorAll('.wx-time-btn').forEach(btn => {
+    if (btn.dataset.bound) return; btn.dataset.bound = '1';
+    btn.addEventListener('click', () => {
+      if (typeof applyTimePreset === 'function') applyTimePreset(btn.dataset.time, false);
+    });
+  });
+  document.querySelectorAll('.wx-weather-btn').forEach(btn => {
+    if (btn.dataset.bound) return; btn.dataset.bound = '1';
+    btn.addEventListener('click', () => {
+      if (typeof applyWeather === 'function') applyWeather(btn.dataset.weather);
+    });
+  });
+  document.querySelectorAll('.perf-btn').forEach(btn => {
+    if (btn.dataset.bound) return; btn.dataset.bound = '1';
+    btn.addEventListener('click', () => {
+      if (typeof window.switchPerfMode === 'function') window.switchPerfMode(btn.dataset.mode);
+    });
+  });
+}
 function fixTopbarDropdowns() { /* touch fix — no-op if handled in HTML */ }
 
 //           EXIT
@@ -2118,6 +2225,11 @@ document.addEventListener("DOMContentLoaded", () => {
       display: none !important; 
       opacity: 0 !important; 
       pointer-events: none !important;
+    }
+    /* Hide joystick and sprint on non-touch devices via CSS media query */
+    @media (hover: hover) and (pointer: fine) {
+      #joystick-container, #joystick, .joystick-wrapper,
+      #sprint-btn-mobile { display: none !important; }
     }
   `;
   document.head.appendChild(cleanupCss);
