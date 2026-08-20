@@ -1231,25 +1231,73 @@ function _makeMicroTexture(col1, col2, planeW, planeD) {
 }
 
 function addGrassRing(){
-  const count = PERF_MODE==='fast' ? 80 : 200;
+  // Billboard grass removed from polo field edges — caused thin rectangle artifacts
+  // when tickGrass() was bypassed. GLSL shader handles the full polo surface.
+  // Perimeter billboard grass only (outside pitch) in Balanced/Rich.
+  if (PERF_MODE === 'fast') return;
+  const count = PERF_MODE === 'rich' ? 600 : 300;
   const allCards = [
-    ...addGrassField(0,-115,140,12,count), ...addGrassField(0,115,140,12,count),
-    ...addGrassField(-165,0,12,90,count/2), ...addGrassField(165,0,12,90,count/2),
+    ...addGrassField(-260, 0, 55, 70, count),
+    ...addGrassField( 260, 0, 55, 70, count),
+    ...addGrassField(0, -185, 100, 25, Math.floor(count/2)),
   ];
   commitGrass(scene, allCards);
 }
 
 function addPoloField() {
-  // ─── Vertex shader — passes world position and UV ───────────────────────
+  // ─── Vertex shader — blade geometry displacement ───────────────────────
   const vertexShader = /* glsl */`
-    varying vec2 vUv;
-    varying vec3 vWorldPos;
-    varying vec3 vNormal;
-    void main() {
-      vUv       = uv;
-      vWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;
-      vNormal   = normalize(normalMatrix * normal);
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    uniform float uTime;
+    uniform float uBladeStr;
+    varying vec2  vUv;
+    varying vec3  vWorldPos;
+    varying vec3  vNormal;
+    varying float vBladeTop;
+
+    float hashv(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+
+    void main(){
+      vUv = uv;
+      vec3 pos = position;
+
+      // World cell: one unique blade per ~1.25m²
+      vec2 cell  = floor(pos.xy / 1.25);
+      float seed = hashv(cell);
+      float seed2= hashv(cell + vec2(3.7, 8.1));
+
+      // Blade tip weight: in PlaneGeometry pos.y goes -0.5→+0.5 per segment
+      // We remap so the "top" of each local quad = 1.0
+      float stripV   = fract(pos.y / 1.25 + 0.5);  // 0=base 1=tip within each blade strip
+      vBladeTop = stripV * stripV;                   // quadratic — sharper at tip
+
+      if(uBladeStr > 0.05){
+        float bladeH   = (seed  * 0.10 + 0.04) * uBladeStr;  // 4–14cm height
+        float leanAng  = seed2 * 6.2831;
+        float leanAmt  = (seed2 * 0.4 + 0.2) * 0.06 * uBladeStr;
+
+        // Vertical displacement (Z because plane is XY before rotation)
+        pos.z += bladeH * stripV;
+
+        // Lean: tips shift in a unique XY direction
+        pos.x += cos(leanAng) * leanAmt * stripV;
+        pos.y += sin(leanAng) * leanAmt * stripV;
+
+        // Wind: tips sway with time + per-blade phase
+        float wind = sin(uTime * 1.15 + seed * 6.28 + pos.x * 0.25) * 0.018
+                   + sin(uTime * 0.72 + seed2 * 3.14) * 0.009;
+        pos.x += wind * stripV;
+
+        // Tilted normal follows lean direction
+        vec3 N = normalize(vec3(-cos(leanAng)*leanAmt*3.0,
+                                -sin(leanAng)*leanAmt*3.0,
+                                 1.0));
+        vNormal = normalize(normalMatrix * N);
+      } else {
+        vNormal = normalize(normalMatrix * vec3(0.0, 0.0, 1.0));
+      }
+
+      vWorldPos   = (modelMatrix * vec4(pos, 1.0)).xyz;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
     }
   `;
 
@@ -1345,13 +1393,12 @@ function addPoloField() {
       float insideField = step(abs(wx), 137.0) * step(abs(wz), 73.0);
       albedo = mix(albedo, lineCol, arcLine * 0.90 * insideField);
 
-      // ── 7. WIND MICRO-SWAY (normal perturbation, disabled in fast) ────
+      // ── 7. BLADE TIP BRIGHTENING ─────────────────────────────────────
+      // Blade tips catch sub-surface scatter — bright fresh green at tip, dark at base
+      float tipBright = vBladeTop * vBladeTop * 0.30;
+      // Light band blades are brighter at tip; dark band slightly less so
+      albedo *= (1.0 + tipBright * (0.55 + isEven * 0.20));
       vec3 N = vNormal;
-      if (uSheen > 0.5) {
-        float wx2 = noise(vUv * 50.0 + uTime * vec2(0.28, 0.10)) * 0.038;
-        float wz2 = noise(vUv * 50.0 + uTime * vec2(0.10, 0.24) + 3.7) * 0.038;
-        N = normalize(vNormal + vec3(wx2, 0.0, wz2));
-      }
 
       // ── 8. PBR LIGHTING (Lambert + specular) ──────────────────────────
       vec3 L   = normalize(uSunDir);
@@ -1400,13 +1447,18 @@ function addPoloField() {
       uSunColor: { value: new THREE.Color(0xfff4e0) },
       uWetness:  { value: 0.0 },
       uSheen:    { value: PERF_MODE === 'fast' ? 0.0 : 1.0 },
+      uBladeStr: { value: PERF_MODE === 'fast' ? 0.0 : 1.0 },
     },
   });
 
   // Expose for tickScene() uniform updates and weather system
   window._xixFieldMat = fieldMat;
 
-  const fieldGeo  = new THREE.PlaneGeometry(274, 146, 1, 1);
+  // High-segment geometry — vertex shader can displace individual blade positions
+  // Fast: 64×34 (2,176 verts), Balanced: 128×68 (8,704), Rich: 182×97 (17,654)
+  const segsX = PERF_MODE === 'fast' ? 64  : PERF_MODE === 'balanced' ? 128 : 182;
+  const segsZ = PERF_MODE === 'fast' ? 34  : PERF_MODE === 'balanced' ?  68 :  97;
+  const fieldGeo  = new THREE.PlaneGeometry(274, 146, segsX, segsZ);
   const fieldMesh = new THREE.Mesh(fieldGeo, fieldMat);
   fieldMesh.rotation.x = -Math.PI / 2;
   fieldMesh.position.set(0, 0.12, 0);
@@ -2097,7 +2149,8 @@ export function tickScene(elapsed, camera) {
   if (window._xixFieldMat) {
     const u = window._xixFieldMat.uniforms;
     u.uTime.value  = elapsed;
-    u.uSheen.value = (PERF_MODE === 'fast') ? 0.0 : 1.0;
+    u.uSheen.value    = (PERF_MODE === 'fast') ? 0.0 : 1.0;
+    u.uBladeStr.value = (PERF_MODE === 'fast') ? 0.0 : 1.0;
     // Sync sun direction and colour from the live sun light
     if (sunLight) {
       u.uSunColor.value.copy(sunLight.color);
