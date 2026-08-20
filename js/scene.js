@@ -1318,6 +1318,11 @@ function addPoloField() {
     uniform vec3  uSunColor;
     uniform float uWetness;   // 0 = dry, 1 = wet (rain weather)
     uniform float uSheen;     // 0 = fast (off), 1 = balanced/rich
+    uniform sampler2D uGrassCol;
+    uniform sampler2D uGrassNrm;
+    uniform sampler2D uGrassRgh;
+    uniform sampler2D uGrassAO;
+    uniform float uHasTex;    // 1.0 when colour + normal are loaded
 
     varying vec2 vUv;
     varying vec3 vWorldPos;
@@ -1402,12 +1407,58 @@ function addPoloField() {
       float insideField = step(abs(wx), 137.0) * step(abs(wz), 73.0);
       albedo = mix(albedo, lineCol, arcLine * 0.90 * insideField);
 
-      // ── 7. BLADE TIP BRIGHTENING ─────────────────────────────────────
-      // Blade tips catch sub-surface scatter — bright fresh green at tip, dark at base
+      // ── 7. BLADE DETAIL ───────────────────────────────────────────────
+      // (a) PHOTOGRAPHIC TURF — ambientCG Grass004
+      //     Sampled at two scales with an offset so the 3.9m tile never reads
+      //     as a repeating grid. We keep OUR chevron mow colour and take the
+      //     photo's *detail* (luminance + normal), which is what sells blades.
+      vec3  turfN = vec3(0.0, 0.0, 1.0);
+      float turfAO = 1.0;
+      if (uHasTex > 0.5) {
+        vec2 uvA = vUv;
+        vec2 uvB = vUv * 2.63 + vec2(0.41, 0.17);
+
+        vec3 cA = texture2D(uGrassCol, uvA).rgb;
+        vec3 cB = texture2D(uGrassCol, uvB).rgb;
+        vec3 turfCol = mix(cA, cB, 0.38);
+
+        // Luminance detail modulates our mow-stripe albedo
+        float lum = dot(turfCol, vec3(0.299, 0.587, 0.114));
+        albedo *= (0.58 + lum * 0.92);
+        // Then blend a little of the real hue back in for authenticity
+        albedo = mix(albedo, albedo * turfCol * 2.25, 0.34);
+
+        // Normal map — this is what makes individual blades catch light
+        vec3 nA = texture2D(uGrassNrm, uvA).rgb * 2.0 - 1.0;
+        vec3 nB = texture2D(uGrassNrm, uvB).rgb * 2.0 - 1.0;
+        turfN = normalize(mix(nA, nB, 0.38));
+
+        // Roughness map — wet blades vs dry blades vary across the surface
+        float rTex = texture2D(uGrassRgh, uvA).r;
+        roughness = mix(roughness, roughness * (0.72 + rTex * 0.56), 0.65);
+
+        // AO map — darkens the gaps between blade clumps
+        turfAO = mix(1.0, texture2D(uGrassAO, uvA).r, 0.55);
+        albedo *= turfAO;
+      }
+
+      // (b) Procedural blade streaks — carry the look when no texture is present,
+      //     and add sub-texel variation on top of it when there is one.
+      float bladeNoise  = noise(vec2(wx * 7.5, wz * 7.5));
+      float bladeStreak = noise(vec2(wx * 26.0 + wz * 4.0, wz * 3.0));
+      float bladeDetail = (bladeNoise * 0.55 + bladeStreak * 0.45);
+      albedo *= mix(0.80 + bladeDetail * 0.40, 0.92 + bladeDetail * 0.16, uHasTex);
+
+      // (c) Tip brightening from the vertex blade displacement
       float tipBright = vBladeTop * vBladeTop * 0.30;
-      // Light band blades are brighter at tip; dark band slightly less so
       albedo *= (1.0 + tipBright * (0.55 + isEven * 0.20));
+
+      // Combine the geometric blade normal with the photographic turf normal.
+      // Tangent space here is effectively world XZ since the pitch is flat.
       vec3 N = vNormal;
+      if (uHasTex > 0.5) {
+        N = normalize(vNormal + vec3(turfN.x, 0.0, turfN.y) * 0.85);
+      }
 
       // ── 8. PBR LIGHTING (Lambert + specular) ──────────────────────────
       vec3 L   = normalize(uSunDir);
@@ -1457,14 +1508,62 @@ function addPoloField() {
       uWetness:  { value: 0.0 },
       uSheen:    { value: PERF_MODE === 'fast' ? 0.0 : 1.0 },
       uBladeStr: { value: PERF_MODE === 'fast' ? 0.0 : 1.0 },
+      uGrassCol:  { value: null },  // ambientCG Grass004 — colour
+      uGrassNrm:  { value: null },  // normal (GL convention)
+      uGrassRgh:  { value: null },  // roughness
+      uGrassAO:   { value: null },  // ambient occlusion
+      uHasTex:    { value: 0.0 },   // 1.0 once colour + normal have loaded
     },
   });
 
   // Expose for tickScene() uniform updates and weather system
   window._xixFieldMat = fieldMat;
 
-  // High-segment geometry — vertex shader can displace individual blade positions
-  // Fast: 64×34 (2,176 verts), Balanced: 128×68 (8,704), Rich: 182×97 (17,654)
+  // ── REAL TURF TEXTURES (ambientCG Grass004, web-optimised) ───────────────
+  //  assets/textures/grass-color.jpg      1024²  ~284KB
+  //  assets/textures/grass-normal.jpg     1024²  ~293KB   ← blade relief
+  //  assets/textures/grass-roughness.jpg   512²   ~56KB
+  //  assets/textures/grass-ao.jpg          512²   ~64KB
+  //
+  //  Tiled 70×38 across the 274×146m pitch ≈ one 3.9m tile — the scale real
+  //  mown turf reads at from standing height. Colour and normal are required
+  //  for uHasTex to flip on; roughness and AO are progressive enhancements.
+  //  Everything degrades to the procedural shader if the files are absent.
+  (function loadTurf() {
+    const L = new THREE.TextureLoader();
+    const REPEAT_X = 70, REPEAT_Y = 38;
+    const setup = (t, srgb) => {
+      if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.repeat.set(REPEAT_X, REPEAT_Y);
+      t.anisotropy = PERF_MODE === 'rich' ? 16 : PERF_MODE === 'balanced' ? 8 : 4;
+      t.generateMipmaps = true;
+      t.minFilter = THREE.LinearMipmapLinearFilter;
+      return t;
+    };
+    let got = 0;
+    const flag = () => { if (++got >= 2) fieldMat.uniforms.uHasTex.value = 1.0; };
+
+    L.load('assets/textures/grass-color.jpg',
+      t => { fieldMat.uniforms.uGrassCol.value = setup(t, true);  flag();
+             console.log('[XIX] turf colour map loaded'); },
+      undefined,
+      () => console.log('[XIX] no grass-color.jpg — procedural turf only'));
+
+    L.load('assets/textures/grass-normal.jpg',
+      t => { fieldMat.uniforms.uGrassNrm.value = setup(t, false); flag();
+             console.log('[XIX] turf normal map loaded'); },
+      undefined, () => {});
+
+    L.load('assets/textures/grass-roughness.jpg',
+      t => { fieldMat.uniforms.uGrassRgh.value = setup(t, false); },
+      undefined, () => {});
+
+    L.load('assets/textures/grass-ao.jpg',
+      t => { fieldMat.uniforms.uGrassAO.value = setup(t, false); },
+      undefined, () => {});
+  })();
+
   const segsX = PERF_MODE === 'fast' ? 64  : PERF_MODE === 'balanced' ? 128 : 182;
   const segsZ = PERF_MODE === 'fast' ? 34  : PERF_MODE === 'balanced' ?  68 :  97;
   const fieldGeo  = new THREE.PlaneGeometry(274, 146, segsX, segsZ);
@@ -1649,14 +1748,25 @@ function addLake() {
       float skyMix = fresnel * 0.72;
       vec3 finalColor = mix(waterColor, uSkyColor * 0.75, skyMix);
 
-      // Sun specular: sharp highlight from the sun disc
-      float sunSpec = pow(max(dot(reflected, L), 0.0), 220.0) * 2.5;
+      // ── Sun specular — CLAMPED ────────────────────────────────────────
+      // Previously `pow(..., 220.0) * 2.5` produced values far above 1.0 across
+      // a wide band of the surface. Bloom then picked that up and smeared it
+      // into a harsh white glare over the whole scene. Now: tighter exponent,
+      // much lower gain, and a hard clamp so it can never exceed the bloom
+      // threshold by more than a hair.
+      float specRaw  = pow(max(dot(reflected, L), 0.0), 420.0);
+      float sunSpec  = min(specRaw * 0.55, 0.85);
+      // Fade the highlight out at grazing angles where it would streak
+      sunSpec *= smoothstep(0.0, 0.35, max(dot(V, N), 0.0));
       finalColor += uSunColor * sunSpec;
 
-      // Small ripple shimmer from secondary wave harmonic
+      // Fine ripple shimmer — subtle, never additive enough to bloom
       float shimmer = sin(vWorldPos.x * 0.8 + uTime * 2.2) *
-                      sin(vWorldPos.z * 0.6 + uTime * 1.8) * 0.025;
-      finalColor += vec3(shimmer * fresnel);
+                      sin(vWorldPos.z * 0.6 + uTime * 1.8) * 0.012;
+      finalColor += vec3(shimmer * fresnel * 0.5);
+
+      // Final safety clamp — water can never blow out the frame
+      finalColor = min(finalColor, vec3(1.15));
 
       // Rain darkens the water surface
       finalColor *= mix(1.0, 0.72, uWetness);
