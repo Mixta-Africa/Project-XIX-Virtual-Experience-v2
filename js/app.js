@@ -397,12 +397,16 @@ document.addEventListener("DOMContentLoaded", () => {
   // ─── MASTER UI CLOSER ───────────────────────────────────────────────────────
   // Guarantees topbar and viewpoint dropdowns close when clicking outside
   document.addEventListener('pointerdown', (e) => {
-    // If the click is NOT inside a topbar dropdown, close all topbar menus
+    // Topbar: close touch-mode menus (desktop uses :hover, unaffected)
     if (!e.target.closest('.topbar-dropdown')) {
-      document.querySelectorAll('.topbar-dropdown-menu').forEach(m => m.classList.remove('open'));
+      document.querySelectorAll('.topbar-dropdown.tb-open')
+              .forEach(d => d.classList.remove('tb-open'));
     }
-    // If the click is NOT inside the viewpoint strip wrapper, close all viewpoint dropdowns
-    if (!e.target.closest('.vp-wrapper')) {
+    // Viewpoint strip: ui.js appends .vp-dropdown to document.body, so a menu
+    // ITEM is NOT inside .vp-wrapper. Checking only .vp-wrapper meant pointerdown
+    // hid the menu before the item's click could fire — which is why the villa
+    // sub-items appeared unclickable. Must exclude .vp-dropdown as well.
+    if (!e.target.closest('.vp-wrapper') && !e.target.closest('.vp-dropdown')) {
       document.querySelectorAll('.vp-dropdown').forEach(m => m.style.display = 'none');
       document.querySelectorAll('.vp-chevron').forEach(ch => ch.innerHTML = '&#9652;');
     }
@@ -948,12 +952,7 @@ async function openWorldAt(viewKey) {
       if (VIEWPOINTS[k]) Object.assign(VIEWPOINTS[k], v);
     });
 
-    // ── UNIFIED DROPDOWN SYSTEM ───────────────────────────────────────────────
-    // Builds ALL dropdowns (villas strip button + topbar TIME/WEATHER/QUALITY)
-    // using valid HTML structure: <div> wrapper > <button> trigger + <div> menu.
-    // The previous approach nested <button> inside <button>, which the HTML parser
-    // hoists apart — that was the cause of the broken empty menu pane.
-    setTimeout(() => _buildXixDropdowns(), 500);
+    // Dropdowns are attached after the overlay opens (see openWorldAt).
 
     sceneReady = true; setLoadingProgress(100);
   }
@@ -974,9 +973,11 @@ async function openWorldAt(viewKey) {
   // This runs each time the world opens (sceneReady check means it's idempotent).
   _bindTopbarControls();
 
-  // Build all dropdowns now that the overlay (and topbar) are in the DOM.
-  // Idempotent — skips anything already built during scene init.
-  setTimeout(() => _buildXixDropdowns(), 250);
+  // Dropdowns need no JS wiring — ui.js builds the villas menu as a body-level
+  // portal, and index.html + styles.css handle the topbar via :hover/:focus-within.
+
+  // Suppress the stale "Drag right to look" caption coming from data.js
+  _nukeStaleCaption();
 
   // Initialize the searchable property directory
   injectPropertyDirectory();
@@ -1688,328 +1689,79 @@ function teleportTo(key, vp){
 
 function injectPerfToggle() { /* wired via ui.js or topbar.js */ }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  UNIFIED DROPDOWN SYSTEM
-// ═══════════════════════════════════════════════════════════════════════════════
-//  Builds every dropdown in the experience with VALID HTML structure:
-//      <div class="xix-dd">            ← wrapper (position: relative)
-//        <button class="xix-dd-trigger">  ← the visible button
-//        <div class="xix-dd-menu">        ← the menu (position: absolute)
-//          <button class="xix-dd-item">   ← menu items — siblings, NOT nested
-//
-//  Nesting <button> inside <button> is invalid HTML; browsers hoist the inner
-//  buttons out of the outer one, which silently destroys the menu. That was the
-//  bug behind both the broken villas pane and the dead topbar dropdowns.
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function _injectDropdownCSS() {
-  if (document.getElementById('xix-dd-style')) return;
-  const st = document.createElement('style');
-  st.id = 'xix-dd-style';
-  st.textContent = `
-    /* Hide the original broken villas button from ui.js */
-    #viewpoint-strip [data-key="villas"],
-    #viewpoint-strip .vp-btn[data-key="villas"],
-    #viewpoint-strip .vp-wrapper[data-key="villas"] { display: none !important; }
-
-    .xix-dd { position: relative; display: inline-block; flex-shrink: 0; }
-
-    .xix-dd-trigger {
-      display: inline-flex; flex-direction: column;
-      align-items: center; justify-content: center; gap: 4px;
-      padding: 10px 16px; min-width: 88px;
-      background: rgba(6,18,8,0.85);
-      border: 1px solid rgba(201,168,76,0.32);
-      border-radius: 6px; color: rgba(240,236,224,0.82);
-      font-family: Inter, sans-serif; font-size: 10px; font-weight: 600;
-      letter-spacing: .10em; text-transform: uppercase;
-      cursor: pointer; transition: border-color .15s, color .15s;
-    }
-    .xix-dd-trigger svg { width:18px; height:18px; stroke:currentColor; fill:none; stroke-width:1.5; }
-    .xix-dd-trigger:hover { border-color: rgba(201,168,76,0.65); color:#C9A84C; }
-    .xix-dd.open .xix-dd-trigger { border-color:#C9A84C; color:#C9A84C; }
-
-    /* Topbar variant — horizontal layout, menu drops DOWN */
-    .xix-dd-topbar .xix-dd-trigger {
-      flex-direction: row; gap: 8px; padding: 11px 18px; min-width: 0;
-    }
-    .xix-dd-topbar .xix-dd-menu { top: calc(100% + 6px); bottom: auto; }
-
-    .xix-dd-menu {
-      display: none; position: absolute;
-      bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
-      background: rgba(6,18,8,0.97);
-      border: 1px solid rgba(201,168,76,0.4);
-      border-radius: 8px; overflow: hidden;
-      min-width: 152px; z-index: 9999;
-      backdrop-filter: blur(12px);
-      box-shadow: 0 4px 28px rgba(0,0,0,0.55);
-    }
-    .xix-dd.open .xix-dd-menu { display: block; }
-
-    .xix-dd-item {
-      display: block; width: 100%;
-      padding: 11px 18px;
-      background: none; border: none;
-      border-bottom: 1px solid rgba(255,255,255,0.06);
-      color: rgba(240,236,224,0.88);
-      font-family: Inter, sans-serif; font-size: 11px; font-weight: 500;
-      letter-spacing: .07em; text-align: left; white-space: nowrap;
-      cursor: pointer; transition: background .15s, color .15s;
-    }
-    .xix-dd-item:last-child { border-bottom: none; }
-    .xix-dd-item:hover  { background: rgba(201,168,76,0.14); color:#C9A84C; }
-    .xix-dd-item.active { color:#C9A84C; background: rgba(201,168,76,0.08); }
-  `;
-  document.head.appendChild(st);
-}
-
-// Build one dropdown. Returns the wrapper element.
-//   opts.id        unique element id
-//   opts.label     button text
-//   opts.icon      optional inline SVG string
-//   opts.topbar    true = horizontal topbar style, menu drops down
-//   opts.items     [{ label, value, onSelect }]
-function _makeDropdown(opts) {
-  const wrap = document.createElement('div');
-  wrap.className = 'xix-dd' + (opts.topbar ? ' xix-dd-topbar' : '');
-  if (opts.id) wrap.id = opts.id;
-
-  const trigger = document.createElement('button');
-  trigger.type = 'button';
-  trigger.className = 'xix-dd-trigger';
-  trigger.innerHTML = (opts.icon || '') + '<span>' + opts.label + ' \u25BE</span>';
-  wrap.appendChild(trigger);
-
-  const menu = document.createElement('div');
-  menu.className = 'xix-dd-menu';
-  wrap.appendChild(menu);   // SIBLING of trigger — never nested inside it
-
-  opts.items.forEach(item => {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'xix-dd-item';
-    b.textContent = item.label;
-    b.dataset.value = item.value;
-    b.addEventListener('click', (e) => {
-      e.stopPropagation();
-      wrap.classList.remove('open');
-      menu.querySelectorAll('.xix-dd-item').forEach(x => x.classList.remove('active'));
-      b.classList.add('active');
-      try { item.onSelect && item.onSelect(item.value); }
-      catch (err) { console.warn('[XIX] dropdown action failed:', err); }
-    });
-    menu.appendChild(b);
-  });
-
-  trigger.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const wasOpen = wrap.classList.contains('open');
-    document.querySelectorAll('.xix-dd.open').forEach(d => d.classList.remove('open'));
-    if (!wasOpen) wrap.classList.add('open');
-  });
-
-  return wrap;
-}
-
-// Close any open dropdown when clicking elsewhere (bound once)
-if (!window._xixDDOutsideBound) {
-  window._xixDDOutsideBound = true;
-  document.addEventListener('pointerdown', (e) => {
-    if (!e.target.closest('.xix-dd')) {
-      document.querySelectorAll('.xix-dd.open').forEach(d => d.classList.remove('open'));
-    }
-  }, { passive: true });
-}
-
-function _buildXixDropdowns() {
-  _injectDropdownCSS();
-
-  // ── 1. VILLAS (bottom viewpoint strip) ────────────────────────────────────
-  const strip = document.getElementById('viewpoint-strip');
-  if (strip && !document.getElementById('xix-dd-villas')) {
-    const villas = _makeDropdown({
-      id: 'xix-dd-villas',
-      label: 'Villas',
-      icon: '<svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>',
-      items: [
-        { label: 'West Row',  value: 'villa_west',  onSelect: k => teleportTo(k, null) },
-        { label: 'East Row',  value: 'villa_east',  onSelect: k => teleportTo(k, null) },
-        { label: 'North Arc', value: 'villa_north', onSelect: k => teleportTo(k, null) },
-        { label: 'South Arc', value: 'villa_south', onSelect: k => teleportTo(k, null) },
-      ],
-    });
-    // Insert before STABLES if we can find it, else append
-    const stablesEl = [...strip.children].find(el =>
-      (el.textContent || '').trim().toUpperCase().startsWith('STABLES'));
-    if (stablesEl) strip.insertBefore(villas, stablesEl);
-    else strip.appendChild(villas);
-  }
-
-  // ── 2. TOPBAR: TIME / WEATHER / QUALITY ───────────────────────────────────
-  // Locate the topbar by finding the EXIT or AERIAL button's parent container.
-  const topbarAnchor = [...document.querySelectorAll('button, a, div')]
-    .find(el => (el.textContent || '').trim().toUpperCase() === 'EXIT');
-  const topbar = topbarAnchor ? topbarAnchor.parentElement : null;
-  if (!topbar) { console.warn('[XIX] Topbar not found — dropdowns not injected'); return; }
-
-  // Hide the original dead TIME / WEATHER / QUALITY buttons
-  ['TIME', 'WEATHER', 'QUALITY'].forEach(name => {
-    [...topbar.children].forEach(el => {
-      const t = (el.textContent || '').trim().toUpperCase();
-      if (t === name && !el.classList.contains('xix-dd')) el.style.display = 'none';
-    });
-  });
-
-  const firstChild = topbar.firstElementChild;
-
-  // TIME
-  if (!document.getElementById('xix-dd-time')) {
-    const timeDD = _makeDropdown({
-      id: 'xix-dd-time', label: 'Time', topbar: true,
-      icon: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
-      items: [
-        { label: 'Morning',   value: 'morning',   onSelect: v => { applyTimePreset(v, false); window._dayPauseEnd = performance.now() + 120000; } },
-        { label: 'Afternoon', value: 'afternoon', onSelect: v => { applyTimePreset(v, false); window._dayPauseEnd = performance.now() + 120000; } },
-        { label: 'Sunset',    value: 'sunset',    onSelect: v => { applyTimePreset(v, false); window._dayPauseEnd = performance.now() + 120000; } },
-        { label: 'Night',     value: 'night',     onSelect: v => { applyTimePreset(v, false); window._dayPauseEnd = performance.now() + 120000; } },
-      ],
-    });
-    topbar.insertBefore(timeDD, firstChild);
-  }
-
-  // WEATHER
-  if (!document.getElementById('xix-dd-weather')) {
-    const wxDD = _makeDropdown({
-      id: 'xix-dd-weather', label: 'Weather', topbar: true,
-      icon: '<svg viewBox="0 0 24 24"><path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z"/></svg>',
-      items: [
-        { label: 'Clear',  value: 'clear',  onSelect: v => applyWeather(v) },
-        { label: 'Cloudy', value: 'cloudy', onSelect: v => applyWeather(v) },
-        { label: 'Rain',   value: 'rain',   onSelect: v => applyWeather(v) },
-      ],
-    });
-    topbar.insertBefore(wxDD, firstChild);
-  }
-
-  // QUALITY
-  if (!document.getElementById('xix-dd-quality')) {
-    const qDD = _makeDropdown({
-      id: 'xix-dd-quality', label: 'Quality', topbar: true,
-      icon: '<svg viewBox="0 0 24 24"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>',
-      items: [
-        { label: 'Fast \u2014 mobile',    value: 'fast',     onSelect: v => window.switchPerfMode && window.switchPerfMode(v) },
-        { label: 'Balanced \u2014 laptop',value: 'balanced', onSelect: v => window.switchPerfMode && window.switchPerfMode(v) },
-        { label: 'Rich \u2014 desktop',   value: 'rich',     onSelect: v => window.switchPerfMode && window.switchPerfMode(v) },
-      ],
-    });
-    topbar.insertBefore(qDD, firstChild);
-  }
-
-  // Mark the currently active quality mode
-  const activeMode = (typeof PERF_MODE !== 'undefined') ? PERF_MODE : 'fast';
-  document.querySelectorAll('#xix-dd-quality .xix-dd-item').forEach(b => {
-    if (b.dataset.value === activeMode) b.classList.add('active');
-  });
-
-  console.log('[XIX] Dropdowns built: villas, time, weather, quality');
-}
-window._buildXixDropdowns = _buildXixDropdowns;
-
 // ── Topbar controls — binds TIME, WEATHER, QUALITY, TOUR buttons ─────────────
 // Finds buttons by data-time / data-weather / data-mode attributes and
 // wires them to the correct window functions. Also opens dropdown menus.
+// ── Stale caption cleaner ─────────────────────────────────────────────────────
+// data.js sets field_centre.caption to "Drag right to look". setCaption() already
+// filters it, but ui.js writes to #scene-caption directly in some paths, so a
+// MutationObserver is the only reliable way to keep it clear.
+function _nukeStaleCaption() {
+  if (window._xixCaptionObserver) return;
+  const BAD = ['drag right to look', 'drag to look', 'click to look', 'drag right'];
+  const el = document.getElementById('scene-caption') ||
+             document.getElementById('viewpoint-caption');
+  if (!el) return;
+  const clean = () => {
+    const t = (el.textContent || '').trim().toLowerCase();
+    if (BAD.some(b => t === b || t.startsWith(b))) el.textContent = '';
+  };
+  clean();
+  window._xixCaptionObserver = new MutationObserver(clean);
+  window._xixCaptionObserver.observe(el, {
+    childList: true, subtree: true, characterData: true,
+  });
+}
+
 function _bindTopbarControls() {
-  // Prevent double-binding
-  if (window._topbarBound) return;
-  window._topbarBound = true;
+  // ── INTENTIONALLY MINIMAL ───────────────────────────────────────────────
+  // index.html already wires every topbar control with inline handlers:
+  //   <button onclick="applyTimePreset('morning')">
+  //   <button onclick="applyWeather('clear')">
+  //   <button onclick="switchPerfMode('fast')">
+  // and app.js exposes applyTimePreset / applyWeather / switchPerfMode on
+  // window. Adding addEventListener to those same buttons made every action
+  // fire twice. The menus themselves open via CSS:
+  //   .topbar-dropdown:hover .topbar-dropdown-menu       { display: flex }
+  //   .topbar-dropdown:focus-within .topbar-dropdown-menu { display: flex }
+  // Nothing here should touch any of that.
+  //
+  // The one genuine gap: :hover does not fire on touch screens. tabindex="0"
+  // plus :focus-within covers most of it, but iOS Safari only focuses a div
+  // on tap if it is explicitly focusable AND the tap is not swallowed. So we
+  // add a touch-only click toggle that sets .tb-open, and a CSS rule for it.
+  if (window._topbarTouchBound) return;
+  window._topbarTouchBound = true;
 
-  // TIME buttons: data-time="morning|afternoon|sunset|night"
-  document.querySelectorAll('[data-time]').forEach(btn => {
-    btn.addEventListener('click', (e) => {
+  const isTouch = navigator.maxTouchPoints > 1 ||
+                  window.matchMedia('(pointer: coarse)').matches;
+  if (!isTouch) return;   // Desktop uses :hover — leave it completely alone
+
+  const st = document.createElement('style');
+  st.id = 'xix-topbar-touch';
+  st.textContent =
+    '.topbar-dropdown.tb-open .topbar-dropdown-menu { display: flex; }';
+  document.head.appendChild(st);
+
+  document.querySelectorAll('.topbar-dropdown').forEach(dd => {
+    const trigger = dd.querySelector('.world-btn');
+    if (!trigger) return;
+    trigger.addEventListener('click', e => {
+      e.preventDefault();
       e.stopPropagation();
-      const t = btn.dataset.time;
-      if (t && typeof applyTimePreset === 'function') {
-        applyTimePreset(t, false);
-        // Pause auto-cycle for 2 minutes after manual selection
-        window._dayPauseEnd = performance.now() + 120_000;
-      }
+      const wasOpen = dd.classList.contains('tb-open');
+      document.querySelectorAll('.topbar-dropdown.tb-open')
+              .forEach(d => d.classList.remove('tb-open'));
+      if (!wasOpen) dd.classList.add('tb-open');
     });
   });
 
-  // WEATHER buttons: data-weather="clear|cloudy|rain"
-  document.querySelectorAll('[data-weather]').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const w = btn.dataset.weather;
-      if (w && typeof applyWeather === 'function') applyWeather(w);
-    });
-  });
-
-  // QUALITY buttons: data-mode="fast|balanced|rich"  
-  document.querySelectorAll('[data-mode]').forEach(btn => {
-    // Skip walk/aerial/ride mode buttons (they have data-mode too)
-    if (btn.classList.contains('move-mode-btn')) return;
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const m = btn.dataset.mode;
-      if (m && ['fast','balanced','rich'].includes(m)) {
-        if (typeof window.switchPerfMode === 'function') window.switchPerfMode(m);
-      }
-    });
-  });
-
-  // TOUR button
-  document.querySelectorAll('[data-action="tour"], .btn-tour, #btn-tour').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (typeof startTour === 'function') {
-        startTour(() => {
-          const cam = typeof getCamera === 'function' ? getCamera() : null;
-          if (!cam) return { pos:[0,3.1,0], yaw:0, pitch:0 };
-          return { pos:[cam.position.x, cam.position.y, cam.position.z], yaw:typeof getYaw==='function'?getYaw():0, pitch:0 };
-        }, (pos, yaw, pitch) => {
-          if (typeof setView === 'function') setView(pos, yaw, pitch || 0);
-        });
-      }
-    });
-  });
-
-  // Topbar dropdown OPEN: clicking the parent button toggles the menu
-  // Matches buttons that contain a dropdown-menu sibling
-  document.querySelectorAll('.topbar-dropdown').forEach(wrapper => {
-    const trigger = wrapper.querySelector('button, [role="button"]');
-    const menu    = wrapper.querySelector('.topbar-dropdown-menu');
-    if (!trigger || !menu) return;
-    trigger.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const isOpen = menu.classList.contains('open');
-      // Close all menus first
-      document.querySelectorAll('.topbar-dropdown-menu').forEach(m => m.classList.remove('open'));
-      // Toggle this one
-      if (!isOpen) menu.classList.add('open');
-    });
-  });
-
-  // wx-time-btn / wx-weather-btn fallback (class-based binding from HTML)
-  document.querySelectorAll('.wx-time-btn').forEach(btn => {
-    if (btn.dataset.bound) return; btn.dataset.bound = '1';
-    btn.addEventListener('click', () => {
-      if (typeof applyTimePreset === 'function') applyTimePreset(btn.dataset.time, false);
-    });
-  });
-  document.querySelectorAll('.wx-weather-btn').forEach(btn => {
-    if (btn.dataset.bound) return; btn.dataset.bound = '1';
-    btn.addEventListener('click', () => {
-      if (typeof applyWeather === 'function') applyWeather(btn.dataset.weather);
-    });
-  });
-  document.querySelectorAll('.perf-btn').forEach(btn => {
-    if (btn.dataset.bound) return; btn.dataset.bound = '1';
-    btn.addEventListener('click', () => {
-      if (typeof window.switchPerfMode === 'function') window.switchPerfMode(btn.dataset.mode);
-    });
-  });
+  document.addEventListener('pointerdown', e => {
+    if (!e.target.closest('.topbar-dropdown')) {
+      document.querySelectorAll('.topbar-dropdown.tb-open')
+              .forEach(d => d.classList.remove('tb-open'));
+    }
+  }, { passive: true });
 }
 function fixTopbarDropdowns() { /* touch fix — no-op if handled in HTML */ }
 
