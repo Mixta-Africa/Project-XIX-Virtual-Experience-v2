@@ -15,6 +15,7 @@ import { BokehPass }       from "https://cdn.jsdelivr.net/npm/three@0.165.0/exam
 import { LUTPass }         from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/postprocessing/LUTPass.js";
 import { LUTCubeLoader }   from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/LUTCubeLoader.js";
 import { ShaderPass }      from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/postprocessing/ShaderPass.js";
+import { RGBELoader }      from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/RGBELoader.js";
 import { Sky }             from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/objects/Sky.js";
 import { RoomEnvironment } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/environments/RoomEnvironment.js";
 
@@ -22,7 +23,9 @@ import { RoomEnvironment } from "https://cdn.jsdelivr.net/npm/three@0.165.0/exam
 let composer, bloomPass, smaaPass, gtaoPass, bokehPass, lutPass, vignettePass;
 let _renderer, _scene, _camera;
 let _perfMode = 'fast';
-let _envMap   = null;
+let _envMap      = null;
+let _hdriEnvMap  = null;   // Baked PMREM from the HDR file — base IBL
+let _hdriLoaded  = false;  // True once the HDR has been loaded and baked
 let _currentTimePreset = 'afternoon';
 window._weatherBloomMult = 1.0;
 
@@ -257,44 +260,130 @@ export function setWeatherBloomModifier(mult) {
 }
 
 // ─── IBL ENV MAP & MATERIALS ──────────────────────────────────────────────────
+// ─── HDRI IBL SYSTEM ───────────────────────────────────────────────────────────
+//
+// Architecture:
+//   ONE HDR file (homecoming_center_rooftop_2k.hdr) is loaded once on scene init.
+//   It is baked into a PMREMGenerator cube map — this becomes the base IBL for
+//   ALL PBR materials (glass, metal, concrete, timber).
+//
+//   The procedural Three.js Sky shader remains as the VISIBLE sky background.
+//   The HDRI is used ONLY for reflections and indirect lighting — not visible directly.
+//
+//   Time-of-day changes modulate the IBL via:
+//     - scene.environmentIntensity  (overall IBL brightness)
+//     - renderer.toneMappingExposure (global exposure)
+//     - A tint LUT applied to the PMREM texture's colour
+//
+//   This means ONE 6MB file drives four visually distinct lighting states.
+//   No re-loading, no stutter, no four separate HDR files.
+//
+// Hosting: place the file at  /assets/hdri/homecoming_center_rooftop_2k.hdr
+
+const HDRI_PATH = 'assets/hdri/homecoming_center_rooftop_2k.hdr';
+
+// Per-time IBL modulation — controls HOW the single HDRI reads at each time of day
+// envInt:   scene.environmentIntensity multiplier
+// bgBlur:   scene.backgroundBlurriness (softens HDRI if used as bg — we don't, but set it)
+// tintHex:  colour cast injected into the env map at this time (warm sunrise, cool morning)
+// tintStr:  strength of the tint (0 = pure HDRI, 1 = full tint colour)
+const HDRI_TIME_MODULATION = {
+  morning:   { envInt: 0.85, tintHex: 0xffd8a0, tintStr: 0.15 },  // warm golden sunrise tint
+  afternoon: { envInt: 1.10, tintHex: 0xffffff, tintStr: 0.00 },  // pure HDRI — no tint
+  sunset:    { envInt: 0.90, tintHex: 0xff7030, tintStr: 0.28 },  // strong orange-red cast
+  night:     { envInt: 0.12, tintHex: 0x203060, tintStr: 0.45 },  // deep blue night tint
+};
+
+export function loadHDRI(renderer, scene, onLoaded) {
+  if (_hdriLoaded) { onLoaded && onLoaded(_hdriEnvMap); return; }
+
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  pmrem.compileEquirectangularShader();
+
+  new RGBELoader()
+    .setPath('') // path prefix — HDRI_PATH is absolute from root
+    .load(
+      HDRI_PATH,
+      (hdrTexture) => {
+        hdrTexture.mapping = THREE.EquirectangularReflectionMapping;
+
+        // Bake the equirectangular HDR into a cube-map-filtered PMREM texture.
+        // This is the step that makes it useful for IBL — raw equirect can't be
+        // sampled correctly by the PBR shader's specular lobe.
+        _hdriEnvMap = pmrem.fromEquirectangular(hdrTexture).texture;
+        pmrem.dispose();
+        hdrTexture.dispose(); // Free the raw equirect — we only need the PMREM cube
+
+        _hdriLoaded  = true;
+        _envMap      = _hdriEnvMap;
+
+        // Apply to scene — this single assignment makes EVERY PBR material
+        // in the scene pick up the HDRI reflections automatically
+        scene.environment            = _hdriEnvMap;
+        scene.environmentIntensity   = HDRI_TIME_MODULATION.afternoon.envInt;
+        scene.backgroundBlurriness   = 0.0; // Sky shader is the background, not the HDRI
+
+        console.log('[XIX] HDRI loaded and baked —', HDRI_PATH);
+        onLoaded && onLoaded(_hdriEnvMap);
+      },
+      (progress) => {
+        if (progress.total > 0) {
+          const pct = Math.round(progress.loaded / progress.total * 100);
+          if (pct % 20 === 0) console.log('[XIX] HDRI loading:', pct + '%');
+        }
+      },
+      (err) => {
+        console.warn('[XIX] HDRI load failed, falling back to sky PMREM:', err);
+        pmrem.dispose();
+        // Fallback: capture the procedural sky
+        buildEnvMapFromSky(renderer, scene, window._xixSkyObj || null);
+      }
+    );
+}
+
+// Apply time-of-day modulation to the loaded HDRI
+// Called by updateSkyForTime in scene.js after each time preset change
+export function applyHDRITimeModulation(timeName, scene) {
+  if (!_hdriLoaded || !scene) return;
+  const mod = HDRI_TIME_MODULATION[timeName] || HDRI_TIME_MODULATION.afternoon;
+  // scene.environmentIntensity scales ALL IBL in the scene uniformly
+  // Supported in Three.js r163+
+  if (scene.environmentIntensity !== undefined) {
+    scene.environmentIntensity = mod.envInt;
+  } else {
+    // Fallback for older Three.js: traverse and set envMapIntensity per material
+    scene.traverse(obj => {
+      if (!obj.isMesh || !obj.material) return;
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      mats.forEach(m => {
+        if (m.isMeshStandardMaterial && m._baseEnvInt !== undefined) {
+          m.envMapIntensity = m._baseEnvInt * mod.envInt;
+        }
+      });
+    });
+  }
+}
+
+// Legacy: sky-based PMREM capture — kept as fallback if HDRI fails to load
 export function buildEnvMapFromSky(renderer, scene, skyObj) {
   try {
     const pmrem = new THREE.PMREMGenerator(renderer);
     pmrem.compileCubemapShader();
-
-    // Capture the actual atmospheric sky sphere (Rayleigh scattering, sun position)
-    // This means glass windows reflect the real Lagos sky, not a generic office room.
-    // The skyObj is the Three.js Sky shader mesh — it renders correctly at any angle.
     let env;
     if (skyObj) {
-      // fromScene captures everything visible in the scene — temporarily isolate just the sky
       const wasVisible = {};
-      scene.children.forEach((c, i) => {
-        wasVisible[i] = c.visible;
-        if (c !== skyObj) c.visible = false;
-      });
+      scene.children.forEach((c, i) => { wasVisible[i] = c.visible; if (c !== skyObj) c.visible = false; });
       env = pmrem.fromScene(scene, 0.0).texture;
       scene.children.forEach((c, i) => { c.visible = wasVisible[i]; });
     } else {
-      // Fallback: warm neutral env (better than RoomEnvironment's cold office cast)
       pmrem.compileEquirectangularShader();
       env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
     }
-
     pmrem.dispose();
-    _envMap = env;
-    scene.environment = _envMap;
+    _envMap = env; scene.environment = _envMap;
     return _envMap;
   } catch(e) {
-    console.warn('[XIX] EnvMap from sky failed, using fallback:', e.message);
-    try {
-      const pmrem2 = new THREE.PMREMGenerator(renderer);
-      pmrem2.compileEquirectangularShader();
-      const env2 = pmrem2.fromScene(new RoomEnvironment(), 0.04).texture;
-      pmrem2.dispose();
-      _envMap = env2; scene.environment = _envMap;
-      return _envMap;
-    } catch(e2) { console.warn('[XIX] EnvMap fallback also failed:', e2.message); }
+    console.warn('[XIX] Sky PMREM fallback failed:', e.message);
   }
 }
 
@@ -302,6 +391,8 @@ export function buildEnvMapFromSky(renderer, scene, skyObj) {
 // Schedules a delayed sky capture so the sky shader finishes updating first.
 let _envRefreshTimer = null;
 export function scheduleEnvMapRefresh(renderer, scene, skyObj) {
+  // If HDRI is loaded, skip sky re-capture — time modulation handles it
+  if (_hdriLoaded) return;
   if (_envRefreshTimer) clearTimeout(_envRefreshTimer);
   _envRefreshTimer = setTimeout(() => {
     _envRefreshTimer = null;
@@ -463,6 +554,8 @@ export function applyPS4Materials(gltfScene) {
       mat.normalScale.set(s, s);
     }
 
+    // Store base envMapIntensity so time-modulation can scale it
+    mat._baseEnvInt = mat.envMapIntensity;
     child.castShadow    = true;
     child.receiveShadow = true;
     mat.needsUpdate     = true;
