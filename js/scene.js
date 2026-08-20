@@ -1230,18 +1230,26 @@ function _makeMicroTexture(col1, col2, planeW, planeD) {
   return new THREE.MeshStandardMaterial({ map: tex, roughness: 1.0, metalness: 0.0, envMapIntensity: 0.0 });
 }
 
-function addGrassRing(){
-  // Billboard grass removed from polo field edges — caused thin rectangle artifacts
-  // when tickGrass() was bypassed. GLSL shader handles the full polo surface.
-  // Perimeter billboard grass only (outside pitch) in Balanced/Rich.
-  if (PERF_MODE === 'fast') return;
-  const count = PERF_MODE === 'rich' ? 600 : 300;
-  const allCards = [
-    ...addGrassField(-260, 0, 55, 70, count),
-    ...addGrassField( 260, 0, 55, 70, count),
-    ...addGrassField(0, -185, 100, 25, Math.floor(count/2)),
-  ];
-  commitGrass(scene, allCards);
+function addGrassRing() {
+  // ══════════════════════════════════════════════════════════════════════════
+  //  PERMANENTLY DISABLED — DO NOT RE-ENABLE
+  // ══════════════════════════════════════════════════════════════════════════
+  //  addGrassField() creates flat PlaneGeometry billboard cards that only look
+  //  like grass when tickGrass() rotates them to face the camera every frame.
+  //  tickGrass() is `return;` (bypassed for performance, graphics.js), so the
+  //  cards sit at fixed random rotations and render as large flat green
+  //  rectangles standing in the scene — visible behind the villas and across
+  //  the estate perimeter.
+  //
+  //  This has now been reintroduced and removed twice. It stays removed.
+  //  Ground cover is handled entirely by the GLSL shaders:
+  //    • polo field  → addPoloField()        (blade displacement + chevron mow)
+  //    • estate floor→ buildGroundMaterial() (laterite / grass / dry transition)
+  //
+  //  If billboard grass is ever wanted again, tickGrass() must be un-bypassed
+  //  AND profiled on mobile FIRST. Do not call addGrassField() before that.
+  // ══════════════════════════════════════════════════════════════════════════
+  return;
 }
 
 function addPoloField() {
