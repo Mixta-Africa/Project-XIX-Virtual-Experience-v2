@@ -166,7 +166,12 @@ function applyWeather(w) {
   const wetnessMap = { clear: 0.0, cloudy: 0.2, rain: 0.85 };
   const wetnessVal = wetnessMap[w] || 0.0;
   if (typeof setFieldWetness === 'function') setFieldWetness(wetnessVal);
-  // Lake: rain makes it darker and choppier — same uniform path via window._xixWetness
+  // Sync palm wind strength with weather — rain increases gusts
+  if (window._xixPalmUniforms) {
+    const baseWind = { clear:0.65, cloudy:0.85, rain:1.0 }[w] || 0.65;
+    window._xixPalmUniforms.uWindStr.value = baseWind;
+  }
+  // Lake + road wetness: tickScene lerps toward window._xixWetness
 
   if (typeof setWeatherBloomModifier === 'function') setWeatherBloomModifier(bloomMult);
   if (_lastDayApplied) applyTimePreset(_lastDayApplied, true);
