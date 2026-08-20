@@ -10,18 +10,6 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
-window.plotRegistry = plotRegistry;
-
-// ── setCaption filter: suppress stale/unhelpful captions from data.js ──────────
-const _BAD_CAPTIONS = new Set([
-  'Drag right to look', 'drag to look', 'Click to look',
-  'field_centre', 'field_south', 'lake_north', 'stables', 'training', 'lofts', 'paddock',
-]);
-function setCaption(text) {
-  if (!text || _BAD_CAPTIONS.has(text.trim())) { _setCaption_raw(''); return; }
-  _setCaption_raw(text);
-}
-
 import { VIEWPOINTS, ZONES, WORLD } from "./data.js";
 import { buildVillaInterior, VILLA_VIEWPOINTS } from "./villa-interior.js";
 import {
@@ -41,10 +29,23 @@ import {
   initMinimap, updateMinimap,
   buildViewpointStrip, showZonePanel, hideZonePanel,
   showLoading, hideLoading, setLoadingProgress,
-  setCaption, showEnterPrompt, hideEnterPrompt,
+  setCaption as _setCaption_raw, showEnterPrompt, hideEnterPrompt,
   showVRButton, showJoystick, hideJoystick, isMobile,
   enableAudio, updateSpatialAudio, initAudio
 } from "./ui.js";
+
+window.plotRegistry = plotRegistry;
+
+// ── setCaption filter — must come after imports so _setCaption_raw is resolved ──
+// Suppresses stale captions from data.js (e.g. "Drag right to look")
+const _BAD_CAPTIONS = new Set([
+  'Drag right to look', 'drag to look', 'Click to look',
+  'field_centre', 'field_south', 'lake_north', 'stables', 'training', 'lofts', 'paddock',
+]);
+function setCaption(text) {
+  if (!text || _BAD_CAPTIONS.has(text.trim())) { _setCaption_raw(''); return; }
+  _setCaption_raw(text);
+}
 
 //           STATE
 let sceneReady      = false;
