@@ -958,21 +958,52 @@ export function updateNightLights(timeName) {
   _nightLightsActive = isNight;
 }
 
+// Glass mesh cache — populated by applyPS4Materials via userData.isGlassPanel flag.
+// Avoids scene.traverse() on every time-of-day change (expensive at scale).
+const _glassMeshCache = [];
+export function registerGlassMesh(mesh) {
+  if (!_glassMeshCache.includes(mesh)) _glassMeshCache.push(mesh);
+}
+
 export function updateBuildingNightGlow(timeName) {
   if (!scene) return;
-  const isNight = timeName === 'night';
-  const isSunset = timeName === 'sunset';
-  const emissiveInt = isNight ? 0.8 : isSunset ? 0.3 : 0.0;
-  const emissiveCol = isNight ? new THREE.Color(0xffe8b0) : new THREE.Color(0xffcc88);
-  scene.traverse(obj => {
-    if (!obj.isMesh || !obj.material) return;
-    const name = (obj.material.name || '').toLowerCase();
-    if (name.includes('glass') || name.includes('window') || name.includes('glaz')) {
-      obj.material.emissive = emissiveCol;
-      obj.material.emissiveIntensity = emissiveInt;
-      obj.material.needsUpdate = true;
-    }
+  const isNight   = timeName === 'night';
+  const isSunset  = timeName === 'sunset';
+
+  // Interior warm glow — the "inhabited" feel at night
+  // Night: full warm amber glow from interior lighting (0.65)
+  // Sunset: subtle pre-dusk warmth (0.22)
+  // Afternoon: tiny hint so glass is never completely cold (0.04)
+  const glowInt = isNight ? 0.65 : isSunset ? 0.22 : 0.04;
+  const glowCol = isNight
+    ? new THREE.Color(0xffe4a0)   // warm incandescent interior
+    : new THREE.Color(0xffcc88);  // soft warm pre-sunset
+
+  // Target for the live sun-glint system (handled by tickScene)
+  window._xixSunGlintIntensity = isNight ? 0.0 : isSunset ? 0.42 : 0.18;
+
+  // Apply to cached glass meshes first (fast path — from applyPS4Materials)
+  _glassMeshCache.forEach(obj => {
+    if (!obj.material) return;
+    const mat = Array.isArray(obj.material) ? obj.material[0] : obj.material;
+    if (!mat) return;
+    mat.emissive = glowCol;
+    mat.emissiveIntensity = glowInt;
   });
+
+  // Fallback: also traverse for any glass that wasn't caught by applyPS4Materials
+  // (e.g. geometry built inline with MAT_GLASS). Runs only on time change, not per-frame.
+  if (_glassMeshCache.length === 0) {
+    scene.traverse(obj => {
+      if (!obj.isMesh || !obj.material) return;
+      const mat = Array.isArray(obj.material) ? obj.material[0] : obj.material;
+      if (!mat) return;
+      const name = (mat.name || obj.name || '').toLowerCase();
+      if (name.includes('glass') || name.includes('window') || name.includes('glaz')) {
+        mat.emissive = glowCol; mat.emissiveIntensity = glowInt; mat.needsUpdate = true;
+      }
+    });
+  }
 }
 
 // ─── GEOMETRY HELPERS ─────────────────────────────────────────────────────────
@@ -991,24 +1022,131 @@ function cyl(rt,rb,h,seg,mat,pos=[0,0,0]){
 function s(...o){ o.forEach(x=>x&&scene.add(x)); }
 
 // ─── PBR TEXTURE LOADERS ──────────────────────────────────────────────────────
-let _dirtMatCache = null;
-function getDirtMaterial() {
-  if (_dirtMatCache) return _dirtMatCache;
-  const tl = new THREE.TextureLoader();
-  const dCol = tl.load('assets/textures/dirt-color.png'); dCol.colorSpace = THREE.SRGBColorSpace;
-  const dNrm = tl.load('assets/textures/dirt-normal.png');
-  const dRgh = tl.load('assets/textures/dirt-roughness.png');
-  
-  [dCol, dNrm, dRgh].forEach(t => {
-    t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.repeat.set(100, 100); // Tiles the dirt texture beautifully across the estate
+// ── PROCEDURAL GROUND SYSTEM ─────────────────────────────────────────────────
+// Lagos laterite and grass ground — no external texture dependency.
+// Zones: laterite perimeter → dry grass transitional → rich green inner estate.
+// Procedural so it never tiles, never repeats, and always looks right at any scale.
+
+let _groundMat = null;
+function buildGroundMaterial() {
+  if (_groundMat) return _groundMat;
+
+  const groundVert = /* glsl */`
+    varying vec2 vWorldXZ;
+    varying vec3 vWorldPos;
+    varying vec3 vNormal;
+    void main() {
+      vWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;
+      vWorldXZ  = vWorldPos.xz;
+      vNormal   = normalize(normalMatrix * normal);
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `;
+
+  const groundFrag = /* glsl */`
+    precision highp float;
+    uniform float uTime;
+    uniform vec3  uSunDir;
+    uniform vec3  uSunColor;
+
+    varying vec2 vWorldXZ;
+    varying vec3 vWorldPos;
+    varying vec3 vNormal;
+
+    // ── Noise helpers ──────────────────────────────────────────────────────
+    float hash2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+    float noise2(vec2 p) {
+      vec2 i = floor(p), f = fract(p);
+      f = f*f*(3.0-2.0*f);
+      return mix(mix(hash2(i),hash2(i+vec2(1,0)),f.x),
+                 mix(hash2(i+vec2(0,1)),hash2(i+vec2(1,1)),f.x),f.y);
+    }
+    float fbm2(vec2 p) {
+      float v=0.0, a=0.5;
+      for(int i=0;i<4;i++){ v+=a*noise2(p); p*=2.1; a*=0.5; }
+      return v;
+    }
+
+    void main() {
+      vec2 wx = vWorldXZ;
+
+      // ── 1. ZONE MAPPING ────────────────────────────────────────────────
+      // Estate occupies roughly ±165m × ±125m at centre.
+      // Outside that: Lagos laterite. Inside: graded grass.
+      float outerR  = max(abs(wx.x) / 165.0, abs(wx.y) / 125.0); // 0=centre, 1=edge, >1=outside
+      float zoneT   = smoothstep(0.85, 1.4, outerR); // 0=inner, 1=outer laterite
+
+      // ── 2. INNER GRASS ZONE ────────────────────────────────────────────
+      // Rich green grass — base for the estate interior
+      float grassFBM  = fbm2(wx * 0.018);
+      float grassVar  = fbm2(wx * 0.055 + 12.3);
+      // Two-tone grass for the perimeter lawn (outside polo field, inside estate)
+      vec3 grassA = vec3(0.22, 0.44, 0.15);  // rich tropical green
+      vec3 grassB = vec3(0.30, 0.52, 0.18);  // lighter sun-hit patch
+      vec3 grassCol = mix(grassA, grassB, grassFBM * grassVar);
+      // Subtle harmattan dust in dry season: slight ochre tint on the inner grass
+      float dustFBM = fbm2(wx * 0.008 + 55.7);
+      grassCol = mix(grassCol, vec3(0.38, 0.36, 0.22) * 0.8, dustFBM * 0.18);
+
+      // ── 3. OUTER LATERITE ZONE ─────────────────────────────────────────
+      // Lagos red laterite — compacted iron-rich soil, varies from ochre to deep red
+      float latFBM  = fbm2(wx * 0.022 + 33.1);
+      float latFBM2 = fbm2(wx * 0.065 + 71.4);
+      vec3 latA = vec3(0.58, 0.32, 0.16);  // deep laterite red
+      vec3 latB = vec3(0.72, 0.45, 0.22);  // ochre-orange patches
+      vec3 latC = vec3(0.48, 0.28, 0.12);  // very dark laterite shadow
+      vec3 latCol = mix(mix(latA, latB, latFBM), latC, latFBM2 * 0.35);
+      // Rock scatter: darker speckles at coarse scale
+      float rockN = noise2(wx * 0.25);
+      latCol = mix(latCol, vec3(0.30, 0.22, 0.14), step(0.82, rockN) * 0.55);
+
+      // ── 4. TRANSITION BLEND ────────────────────────────────────────────
+      // Soft gradient between inner grass and outer laterite
+      // Also add a transitional dry-grass band at the boundary
+      float transT = smoothstep(0.72, 0.95, outerR);  // dry grass transition
+      vec3 dryGrass = vec3(0.52, 0.48, 0.22);         // harmattan-bleached grass
+      vec3 innerCol  = mix(grassCol, dryGrass, transT * transT);
+      vec3 finalAlbedo = mix(innerCol, latCol, zoneT);
+
+      // ── 5. PBR LIGHTING ────────────────────────────────────────────────
+      vec3 N = normalize(vNormal);
+      // Fake micro-normal from FBM for surface roughness variation
+      float microN = fbm2(wx * 0.4 + uTime * 0.005);
+      N = normalize(N + vec3((microN-0.5)*0.06, 0.0, (noise2(wx*0.4+5.1)-0.5)*0.06));
+
+      vec3 L   = normalize(uSunDir);
+      float NdL = max(dot(N, L), 0.0);
+      // Ground roughness: laterite is very rough (0.96), grass slightly less (0.88)
+      float rough = mix(0.88, 0.97, zoneT);
+      // Strong ambient — ground receives lots of sky fill in tropics
+      vec3 amb = finalAlbedo * vec3(0.30, 0.36, 0.34);
+      vec3 color = finalAlbedo * uSunColor * NdL * 0.85 + amb;
+
+      // ── 6. CONTACT DARKENING near building footprints ──────────────────
+      // Approximate AO: very subtle darkening near estate centre
+      // (proper AO from GTAO handles the rest)
+      float centreAO = smoothstep(80.0, 0.0, length(wx)) * 0.08;
+      color *= 1.0 - centreAO;
+
+      gl_FragColor = vec4(color, 1.0);
+    }
+  `;
+
+  _groundMat = new THREE.ShaderMaterial({
+    vertexShader: groundVert,
+    fragmentShader: groundFrag,
+    uniforms: {
+      uTime:    { value: 0.0 },
+      uSunDir:  { value: new THREE.Vector3(0.48, 0.88, 0.40).normalize() },
+      uSunColor:{ value: new THREE.Color(0xfff4e0) },
+    },
   });
-  
-  _dirtMatCache = new THREE.MeshStandardMaterial({
-    map: dCol, normalMap: dNrm, roughnessMap: dRgh, roughness: 1.0
-  });
-  return _dirtMatCache;
+  window._xixGroundMat = _groundMat;
+  return _groundMat;
 }
+
+// Legacy getDirtMaterial: returns the new procedural ground for compatibility
+function getDirtMaterial() { return buildGroundMaterial(); }
 
 const MATS = {
   villaRoof:  () => PBR.tileRoof(),
@@ -1028,17 +1166,24 @@ const MATS = {
   plotReserved:()=> new THREE.MeshStandardMaterial({color:0xff4444,transparent:true,opacity:0,depthWrite:false}),
 };
 
-function addGround(){
-  const dirtMat = getDirtMaterial(); 
-  const grassMat = _makeMicroTexture(0x3d7028, 0x4a8035, 500, 400);
+function addGround() {
+  const groundMat = buildGroundMaterial();
 
-  const gp = plane(900,700,dirtMat,[0,0,30]); gp.receiveShadow=true; scene.add(gp);
+  // Single large ground plane — the GLSL shader handles all zone transitions internally.
+  // 900×700m covers the full estate footprint plus surroundings.
+  const gp = new THREE.Mesh(new THREE.PlaneGeometry(900, 700, 8, 8), groundMat);
+  gp.rotation.x = -Math.PI / 2;
+  gp.position.set(0, 0, 30);
+  gp.receiveShadow = true;
+  scene.add(gp);
   _terrainMeshes.push(gp);
-  const gp2 = plane(500,400,grassMat,[0,.01,0]); gp2.receiveShadow=true; scene.add(gp2);
-  _terrainMeshes.push(gp2);
-  s(plane(180,80,MATS.concrete(),[0,.02,122]));
-  s(plane(90,70,MATS.cobble(),[-355,.02,90]));
-  s(plane(200,280,MATS.lawnGreen(),[-310,.01,30]));
+
+  // Clubhouse forecourt: concrete apron (unchanged — a real surface material)
+  s(plane(180, 80, MATS.concrete(), [0, .02, 122]));
+  // Stables cobblestone yard
+  s(plane(90, 70, MATS.cobble(), [-355, .02, 90]));
+  // West compound: additional lawn (slightly above ground to prevent z-fighting)
+  s(plane(200, 280, MATS.lawnGreen(), [-310, .015, 30]));
 }
 
 function _makeMicroTexture(col1, col2, planeW, planeD) {
@@ -1287,10 +1432,16 @@ function addRoads() {
     map: aCol,
     normalMap: aNrm,
     roughnessMap: aRgh,
+    roughness: 0.92,      // Dry asphalt: very rough
+    metalness: 0.0,
+    envMapIntensity: 0.1, // Near-zero dry reflection
     polygonOffset: true,
-    polygonOffsetFactor: -1, 
-    polygonOffsetUnits: -1
-  }); 
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
+  });
+  // Tag for weather system: rain reduces roughness → roads get specular puddle sheen
+  am.userData.isRoadSurface = true;
+  window._xixRoadMat = am;
   const Y = 0.13;
   
   s(plane(700, 30, am, [0, Y, 215])); 
@@ -1531,6 +1682,11 @@ function loadVillaGLB(){
     const wrapper = new THREE.Group(); 
     wrapper.add(gltf.scene); 
     villaGLBScene = wrapper;
+
+    // Cache glass meshes for fast night-glow updates
+    gltf.scene.traverse(c => {
+      if (c.isMesh && c.userData.isGlassPanel) registerGlassMesh(c);
+    });
 
     // Swap placeholders for real houses
     const queue = [...pendingVillas];
@@ -1942,7 +2098,28 @@ export function tickScene(elapsed, camera) {
     cam.updateProjectionMatrix();
   }
 
-  // ── c. WATER UNIFORMS ────────────────────────────────────────────────────
+  // ── c. WET ROAD SPECULAR (every 12 frames) ──────────────────────────────
+  if (window._xixRoadMat && _tickFrame % 12 === 0 && window._xixWetness !== undefined) {
+    const wetness = window._xixWetness ?? 0;
+    const rm = window._xixRoadMat;
+    // Wet roads: roughness drops from 0.92 (dry) to 0.18 (soaked) — mirror-like puddles
+    rm.roughness       = 0.92 - wetness * 0.74;
+    rm.metalness       = wetness * 0.12;     // slight metallic sheen when wet
+    rm.envMapIntensity = wetness * 1.8;      // strong sky reflection in puddles
+    rm.needsUpdate     = false;              // uniforms only, no shader rebuild
+  }
+
+  // ── d. GROUND UNIFORMS ───────────────────────────────────────────────────
+  if (window._xixGroundMat && _tickFrame % 4 === 0) {
+    const gu = window._xixGroundMat.uniforms;
+    gu.uTime.value = elapsed;
+    if (sunLight) {
+      gu.uSunDir.value.copy(sunLight.position).normalize();
+      gu.uSunColor.value.copy(sunLight.color);
+    }
+  }
+
+  // ── d. WATER UNIFORMS ────────────────────────────────────────────────────
   if (window._xixLakeMat) {
     const lu = window._xixLakeMat.uniforms;
     lu.uTime.value = elapsed;
