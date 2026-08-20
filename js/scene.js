@@ -1183,7 +1183,7 @@ function addGround() {
   // Stables cobblestone yard
   s(plane(90, 70, MATS.cobble(), [-355, .02, 90]));
   // West compound: additional lawn (slightly above ground to prevent z-fighting)
-  s(plane(200, 280, MATS.lawnGreen(), [-310, .015, 30]));
+  // West compound lawn handled by ground GLSL shader
 }
 
 function _makeMicroTexture(col1, col2, planeW, planeD) {
@@ -1614,9 +1614,8 @@ function addLake() {
 }
 
 function addEastLake(){
-  const wm=createWaterMat();
-  const el=new THREE.Mesh(new THREE.BoxGeometry(10,.25,38),wm);
-  el.position.set(220,.12,-48); scene.add(el); waterMeshes.push(el);
+  // East lake removed — was positioned in the paddock zone causing visual bleed
+  // into villa hedge plots. The crescent lake to the north is the primary water feature.
 }
 
 function addClubhouse(){
@@ -1924,7 +1923,8 @@ function addLoftTerraces(){
       );
       hitbox.position.set(unitX, 5, unitZ); 
       hitbox.rotation.y = ry;
-      hitbox.userData = { isPlotOverlay: true, plotKey: key }; 
+      hitbox.userData = { isPlotOverlay: true, plotKey: key };
+      hitbox.visible = false; // Invisible — only used for raycasting, never rendered
       scene.add(hitbox);
       
       plotRegistry.set(key, { x: unitX, z: unitZ, status: 'available', overlay: hitbox, type: "2 BED LOFT TERRACE", ry: ry });
@@ -1946,7 +1946,7 @@ function addLoftTerraces(){
 
 function addWestCompound() {
   s(plane(120, 185, MATS.safetyBrown(), [-320, .06, 0])); 
-  s(plane(100, 160, MAT_GRASS_FIELD(), [-320, .10, 0]));
+  // West compound grass — ground shader handles laterite/grass boundary
   
   placeAptGLB(-245, -45, Math.PI / 2); 
   placeAptGLB(-245, 45, Math.PI / 2);
@@ -1968,7 +1968,7 @@ function addWestCompound() {
 }
 
 function addPaddock() {
-  s(plane(70, 60, MAT_GRASS_FIELD(), [240, 0.07, -30]));
+  // Paddock grass — match ground shader inner zone colour
   const postPos = [];
   const xMin = 205, xMax = 275, zMin = -60, zMax = 0;
   for(let fz = zMin; fz <= zMax; fz += 5) { 
@@ -1989,7 +1989,7 @@ function addPaddock() {
 }
 
 function addGamePark() {
-  s(plane(70, 60, MAT_GRASS_FIELD(), [240, 0.07, 40]));
+  // Game park grass — ground shader handles this zone
   const cols = [0xe8602a, 0x2a88c8, 0xe8c82a, 0x4ac84a];
   for(let i = 0; i < 5; i++) {
     const h = 2.6 + i * 0.4;
@@ -2034,9 +2034,13 @@ function _createVillaFallback(){
 function _createLoftBlock(x,z,ry){
   const g=new THREE.Group(); g.position.set(x,0,z); g.rotation.y=ry;
   const TW=40;
-  g.add(box(TW,3.2,11,new THREE.MeshStandardMaterial({color:0x9a8a78,roughness:.9}),[0,1.6,0]));
-  g.add(box(TW,3.2,11,MATS.loftBody(),[0,4.85,0]));
-  g.add(box(TW+.4,.4,11.4,MATS.loftRoof(),[0,6.65,0],0,false)); return g;
+  // Explicit colours — no texture dependency, no blue fallback
+  const stoneBase = new THREE.MeshStandardMaterial({color:0x9a8a78,roughness:.92,metalness:0});
+  const renderBody = new THREE.MeshStandardMaterial({color:0xE8E0D0,roughness:.85,metalness:0});
+  const timberRoof = new THREE.MeshStandardMaterial({color:0x7a6848,roughness:.70,metalness:0});
+  g.add(box(TW,3.2,11,stoneBase,[0,1.6,0]));
+  g.add(box(TW,3.2,11,renderBody,[0,4.85,0]));
+  g.add(box(TW+.4,.4,11.4,timberRoof,[0,6.65,0],0,false)); return g;
 }
 
 function _createFlatBlock(x,z){
