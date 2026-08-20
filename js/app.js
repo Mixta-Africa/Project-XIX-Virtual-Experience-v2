@@ -508,9 +508,50 @@ function buildVillaStatusOverlays() {
     window._sharedBadgeMats = { avail: createMat(true), res: createMat(false) };
   }
 
-  // 2. Apply shared materials to all physical plots
+  // 2. Pre-compute apartment type counts for cluster badges
+  const _aptCounts = {};
   plotRegistry.forEach((plot, plotKey) => {
-    // Skip abstract units (like inner apartment flats) that don't have physical X/Z coordinates
+    if (!plot.isApt || plot.x === undefined) return;
+    const key = plot.type + '_' + plot.x + '_' + plot.z;
+    if (!_aptCounts[key]) _aptCounts[key] = { type: plot.type, x: plot.x, z: plot.z, total: 0, reserved: 0, badgeDone: false };
+    _aptCounts[key].total++;
+    if (plot.status === 'reserved') _aptCounts[key].reserved++;
+  });
+
+  // Build cluster badges for apartment types
+  Object.values(_aptCounts).forEach(cluster => {
+    if (cluster.badgeDone) return;
+    cluster.badgeDone = true;
+    const label = `${cluster.reserved}/${cluster.total} reserved`;
+    const typeShort = cluster.type.replace('BED ', '').replace(' MAISONETTE', ' MAIS.');
+    const canvas = document.createElement('canvas');
+    canvas.width = 220; canvas.height = 56;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = 'rgba(6,18,8,0.88)';
+    ctx.beginPath(); ctx.roundRect(2,2,216,52,10); ctx.fill();
+    ctx.strokeStyle = 'rgba(201,168,76,0.6)'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = '#C9A84C';
+    ctx.font = 'bold 13px Inter, sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(typeShort, 110, 18);
+    ctx.fillStyle = 'rgba(255,255,255,0.75)';
+    ctx.font = '12px Inter, sans-serif';
+    ctx.fillText(label, 110, 38);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.88, depthWrite: false, sizeAttenuation: true });
+    const sprite = new THREE.Sprite(mat);
+    sprite.scale.set(7, 1.8, 1);
+    // Offset each type vertically to avoid overlap
+    const yOffset = cluster.type.includes('FLAT') ? 12 : cluster.type.includes('MAIS') ? 14 : 10;
+    sprite.position.set(cluster.x, yOffset, cluster.z);
+    sc.add(sprite);
+  });
+
+  // 3. Apply shared materials to all physical individual plots (villas + lofts)
+  plotRegistry.forEach((plot, plotKey) => {
+    // Skip abstract apartment units — handled above as cluster badges
+    if (plot.isApt) return;
     if (plot.x === undefined || plot.z === undefined) return;
     if (plot.badgeSprite) return; // Already built
 
@@ -891,7 +932,7 @@ async function openWorldAt(viewKey) {
   // Always open at field_centre — walk mode, ground level, facing north
   const _fieldVp = VIEWPOINTS['field_centre'];
   setView(_fieldVp.pos, _fieldVp.yaw, 0);
-  setCaption(_fieldVp.caption);
+  setCaption(''); // Caption hidden — controls are self-evident
   const cam = getCamera();
   const _walkH = 1.72; // matches controls.js EYE_H constant
   const _rideH = 3.10;
@@ -902,7 +943,9 @@ async function openWorldAt(viewKey) {
   if (typeof setYOwner === 'function') setYOwner(moveMode === 'ride' ? 'app' : 'controls');
   activate();
   
-  if(isMobile()){
+  // Joystick: only show on genuine touch screens (tablets/phones) — not laptops with touchpads
+  const _hasTouchScreen = navigator.maxTouchPoints > 1 || window.matchMedia('(pointer:coarse)').matches;
+  if(_hasTouchScreen){
     showJoystick();
     // Inject sprint button above the joystick — clean position, not floating
     if (!document.getElementById('sprint-btn-mobile')) {
@@ -1542,7 +1585,14 @@ function teleportTo(key, vp){
     if (typeof setMoveMode === 'function') setMoveMode('walk');
 
     // 3. Resolve position data
-    const resolved = (vp && vp.pos) ? vp : (VIEWPOINTS[key] || null);
+    // Villa sub-zone keys: override with meaningful in-world positions
+    const VILLA_ZONE_POSITIONS = {
+      'villa_west':  { pos:[-162,  1.72,   0], yaw:  Math.PI/2,  pitch: 0, caption: 'West villa row — polo field ahead' },
+      'villa_east':  { pos:[ 162,  1.72,   0], yaw: -Math.PI/2,  pitch: 0, caption: 'East villa row — polo field ahead' },
+      'villa_north': { pos:[   0,  1.72, -120], yaw:  0,          pitch: 0, caption: 'North arc — crescent lake view' },
+      'villa_south': { pos:[   0,  1.72,   90], yaw:  Math.PI,    pitch: 0, caption: 'South villas — looking toward the field' },
+    };
+    const resolved = VILLA_ZONE_POSITIONS[key] || (vp && vp.pos ? vp : (VIEWPOINTS[key] || null));
     if (!resolved || !Array.isArray(resolved.pos) || resolved.pos.length < 3) {
       console.warn('[XIX] teleportTo: bad viewpoint for key', key, resolved);
       return;
