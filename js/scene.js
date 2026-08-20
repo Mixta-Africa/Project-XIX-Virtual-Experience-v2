@@ -1236,7 +1236,7 @@ function addGrassRing() {
   // ══════════════════════════════════════════════════════════════════════════
   //  addGrassField() creates flat PlaneGeometry billboard cards that only look
   //  like grass when tickGrass() rotates them to face the camera every frame.
-  //  tickGrass() is `return;` (bypassed for performance, graphics.js), so the
+  //  tickGrass() is a bare return (bypassed for performance, graphics.js), so the
   //  cards sit at fixed random rotations and render as large flat green
   //  rectangles standing in the scene — visible behind the villas and across
   //  the estate perimeter.
@@ -1749,11 +1749,13 @@ function addLake() {
       vec3 finalColor = mix(waterColor, uSkyColor * 0.75, skyMix);
 
       // ── Sun specular — CLAMPED ────────────────────────────────────────
-      // Previously `pow(..., 220.0) * 2.5` produced values far above 1.0 across
+      // Previously pow(dot, 220.0) * 2.5 produced values far above 1.0 across
       // a wide band of the surface. Bloom then picked that up and smeared it
       // into a harsh white glare over the whole scene. Now: tighter exponent,
       // much lower gain, and a hard clamp so it can never exceed the bloom
       // threshold by more than a hair.
+      // NOTE: never use backticks in GLSL comments — this source lives inside a
+      // JS template literal and a stray backtick terminates the shader string.
       float specRaw  = pow(max(dot(reflected, L), 0.0), 420.0);
       float sunSpec  = min(specRaw * 0.55, 0.85);
       // Fade the highlight out at grazing angles where it would streak
