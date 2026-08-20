@@ -14,7 +14,7 @@ import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
   buildPalmInstances, tickPalms,
   setPerfModeGraphics, setBloomForTime, setSkyForTime, createAtmosphericSky,
-  buildEnvMapFromSky, applyPS4Materials,
+  buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
 } from "./graphics.js";
 
@@ -828,6 +828,18 @@ export function updateSkyForTime(timeName) {
   setBloomForTime(timeName);
   updateNightLights(timeName);
   updateBuildingNightGlow(timeName);
+
+  // Refresh IBL env map from the updated sky — Balanced/Rich only
+  // Captures the new sky colour (warm sunset, blue morning) into the PMREM cube.
+  // Glass and metal surfaces will reflect the correct time-of-day sky after 800ms.
+  if (PERF_MODE !== 'fast' && renderer && scene && _skyObj) {
+    scheduleEnvMapRefresh(renderer, scene, _skyObj);
+  }
+
+  // Update glass panel sun glint intensity based on time of day
+  // Afternoon: moderate glint. Sunset: strong warm glint. Night: none.
+  const glintMap = { morning: 0.12, afternoon: 0.18, sunset: 0.42, night: 0.0 };
+  window._xixSunGlintIntensity = glintMap[timeName] ?? 0.15;
 }
 
 export function updateSky(top, hor, gnd) {
@@ -1321,47 +1333,133 @@ function addRoads() {
 }
 
 function addLake() {
+  // ── Crescent lake — GLSL wave shader with sky colour injection ───────────
+  // Three.js Water (planar reflection) + stone-normal.png had wrong wave frequency.
+  // This replaces it with a ShaderMaterial whose wave normals are correct for
+  // a calm tropical lagoon: long, low-frequency swells with small wind chop.
+  // Sky colour is injected via uniform so the lake changes with time of day.
+
   const shape = new THREE.Shape();
-  shape.moveTo(-75, 92); 
-  shape.lineTo(75, 92);  
-  shape.quadraticCurveTo(85, 92, 80, 102); 
-  shape.quadraticCurveTo(0, 135, -80, 102); 
-  shape.quadraticCurveTo(-85, 92, -75, 92); 
+  shape.moveTo(-75, 92);
+  shape.lineTo(75, 92);
+  shape.quadraticCurveTo(85, 92, 80, 102);
+  shape.quadraticCurveTo(0, 135, -80, 102);
+  shape.quadraticCurveTo(-85, 92, -75, 92);
+  const waterGeo = new THREE.ShapeGeometry(shape, 80);
 
-  const waterGeo = new THREE.ShapeGeometry(shape, 64);
-  
-  // 1. Load the normal map for realistic ripples
-  const waterNormals = new THREE.TextureLoader().load('assets/textures/stone-normal.png', function(tex) {
-    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    tex.repeat.set(6, 6);
+  const lakeVert = /* glsl */`
+    varying vec2 vUv;
+    varying vec3 vWorldPos;
+    varying vec3 vNormal;
+    uniform float uTime;
+    uniform float uPerfMode; // 0=fast, 1=balanced/rich
+
+    float waveH(vec2 p, float t) {
+      // Two overlapping swell frequencies — Lagos lagoon, not ocean
+      float w1 = sin(p.x * 0.045 + p.y * 0.028 + t * 0.38) * 0.12;
+      float w2 = sin(p.x * 0.018 - p.y * 0.052 + t * 0.55) * 0.06;
+      float chop = (uPerfMode > 0.5) ? sin(p.x * 0.18 + p.y * 0.24 + t * 1.1) * 0.02 : 0.0;
+      return w1 + w2 + chop;
+    }
+
+    void main() {
+      vUv = uv;
+      vec3 pos = position;
+      // Displace Y by wave function (only in balanced/rich — fast uses flat)
+      if (uPerfMode > 0.5) pos.y += waveH(vec2(pos.x, pos.z), uTime);
+      vWorldPos = (modelMatrix * vec4(pos, 1.0)).xyz;
+      // Analytical normal from finite differences
+      float eps = 0.8;
+      float hL = waveH(vec2(pos.x - eps, pos.z), uTime);
+      float hR = waveH(vec2(pos.x + eps, pos.z), uTime);
+      float hD = waveH(vec2(pos.x, pos.z - eps), uTime);
+      float hU = waveH(vec2(pos.x, pos.z + eps), uTime);
+      vNormal = normalize(vec3(hL - hR, 2.0 * eps, hD - hU));
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+    }
+  `;
+
+  const lakeFrag = /* glsl */`
+    precision highp float;
+    uniform float uTime;
+    uniform vec3  uSkyColor;    // Injected from current sky (changes with time)
+    uniform vec3  uSunDir;      // For specular highlight on water
+    uniform vec3  uSunColor;
+    uniform float uWetness;     // Weather: rain makes water darker and choppier
+
+    varying vec2 vUv;
+    varying vec3 vWorldPos;
+    varying vec3 vNormal;
+
+    void main() {
+      vec3 V = normalize(cameraPosition - vWorldPos);
+      vec3 N = normalize(vNormal);
+      vec3 L = normalize(uSunDir);
+
+      // Fresnel: water is more reflective at grazing angles (Schlick approx)
+      float fresnel = pow(1.0 - max(dot(V, N), 0.0), 4.0);
+      fresnel = mix(0.04, 1.0, fresnel);
+
+      // Deep water colour: Lagos lagoon — deep blue-green teal
+      vec3 deepColor  = vec3(0.055, 0.200, 0.290); // deep blue-green
+      vec3 shallowColor = vec3(0.110, 0.350, 0.420); // lighter at edges
+
+      // Mix deep + shallow based on fake depth (UV distance from centre)
+      float edgeDist = length(vUv - 0.5) * 2.0;
+      vec3 waterColor = mix(deepColor, shallowColor, edgeDist * 0.6);
+
+      // Sky reflection: inject actual sky colour into the surface
+      // At grazing angles the water becomes a mirror of the sky
+      vec3 reflected = reflect(-V, N);
+      float skyMix = fresnel * 0.72;
+      vec3 finalColor = mix(waterColor, uSkyColor * 0.75, skyMix);
+
+      // Sun specular: sharp highlight from the sun disc
+      float sunSpec = pow(max(dot(reflected, L), 0.0), 220.0) * 2.5;
+      finalColor += uSunColor * sunSpec;
+
+      // Small ripple shimmer from secondary wave harmonic
+      float shimmer = sin(vWorldPos.x * 0.8 + uTime * 2.2) *
+                      sin(vWorldPos.z * 0.6 + uTime * 1.8) * 0.025;
+      finalColor += vec3(shimmer * fresnel);
+
+      // Rain darkens the water surface
+      finalColor *= mix(1.0, 0.72, uWetness);
+
+      // Soft edge fade at shore boundary
+      float alpha = mix(0.88, 0.97, fresnel);
+
+      gl_FragColor = vec4(finalColor, alpha);
+    }
+  `;
+
+  const lakeMat = new THREE.ShaderMaterial({
+    vertexShader: lakeVert,
+    fragmentShader: lakeFrag,
+    uniforms: {
+      uTime:      { value: 0.0 },
+      uSkyColor:  { value: new THREE.Color(0x7aaac8) },  // Lagos afternoon sky
+      uSunDir:    { value: new THREE.Vector3(0.48, 0.88, 0.40).normalize() },
+      uSunColor:  { value: new THREE.Color(0xfff4e0) },
+      uWetness:   { value: 0.0 },
+      uPerfMode:  { value: PERF_MODE === 'fast' ? 0.0 : 1.0 },
+    },
+    transparent: true,
+    side: THREE.FrontSide,
+    depthWrite: false,
   });
-  waterNormals.wrapS = waterNormals.wrapT = THREE.RepeatWrapping;
 
-  // 2. THE CRASH FIX: Give the texture a microscopic dummy image immediately.
-  // This stops the WebGL "Texture marked for update" crash loop while the real image downloads!
-  if (!waterNormals.image) {
-    const dummy = document.createElement('canvas');
-    dummy.width = 1; dummy.height = 1;
-    waterNormals.image = dummy;
-  }
+  const lakeMesh = new THREE.Mesh(waterGeo, lakeMat);
+  lakeMesh.rotation.x = -Math.PI / 2;
+  lakeMesh.position.set(0, 0.34, 0);
+  lakeMesh.receiveShadow = false; // Water doesn't receive shadows — looks wrong
+  lakeMesh.name = 'crescentLake';
+  lakeMesh.userData.isLakeGLSL = true;
+  scene.add(lakeMesh);
+  waterMeshes.push(lakeMesh);
 
-  // 3. Build the ultra-realistic Planar Water
-  const lakeReflection = new Water(waterGeo, {
-    textureWidth: 512, textureHeight: 512,
-    waterNormals: waterNormals, 
-    sunDirection: new THREE.Vector3(120, 220, 100).normalize(), // Matched to the new, glare-free sun
-    sunColor: 0xfff4e0, 
-    waterColor: 0x1a6a98,
-    distortionScale: 2.5, 
-    fog: scene.fog !== undefined
-  });
-  
-  lakeReflection.position.set(0, 0.335, 0);
-  lakeReflection.rotation.x = -Math.PI / 2;
-  lakeReflection.userData.isPlanarWater = true;
-  
-  scene.add(lakeReflection);
-  waterMeshes.push(lakeReflection);
+  // Expose mat so tickScene and weather system can update uniforms
+  window._xixLakeMat = lakeMat;
 }
 
 function addEastLake(){
@@ -1418,12 +1516,14 @@ function loadStablesGLB() {
 function loadVillaGLB(){
   makeDracoLoader().load("assets/villa-mesh.glb", gltf => {
     gltf.scene.scale.setScalar(VILLA_SCALE);
+    // Wire through the full PBR material pipeline
+    // This gives villas: concrete normal maps, glass reflections, metal frame sheen
+    applyPS4Materials(gltf.scene);
     gltf.scene.traverse(c => {
       if(c.isMesh){ 
-        c.castShadow = false; 
+        c.castShadow = false; // Villas: receive only — casting causes shadow acne at scale
         c.receiveShadow = true;
         c.frustumCulled = true;
-        if(c.material){ c.material.envMapIntensity = 0.4; c.material.needsUpdate = true; }
       }
     });
     const bbox = new THREE.Box3().setFromObject(gltf.scene);
@@ -1795,7 +1895,22 @@ let _prevElapsed=0;
 export function tickScene(elapsed, camera) {
   _tickFrame++;
 
-  // ── a. POLO FIELD SHADER UNIFORMS ────────────────────────────────────────
+  // ── a. GLASS SUN GLINT — update emissiveIntensity on glass panels ──────────
+  // Every 20 frames — cheap traverse, avoids full scene walk every frame
+  if (_tickFrame % 20 === 0 && scene && window._xixSunGlintIntensity !== undefined) {
+    const targetGlint = window._xixSunGlintIntensity;
+    scene.traverse(obj => {
+      if (!obj.isMesh || !obj.userData.isGlassPanel) return;
+      const mat = Array.isArray(obj.material) ? obj.material[0] : obj.material;
+      if (mat && mat.emissiveIntensity !== undefined) {
+        // Smooth lerp toward target — no harsh snap when time changes
+        mat.emissiveIntensity += (targetGlint - mat.emissiveIntensity) * 0.05;
+        mat.needsUpdate = false; // emissiveIntensity is a uniform, no rebuild needed
+      }
+    });
+  }
+
+  // ── b. POLO FIELD SHADER UNIFORMS ────────────────────────────────────────
   if (window._xixFieldMat) {
     const u = window._xixFieldMat.uniforms;
     u.uTime.value  = elapsed;
@@ -1827,8 +1942,28 @@ export function tickScene(elapsed, camera) {
     cam.updateProjectionMatrix();
   }
 
-  // ── EXISTING TICK LOGIC (unchanged) ──────────────────────────────────────
-  tickWater(waterMeshes, elapsed);
+  // ── c. WATER UNIFORMS ────────────────────────────────────────────────────
+  if (window._xixLakeMat) {
+    const lu = window._xixLakeMat.uniforms;
+    lu.uTime.value = elapsed;
+    lu.uPerfMode.value = PERF_MODE === 'fast' ? 0.0 : 1.0;
+    // Sync wetness from weather system
+    if (window._xixWetness !== undefined) {
+      lu.uWetness.value += (window._xixWetness - lu.uWetness.value) * 0.03;
+    }
+    // Sync sun direction and colour from live sun light
+    if (sunLight) {
+      lu.uSunDir.value.copy(sunLight.position).normalize();
+      lu.uSunColor.value.copy(sunLight.color);
+    }
+    // Sync sky colour from current fog colour (proxy for sky horizon colour)
+    if (scene && scene.fog) {
+      lu.uSkyColor.value.copy(scene.fog.color);
+    }
+  }
+
+  // Existing Three.js Water tick (for east lake — uses createWaterMat)
+  tickWater(waterMeshes.filter(m => !m.userData.isLakeGLSL), elapsed);
 
   waterMeshes.forEach(m => {
     if (m.userData.isPlanarWater && m.material.uniforms && m.material.uniforms['time']) {
