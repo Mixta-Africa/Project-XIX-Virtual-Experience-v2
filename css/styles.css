@@ -1320,8 +1320,10 @@ button.residence-card-btn {
   flex-direction: column;
   gap: 2px;
   box-shadow: 0 8px 24px rgba(0,0,0,0.7);
-  z-index: 500;
+  z-index: 100000;          /* above the WebGL canvas and every overlay */
 }
+/* The wrapper must create no stacking context that could trap the menu */
+.topbar-dropdown { z-index: 100001; }
 
 .topbar-dropdown:hover .topbar-dropdown-menu,
 .topbar-dropdown:focus-within .topbar-dropdown-menu,
@@ -1398,15 +1400,37 @@ button.residence-card-btn {
   color: var(--gold-300);
 }
 
-/* Make topbar scroll on small screens */
+/* ══════════════════════════════════════════════════════════════════════════
+   TOPBAR — MUST NEVER CLIP
+   ══════════════════════════════════════════════════════════════════════════
+   DO NOT add `overflow-x: auto`, `overflow: hidden`, `transform`, `filter`,
+   or `contain` to .world-topbar or .world-controls.
+
+   Why: .topbar-dropdown-menu is position:absolute at top:calc(100% + 12px),
+   which places it BELOW the topbar's own box. Per CSS overflow-3 §3, setting
+   overflow-x to anything other than `visible` forces overflow-y to compute to
+   `auto` as well — so the topbar clips on both axes and the menu is clipped
+   away to nothing. This silently broke every Time / Weather / Quality menu
+   on all screen sizes.
+
+   Narrow screens are handled by shrinking the buttons (hiding text labels,
+   icon-only) — never by scrolling this container.
+   ══════════════════════════════════════════════════════════════════════════ */
 .world-topbar {
   pointer-events: auto;
   flex-wrap: nowrap;
-  overflow-x: auto;
-  scrollbar-width: none;
+  overflow: visible;
   gap: 0.5rem;
 }
-.world-topbar::-webkit-scrollbar { display: none; }
+.world-controls { overflow: visible; }
+
+/* Narrow screens: shrink instead of scroll, so nothing needs clipping */
+@media (max-width: 900px) {
+  .world-topbar { padding: 0 0.6rem; gap: 0.25rem; }
+  .world-btn { padding: 0.45rem 0.6rem; }
+  .world-btn-label { display: none; }   /* icon-only */
+  .world-caption { display: none; }
+}
 
 /* World zone panel (inside 3D world)                                                                       */
 #world-zone-panel {
@@ -1625,14 +1649,15 @@ button.residence-card-btn {
 
 @media (max-width: 1024px) {
   /* On iPad/tablets, allow the topbar to scroll horizontally so the menus don't overlap */
+  /* Tablets: shrink the controls. Never scroll — scrolling requires overflow,
+     and overflow on this element clips the dropdown menus (see note above). */
   .world-topbar {
-    overflow-x: auto;
-    overflow-y: visible;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
+    overflow: visible;
     flex-wrap: nowrap;
+    padding: 0 0.8rem;
+    gap: 0.3rem;
   }
-  .world-topbar::-webkit-scrollbar { display: none; }
+  .world-btn { padding: 0.5rem 0.7rem; }
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════
@@ -1695,17 +1720,17 @@ button.residence-card-btn {
 /* Prevent scroll bleed when overlay is open */
 body.world-open, body.interior-open { overflow: hidden; position: fixed; width: 100%; }
 
-/* ── TOPBAR — SCROLLABLE ON SMALL SCREENS ─────────────────────────────────── */
+/* ── TOPBAR — NON-CLIPPING (see the full note at .world-topbar above) ──────── */
+/* This block previously set `overflow-x: auto; overflow-y: hidden`, which
+   clipped .topbar-dropdown-menu (absolute, top: 100% + 12px) out of existence.
+   It sat after the CSS parse break so it looked inert, but it is later in the
+   cascade and wins — it must stay non-clipping. Small screens shrink instead. */
 .world-topbar {
   pointer-events: auto;
   flex-wrap: nowrap;
-  overflow-x: auto;
-  overflow-y: hidden;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
+  overflow: visible;
   gap: 0.3rem;
 }
-.world-topbar::-webkit-scrollbar { display: none; }
 
 /* Hide text labels in topbar on small screens; icon-only */
 @media (max-width: 640px) {
