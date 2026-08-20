@@ -22,7 +22,7 @@ import {
   setHorsePosition, getThirdPersonCameraOffset, setAerialMode,
   getSunLight, getHorseGroup, updateNightLights, updateBuildingNightGlow,
 } from "./scene.js";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier } from "./graphics.js";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
@@ -140,20 +140,24 @@ function applyWeather(w) {
   _currentWeather = w;
   window._currentWeather = w; // Expose globally for scene.js
   document.querySelectorAll(".wx-weather-btn").forEach(b => b.classList.toggle("active", b.dataset.weather === w));
-  
+
   let bloomMult = 1;
-  if (w === 'clear')  bloomMult = 0.2; 
+  if (w === 'clear')  bloomMult = 0.2;
   if (w === 'cloudy') bloomMult = 0.5;
   if (w === 'rain')   bloomMult = 0.1;
 
   const sc = getScene();
   if (sc && sc.fog) {
-    // Force ultra-clear distance visibility for 'clear' weather
     sc.fog.density = (w === 'clear') ? 0.000008 : (w === 'cloudy' ? 0.00035 : 0.00085);
   }
 
+  // Drive polo field wetness shader uniform (0 = dry, 1 = soaked)
+  // tickScene() lerps smoothly toward this value — no hard snap
+  const wetnessMap = { clear: 0.0, cloudy: 0.2, rain: 0.85 };
+  if (typeof setFieldWetness === 'function') setFieldWetness(wetnessMap[w] || 0.0);
+
   if (typeof setWeatherBloomModifier === 'function') setWeatherBloomModifier(bloomMult);
-  if (_lastDayApplied) applyTimePreset(_lastDayApplied, true); 
+  if (_lastDayApplied) applyTimePreset(_lastDayApplied, true);
 }
 
 window.applyTimePreset = applyTimePreset;
