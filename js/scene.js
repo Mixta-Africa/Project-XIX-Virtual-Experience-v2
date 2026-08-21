@@ -474,13 +474,22 @@ function buildInstancedFencePosts(positions) {
 //  bounds 1.64w x 1.58h x 0.89d. The shallow depth is the giveaway — it was
 //  captured from one side, so the rear is a flat shell.
 //
-//  THE FIX — MIRROR-MERGE:
-//  We clone the geometry, negate Z on both position and normal, flip winding
-//  order so the mirrored half faces outward correctly, then merge it back
-//  against the original at the depth centroid. The scanned front is reused as
-//  the back, producing a closed, volumetric canopy that reads correctly from
-//  every angle. A small Z-jitter and per-instance yaw stop the two halves from
-//  looking like an obvious mirror.
+//  THE FIX — RADIAL SHELLS:
+//  Mirroring was the wrong operation. Negating Z creates a plane of exact
+//  symmetry through the canopy: the two halves are the same shell facing
+//  opposite directions, so they read as two flat cards backed onto each other
+//  with a hard seam down the middle, and every tree has an identical front and
+//  back silhouette. Per-instance yaw cannot hide that, because the symmetry is
+//  in the geometry, not in the placement.
+//
+//  Instead we place N copies of the scanned shell ROTATED about the trunk axis
+//  by the golden angle (137.5deg). Every copy therefore presents a genuinely
+//  scanned face outward in a different direction, there is no symmetry plane at
+//  any angle, and the golden angle guarantees the copies never line up however
+//  many are used. Rotation also preserves winding and handedness, so unlike the
+//  mirror there is no need to reverse triangles or negate normals — two sources
+//  of error simply disappear. A small per-copy scale and lift keeps the
+//  silhouettes from stacking.
 //
 //  POLY BUDGET:
 //  The shipped tree-mesh.glb has been decimated from 877k triangles to 35k
@@ -490,33 +499,47 @@ function buildInstancedFencePosts(positions) {
 //  balanced 110, fast 40. Cone impostors cover anything beyond the cap.
 // ══════════════════════════════════════════════════════════════════════════════
 
-function _mirrorMergeGeometry(srcGeo) {
+const GOLDEN_ANGLE = Math.PI * (3.0 - Math.sqrt(5.0));   // 137.507...deg
+
+function _radialShellGeometry(srcGeo, copies = 2) {
   const src = srcGeo.index ? srcGeo.toNonIndexed() : srcGeo.clone();
   const pos = src.attributes.position.array;
   const nrm = src.attributes.normal ? src.attributes.normal.array : null;
   const uv  = src.attributes.uv ? src.attributes.uv.array : null;
   const n   = pos.length / 3;
 
-  // Depth centroid — mirror plane sits at the middle of the scanned volume
-  let zMin = Infinity, zMax = -Infinity;
-  for (let k = 0; k < n; k++) { const z = pos[k*3+2]; if (z<zMin) zMin=z; if (z>zMax) zMax=z; }
-  const zMid = (zMin + zMax) * 0.5;
+  // Trunk axis: rotate about the horizontal centroid, not the world origin,
+  // or the copies swing out into a ring instead of interleaving.
+  let xMin= Infinity,xMax=-Infinity,zMin= Infinity,zMax=-Infinity,yMin=Infinity;
+  for (let k = 0; k < n; k++) {
+    const x=pos[k*3], y=pos[k*3+1], z=pos[k*3+2];
+    if(x<xMin)xMin=x; if(x>xMax)xMax=x;
+    if(z<zMin)zMin=z; if(z>zMax)zMax=z; if(y<yMin)yMin=y;
+  }
+  const cx=(xMin+xMax)*0.5, cz=(zMin+zMax)*0.5;
 
-  const P = new Float32Array(pos.length * 2);
-  const N = nrm ? new Float32Array(nrm.length * 2) : null;
-  const U = uv  ? new Float32Array(uv.length  * 2) : null;
-  P.set(pos); if (N) N.set(nrm); if (U) U.set(uv);
+  const P = new Float32Array(pos.length * copies);
+  const N = nrm ? new Float32Array(nrm.length * copies) : null;
+  const U = uv  ? new Float32Array(uv.length  * copies) : null;
 
-  // Mirrored half, written triangle-by-triangle with reversed winding
-  for (let t = 0; t < n / 3; t++) {
-    for (let v = 0; v < 3; v++) {
-      const srcV = t*3 + (2 - v);          // reverse winding
-      const dstV = n + t*3 + v;
-      P[dstV*3  ] = pos[srcV*3  ];
-      P[dstV*3+1] = pos[srcV*3+1];
-      P[dstV*3+2] = zMid - (pos[srcV*3+2] - zMid);   // mirror in Z
-      if (N) { N[dstV*3]=nrm[srcV*3]; N[dstV*3+1]=nrm[srcV*3+1]; N[dstV*3+2]=-nrm[srcV*3+2]; }
-      if (U) { U[dstV*2]=uv[srcV*2];  U[dstV*2+1]=uv[srcV*2+1]; }
+  for (let c = 0; c < copies; c++) {
+    const a  = c * GOLDEN_ANGLE;
+    const ca = Math.cos(a), sa = Math.sin(a);
+    const sc = c === 0 ? 1.0 : 0.90 + 0.06 * (c % 2);   // break matching silhouettes
+    const base = c * n;
+    for (let k = 0; k < n; k++) {
+      const x = pos[k*3] - cx, y = pos[k*3+1], z = pos[k*3+2] - cz;
+      const d = (base + k) * 3;
+      P[d  ] = ( x*ca + z*sa) * sc + cx;
+      P[d+1] = y * (c === 0 ? 1.0 : 1.04);
+      P[d+2] = (-x*sa + z*ca) * sc + cz;
+      if (N) {
+        const nx=nrm[k*3], ny=nrm[k*3+1], nz=nrm[k*3+2];
+        N[d  ] =  nx*ca + nz*sa;      // rotation preserves handedness:
+        N[d+1] =  ny;                 // no winding flip, no normal negation
+        N[d+2] = -nx*sa + nz*ca;
+      }
+      if (U) { U[(base+k)*2] = uv[k*2]; U[(base+k)*2+1] = uv[k*2+1]; }
     }
   }
 
@@ -574,7 +597,8 @@ function buildInstancedCypress(positions) {
     gltf.scene.traverse(o => { if (o.isMesh && !srcMesh) srcMesh = o; });
     if (!srcMesh) { console.warn('[XIX] tree-mesh.glb has no mesh'); return; }
 
-    const geo = _mirrorMergeGeometry(srcMesh.geometry);
+    // Rich can afford a third shell; it closes the canopy almost completely.
+    const geo = _radialShellGeometry(srcMesh.geometry, PERF_MODE === 'rich' ? 3 : 2);
 
     // Recentre on origin, sit base at y=0, normalise to ~9m tall
     geo.computeBoundingBox();
@@ -601,14 +625,14 @@ function buildInstancedCypress(positions) {
     const trees = new THREE.InstancedMesh(geo, mat, heroList.length);
     heroList.forEach((p, i) => {
       _dummy.position.set(p[0], p[1], p[2]);   // geometry base already at y=0
-      // Per-instance yaw breaks the mirror symmetry between the two halves
+      // Yaw is now purely for placement variety — the geometry itself has no
+      // preferred facing left to hide.
       _dummy.rotation.set(
         (Math.random() - 0.5) * 0.06,
         Math.random() * Math.PI * 2,
         (Math.random() - 0.5) * 0.06
       );
       const sc = 0.78 + Math.random() * 0.5;
-      // Slight non-uniform Z so no two trees mirror identically
       _dummy.scale.set(sc, sc * (0.9 + Math.random() * 0.28), sc * (0.94 + Math.random() * 0.14));
       _dummy.updateMatrix();
       trees.setMatrixAt(i, _dummy.matrix);
@@ -621,7 +645,7 @@ function buildInstancedCypress(positions) {
     scene.add(trees);
 
     const tris = Math.round(geo.attributes.position.count / 3);
-    console.log(`[XIX] Trees: ${heroList.length} mirror-merged instances, ${tris.toLocaleString()} tris each`);
+    console.log(`[XIX] Trees: ${heroList.length} radial-shell instances, ${tris.toLocaleString()} tris each`);
   }, undefined, () => console.warn('[XIX] tree-mesh.glb not found — cones only'));
 }
 
@@ -1445,7 +1469,10 @@ function _loadTurfTextures() {
   if (TURF_TEX._started) return;
   TURF_TEX._started = true;
   const L = new THREE.TextureLoader();
-  const aniso = PERF_MODE === 'rich' ? 16 : PERF_MODE === 'balanced' ? 8 : 4;
+  // Turf is the most grazing-angle surface in the scene; anisotropy is the
+  // single cheapest sharpness win available on it.
+  const _maxAniso = 16;
+  const aniso = PERF_MODE === 'rich' ? _maxAniso : PERF_MODE === 'balanced' ? 12 : 6;
   const setup = (t, srgb) => {
     if (srgb) t.colorSpace = THREE.SRGBColorSpace;
     // RepeatWrapping is required: the shader feeds UVs far above 1.0.
@@ -1585,9 +1612,35 @@ const TURF_FRAG = /* glsl */`
       vec2 uvB = vWorldPos.xz / (uTexMeters * 7.31) + vec2(0.41, 0.23);
       float lodFade = smoothstep(45.0, 190.0, dist);
 
+      // The anti-tiling blend was averaging in a second sample at 30% even with
+      // the camera on the deck. Averaging two samples of the same texture is a
+      // blur: it halves the variance of whatever it mixes in, which is exactly
+      // the "dull" look. Two changes — the close-range weight drops to 0.10, and
+      // the contrast the average destroyed is restored analytically. For a mix
+      // of weight k between two uncorrelated samples the standard deviation
+      // falls by sqrt(1-2k+2k*k), so dividing the deviation-from-mean by that
+      // factor puts the micro-contrast back without touching the mean.
       vec3 cA = texture2D(uGrassCol, uvA).rgb;
       vec3 cB = texture2D(uGrassCol, uvB).rgb;
-      vec3 turfCol = mix(cA, (cA + cB) * 0.5, 0.30 + lodFade * 0.45);
+      float kBlend  = 0.10 + lodFade * 0.55;
+      vec3  turfCol = mix(cA, (cA + cB) * 0.5, kBlend);
+      float vRestore = inversesqrt(max(1.0 - 2.0*kBlend + 2.0*kBlend*kBlend, 0.25));
+      vec3  cMean   = (cA + cB) * 0.5;
+      turfCol = clamp(cMean + (turfCol - cMean) * vRestore, 0.0, 1.0);
+
+      // Detail octave. The 1024 tile at uTexMeters gives roughly 7 texels per
+      // centimetre, so an individual blade is a few pixels wide and mips to mush
+      // within a few metres. A finer sample carrying luminance only adds blade
+      // definition close up without introducing a second colour tile, and is
+      // faded out well before it could alias.
+      float dNear = 1.0 - smoothstep(3.0, 16.0, dist);
+      if (dNear > 0.004) {
+        vec2  uvD = vWorldPos.xz / (uTexMeters * 0.29) + vec2(0.17, 0.63);
+        vec3  cD  = texture2D(uGrassCol, uvD).rgb;
+        float lD  = dot(cD, vec3(0.2126, 0.7152, 0.0722));
+        float lC  = dot(turfCol, vec3(0.2126, 0.7152, 0.0722));
+        turfCol   = clamp(turfCol * (1.0 + (lD - lC) * 0.85 * dNear), 0.0, 1.0);
+      }
 
       albedo = turfCol * mix(0.88, 1.06, isEven);
       // Unmown areas get stronger, coarser colour variation than the pitch
@@ -1601,9 +1654,18 @@ const TURF_FRAG = /* glsl */`
       roughness  = mix(roughness, 0.55, uWetness * 0.7);
 
       vec3 nA = texture2D(uGrassNrm, uvA).rgb * 2.0 - 1.0;
+      if (dNear > 0.004) {
+        // Matching fine-scale relief, so the blades the detail octave draws are
+        // lit as relief rather than painted on.
+        vec2 uvDN = vWorldPos.xz / (uTexMeters * 0.29) + vec2(0.17, 0.63);
+        vec3 nD   = texture2D(uGrassNrm, uvDN).rgb * 2.0 - 1.0;
+        nA.xy    += nD.xy * 0.55 * dNear;
+      }
       turfN   = normalize(mix(nA, vec3(0.0,0.0,1.0), lodFade));
 
-      albedo *= mix(1.0, texture2D(uGrassAO, uvA).r, 0.45);
+      // Was 0.45. The AO map is a full multiply on albedo and grass AO is deep;
+      // combined with the blur above it was flattening the tonal range twice.
+      albedo *= mix(1.0, texture2D(uGrassAO, uvA).r, 0.32);
     } else {
       float bn = noise(vec2(wx*7.5, wz*7.5));
       float bs = noise(vec2(wx*26.0 + wz*4.0, wz*3.0));
@@ -1704,7 +1766,12 @@ const TURF_FRAG = /* glsl */`
     float sss     = pow(backLit, 3.0) * 0.22;
     vec3  sssCol  = vec3(0.58, 0.88, 0.34);
     float wrapped = max((dot(N, L) + 0.30) / 1.30, 0.0);
-    float spec    = pow(max(dot(H, N), 0.0), 18.0) * (1.0 - roughness) * 0.14;
+    // Roughness sits at 0.88-0.99, so (1.0 - roughness) was scaling this to
+    // between 0.001 and 0.017 — effectively no specular at all. Real turf under
+    // Lagos sun has a definite sheen off the blade faces. Tightened and lifted,
+    // but deliberately kept small: strength 1.9 normals plus roughness 0.5 is
+    // what turned this grass into an oil slick once already.
+    float spec    = pow(max(dot(H, N), 0.0), 34.0) * (0.09 + (1.0 - roughness) * 0.9) * 0.30;
 
     float sheen = 0.0;
     if (uSheen > 0.5) {
@@ -1741,7 +1808,10 @@ function makeTurfMaterial(opts) {
       uWetness:   { value: 0.0 },
       uSheen:     { value: fast ? 0.0 : 1.0 },
       uBladeStr:  { value: fast ? 0.0 : 1.0 },
-      uTexMeters: { value: opts.texMeters !== undefined ? opts.texMeters : 2.0 },
+      // 2.0m per tile put a blade at ~5 texels. 1.45 raises texel density 38%
+      // at no memory cost — the tiling is explicit in the shader, so this is
+      // purely how much ground one tile covers.
+      uTexMeters: { value: opts.texMeters !== undefined ? opts.texMeters : 1.45 },
       uHasTex:    { value: TURF_TEX.ready >= 2 ? 1.0 : 0.0 },
       uHasDirt:   { value: TURF_TEX.dirtCol ? 1.0 : 0.0 },
       uMarkings:  { value: opts.markings ? 1.0 : 0.0 },
