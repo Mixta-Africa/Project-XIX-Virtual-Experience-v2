@@ -237,6 +237,11 @@ export function setPerfModeGraphics(mode) {
                                 : base * 0.85;
   }
 
+  // Retunes uniforms in place on already-compiled programs. Only the
+  // triplanar toggle changes the cache key, so fast <-> balanced is the sole
+  // transition that recompiles.
+  refreshArchDetail();
+
   setBloomForTime(_currentTimePreset);
   // Palm wind strength by quality — Rich gets full tropical gusts
   if (window._xixPalmUniforms) {
@@ -302,10 +307,11 @@ export function setBloomForTime(name) {
 export function setWeatherBloomModifier(mult) {
   window._weatherBloomMult = mult;
   setBloomForTime(_currentTimePreset);
-  // Palm wind strength by quality — Rich gets full tropical gusts
-  if (window._xixPalmUniforms) {
-    window._xixPalmUniforms.uWindStr.value = mode === 'fast' ? 0.3 : mode === 'balanced' ? 0.55 : 0.72;
-  }
+  // The palm-wind block that used to live here was copy-pasted from
+  // setPerfModeGraphics and read `mode`, which is not in scope in this
+  // function. It threw ReferenceError on every single weather change and
+  // aborted whatever the caller was doing next. Wind is a quality-tier
+  // concern, not a weather concern, so it belongs only in the other function.
 }
 
 // ─── IBL ENV MAP & MATERIALS ──────────────────────────────────────────────────
@@ -502,6 +508,206 @@ function _getConcreteNormalMap(THREE) {
   return tex;
 }
 
+// ── World-metre micro-detail for baked photogrammetry assets ──────────────
+//  The turf reads as real because it samples by world metres (vWorldPos.xz /
+//  uTexMeters), so its detail frequency is locked to the ground rather than to
+//  a UV chart. villa-mesh.glb is a 1024 atlas stretched over a ~14m building —
+//  roughly 0.7 texels per centimetre. Walk up to a wall and you are looking at
+//  mush, and no amount of atlas baking fixes that; upscaling the atlas to 2048
+//  only doubles the bytes.
+//
+//  So the villa gets the same treatment as the grass: a small seamless detail
+//  map tiled by world metres, triplanar-projected so it lands correctly on
+//  walls, soffits and decks alike, driving both the shading normal and a
+//  roughness break-up, and faded with distance so it never aliases.
+//
+//  Zero external assets — generated on a canvas, same as _getConcreteNormalMap.
+
+let _archDetailMap = null;
+function _getArchDetailMap(THREE) {
+  if (_archDetailMap) return _archDetailMap;
+  const SIZE = 512;
+
+  // Deterministic PRNG so the map is identical across reloads and devices.
+  let seed = 19 >>> 0;
+  const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+
+  // Wrapped-lattice value noise. Because every lattice lookup is taken modulo
+  // the grid size, the result tiles EXACTLY at any repeat count — no seam.
+  const lattice = g => { const a = new Float32Array(g * g); for (let i = 0; i < a.length; i++) a[i] = rnd(); return a; };
+  const fade = t => t * t * (3 - 2 * t);
+  const samp = (a, g, x, y) => {
+    const fx = x * g, fy = y * g;
+    const x0 = Math.floor(fx), y0 = Math.floor(fy);
+    const tx = fade(fx - x0), ty = fade(fy - y0);
+    const i0 = ((x0 % g) + g) % g, j0 = ((y0 % g) + g) % g;
+    const i1 = (i0 + 1) % g, j1 = (j0 + 1) % g;
+    const v00 = a[j0 * g + i0], v10 = a[j0 * g + i1];
+    const v01 = a[j1 * g + i0], v11 = a[j1 * g + i1];
+    return (v00 * (1 - tx) + v10 * tx) * (1 - ty) + (v01 * (1 - tx) + v11 * tx) * ty;
+  };
+
+  // Coarse trowel drift through to fine aggregate grain.
+  const OCT = [{ g: 8, w: 0.42 }, { g: 19, w: 0.28 }, { g: 43, w: 0.19 }, { g: 97, w: 0.11 }]
+    .map(o => ({ ...o, a: lattice(o.g) }));
+
+  const h = new Float32Array(SIZE * SIZE);
+  let lo = Infinity, hi = -Infinity;
+  for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
+    let n = 0;
+    for (const o of OCT) n += o.w * samp(o.a, o.g, x / SIZE, y / SIZE);
+    h[y * SIZE + x] = n;
+    if (n < lo) lo = n;
+    if (n > hi) hi = n;
+  }
+  const inv = 1 / Math.max(hi - lo, 1e-6);
+  for (let i = 0; i < h.length; i++) h[i] = (h[i] - lo) * inv;
+
+  const cv = document.createElement('canvas'); cv.width = cv.height = SIZE;
+  const ctx = cv.getContext('2d');
+  const img = ctx.createImageData(SIZE, SIZE);
+  const at = (x, y) => h[(((y % SIZE) + SIZE) % SIZE) * SIZE + (((x % SIZE) + SIZE) % SIZE)];
+  const AMP = 2.6;   // height-to-slope gain, kept deliberately low
+
+  for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
+    const dx = (at(x + 1, y) - at(x - 1, y)) * AMP;
+    const dy = (at(x, y + 1) - at(x, y - 1)) * AMP;
+    let nx = -dx, ny = dy, nz = 1.0;
+    const len = Math.hypot(nx, ny, nz);
+    nx /= len; ny /= len; nz /= len;
+    const o = (y * SIZE + x) * 4;
+    img.data[o]     = (nx * 0.5 + 0.5) * 255;
+    img.data[o + 1] = (ny * 0.5 + 0.5) * 255;
+    img.data[o + 2] = (nz * 0.5 + 0.5) * 255;
+    img.data[o + 3] = at(x, y) * 255;          // alpha = roughness break-up
+  }
+  ctx.putImageData(img, 0, 0);
+
+  const tex = new THREE.CanvasTexture(cv);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.NoColorSpace;         // data map — never sRGB
+  tex.anisotropy = 8;
+  tex.needsUpdate = true;
+  _archDetailMap = tex;
+  return tex;
+}
+
+// Per-tier presets. Triplanar costs three texture fetches instead of one, so
+// Fast drops to a single planar projection and a much tighter fade.
+export const ARCH_DETAIL_TIERS = {
+  fast:     { meters: 0.85, normalStr: 0.30, roughStr: 0.10, fadeNear: 10, fadeFar: 26, triplanar: false },
+  balanced: { meters: 0.85, normalStr: 0.45, roughStr: 0.15, fadeNear: 18, fadeFar: 48, triplanar: true  },
+  rich:     { meters: 0.75, normalStr: 0.55, roughStr: 0.18, fadeNear: 26, fadeFar: 70, triplanar: true  },
+};
+
+// Every material we have patched, so setPerfModeGraphics can retune uniforms
+// in place rather than forcing a shader recompile on every quality change.
+const _archDetailMats = new Set();
+
+function _applyArchDetail(mat) {
+  if (!mat || !mat.isMeshStandardMaterial) return;
+  const t = ARCH_DETAIL_TIERS[_perfMode] || ARCH_DETAIL_TIERS.balanced;
+
+  if (mat.userData._archDetail) {               // already patched — retune only
+    const u = mat.userData._archDetail;
+    u.uMeters.value    = t.meters;
+    u.uNrmStr.value    = t.normalStr;
+    u.uRghStr.value    = t.roughStr;
+    u.uFadeNear.value  = t.fadeNear;
+    u.uFadeFar.value   = t.fadeFar;
+    u.uTriplanar.value = t.triplanar ? 1 : 0;
+    return;
+  }
+
+  const U = {
+    uArchDetail: { value: _getArchDetailMap(THREE) },
+    uMeters:     { value: t.meters },
+    uNrmStr:     { value: t.normalStr },
+    uRghStr:     { value: t.roughStr },
+    uFadeNear:   { value: t.fadeNear },
+    uFadeFar:    { value: t.fadeFar },
+    uTriplanar:  { value: t.triplanar ? 1 : 0 },
+  };
+  mat.userData._archDetail = U;
+  _archDetailMats.add(mat);
+
+  mat.onBeforeCompile = shader => {
+    Object.assign(shader.uniforms, U);
+
+    // objectNormal comes from <beginnormal_vertex> and transformed from
+    // <begin_vertex>; both run before <project_vertex>, so both are in scope.
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>',
+        '#include <common>\nvarying vec3 vArchWPos;\nvarying vec3 vArchWNrm;')
+      .replace('#include <project_vertex>',
+        '#include <project_vertex>\n' +
+        'vArchWPos = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;\n' +
+        'vArchWNrm = normalize( mat3( modelMatrix ) * objectNormal );');
+
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', [
+        '#include <common>',
+        'varying vec3 vArchWPos;',
+        'varying vec3 vArchWNrm;',
+        'uniform sampler2D uArchDetail;',
+        'uniform float uMeters;',
+        'uniform float uNrmStr;',
+        'uniform float uRghStr;',
+        'uniform float uFadeNear;',
+        'uniform float uFadeFar;',
+        'uniform float uTriplanar;',
+        'vec4 archDetail( vec3 p, vec3 n ) {',
+        '  vec4 py = texture2D( uArchDetail, p.xz / uMeters );',
+        '  if ( uTriplanar < 0.5 ) return py;',
+        '  vec3 bw = pow( abs( n ), vec3( 6.0 ) );',
+        '  bw /= max( bw.x + bw.y + bw.z, 1e-4 );',
+        '  vec4 px = texture2D( uArchDetail, p.zy / uMeters );',
+        '  vec4 pz = texture2D( uArchDetail, p.xy / uMeters );',
+        '  return px * bw.x + py * bw.y + pz * bw.z;',
+        '}',
+      ].join('\n'))
+
+      // <roughnessmap_fragment> runs BEFORE <normal_fragment_maps> in
+      // meshphysical_frag, so archD and archFade declared here are still in
+      // scope for the normal block below. A perfectly constant roughness
+      // across a wall is the loudest single tell that a surface is CG.
+      .replace('#include <roughnessmap_fragment>', [
+        '#include <roughnessmap_fragment>',
+        'float archFade = 1.0 - smoothstep( uFadeNear, uFadeFar, length( vViewPosition ) );',
+        'vec4 archD = archDetail( vArchWPos, normalize( vArchWNrm ) );',
+        'roughnessFactor = clamp( roughnessFactor + ( archD.a - 0.5 ) * uRghStr * archFade, 0.04, 1.0 );',
+      ].join('\n'))
+
+      // Difference blend: add only the detail normal's deviation from flat, so
+      // the baked normal map underneath is preserved rather than replaced.
+      .replace('#include <normal_fragment_maps>', [
+        '#include <normal_fragment_maps>',
+        '{',
+        '  vec3 aWN  = normalize( vArchWNrm );',
+        '  vec3 aDN  = normalize( archD.rgb * 2.0 - 1.0 );',
+        '  vec3 aDPX = dFdx( vArchWPos );',
+        '  vec3 aT   = aDPX - aWN * dot( aWN, aDPX );',
+        '  if ( length( aT ) > 1e-5 ) {',
+        '    aT = normalize( aT );',
+        '    vec3 aB = normalize( cross( aWN, aT ) );',
+        '    vec3 aW = normalize( aT * aDN.x + aB * aDN.y + aWN * aDN.z );',
+        '    vec3 aV = normalize( ( viewMatrix * vec4( aW,  0.0 ) ).xyz );',
+        '    vec3 aF = normalize( ( viewMatrix * vec4( aWN, 0.0 ) ).xyz );',
+        '    normal = normalize( normal + ( aV - aF ) * uNrmStr * archFade );',
+        '  }',
+        '}',
+      ].join('\n'));
+  };
+
+  // Distinguishes the triplanar and single-plane programs in the cache.
+  mat.customProgramCacheKey = () => 'archDetail-' + (U.uTriplanar.value ? 't' : 's');
+  mat.needsUpdate = true;
+}
+
+export function refreshArchDetail() {
+  _archDetailMats.forEach(_applyArchDetail);
+}
+
 // ── Glass sun glint state — updated by applyGlassSunGlint() from app.js ──
 window._xixSunGlintIntensity = 0.0;
 
@@ -531,13 +737,26 @@ export function applyPS4Materials(gltfScene) {
       //  substitute procedural values — we only tune env response and shadows.
       // ══════════════════════════════════════════════════════════════════
       if (mat.normalMap && mat.roughnessMap && mat.map) {
-        mat.envMapIntensity = 1.35;                 // strong IBL: sells the relief
-        mat.normalScale     = new THREE.Vector2(1.5, 1.5);
-        mat.aoMapIntensity  = 1.2;
+        //  These three numbers were calibrated against the FIRST bake, whose
+        //  normal map was a Sobel edge-detect of the albedo — it traced every
+        //  colour boundary and embossed a ridge/valley pair around every window
+        //  frame, so it needed 1.35 IBL and 1.5x normal scale to read as
+        //  anything but noise. The current bake is an honest band-pass micro-
+        //  relief map with glass masked to zero, so those multipliers now just
+        //  amplify grain and blow the highlights. Dial them back to neutral.
+        mat.envMapIntensity = 1.05;
+        mat.normalScale     = new THREE.Vector2(0.95, 0.95);
+        mat.aoMapIntensity  = 1.0;                  // the AO map is real now
         if (mat.map) mat.map.anisotropy = _renderer ? _renderer.capabilities.getMaxAnisotropy() : 8;
         if (mat.normalMap)    mat.normalMap.anisotropy    = mat.map.anisotropy;
         if (mat.roughnessMap) mat.roughnessMap.anisotropy = mat.map.anisotropy;
+        if (mat.aoMap)        mat.aoMap.anisotropy        = mat.map.anisotropy;
         mat._baseEnvInt = mat.envMapIntensity;
+
+        //  The atlas runs out of resolution long before the camera does.
+        //  Everything below ~2cm comes from the world-metre detail layer.
+        _applyArchDetail(mat);
+
         mat.needsUpdate = true;
         child.castShadow = true; child.receiveShadow = true;
         return;   // leave the baked maps alone
