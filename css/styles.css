@@ -994,12 +994,27 @@ body:not(.pointer-locked) .crosshair,
 
 /*           TOUCH JOYSTICK                                                                                                                                   */
 
+/* ══════════════════════════════════════════════════════════════════════════
+   JOYSTICK — must occupy a SMALL fixed box, never the viewport
+   ══════════════════════════════════════════════════════════════════════════
+   `inset: 0` made this element full-screen. ui.js showJoystick() then applies
+   `pointer-events: auto !important`, so on a touch device the whole screen
+   became a joystick surface and any pan gesture drove movement instead of
+   looking around. Constraining it to a 168px box leaves the rest of the
+   screen free for camera panning.
+   ══════════════════════════════════════════════════════════════════════════ */
 #joystick-overlay {
-  position: absolute;
-  inset: 0;
+  position: fixed;
+  inset: auto auto 28px 28px;   /* bottom-left, NOT full screen */
+  width: 168px;
+  height: 168px;
   display: none;
-  pointer-events: none;
+  pointer-events: none;         /* children opt in individually */
+  touch-action: none;
 }
+#joystick-overlay > * { pointer-events: auto; }
+/* The hint is a label, not a control — it must never capture touches */
+#joystick-overlay .look-hint-mobile { pointer-events: none !important; }
 
 .joystick-hint {
   position: absolute;
@@ -1587,8 +1602,10 @@ button.residence-card-btn {
 /*           VIRTUAL JOYSTICK (PINNED)                                                                                     */
 
 #joystick-overlay {
-  position: absolute;
-  inset: 0;
+  position: fixed;
+  inset: auto auto 28px 28px;
+  width: 168px;
+  height: 168px;
   display: none;
   pointer-events: none; /* Let clicks pass through the overlay... */
   z-index: 900;
