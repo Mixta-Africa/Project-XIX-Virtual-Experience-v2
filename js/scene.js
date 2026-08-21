@@ -532,7 +532,15 @@ function _mirrorMergeGeometry(srcGeo) {
 
 let _treePositions = [];
 function buildInstancedCypress(positions) {
-  _treePositions = positions || [];
+  // ══════════════════════════════════════════════════════════════════════
+  //  POSITION FORMAT: entries are [x, z] — TWO elements, not three.
+  //  Reading p[1] as height and p[2] as Z sent every tree into the sky at an
+  //  altitude equal to its own Z coordinate. Normalise to [x, y, z] once here
+  //  so nothing downstream can make that mistake again.
+  // ══════════════════════════════════════════════════════════════════════
+  _treePositions = (positions || []).map(p =>
+    p.length >= 3 ? [p[0], p[1], p[2]] : [p[0], 0, p[1]]
+  );
   if (!_treePositions.length) return;
 
   // Caps raised: the optimised tree-mesh.glb is 35k tris (was 877k), so after
@@ -546,7 +554,7 @@ function buildInstancedCypress(positions) {
     const cGeo = new THREE.ConeGeometry(1.5, 6.5, 7);
     const cones = new THREE.InstancedMesh(cGeo, cMat, coneList.length);
     coneList.forEach((p, i) => {
-      _dummy.position.set(p[0], (p[1] || 0) + 3.2, p[2]);
+      _dummy.position.set(p[0], p[1] + 3.2, p[2]);   // cone pivot is centred
       _dummy.rotation.set(0, Math.random() * 6.28, 0);
       _dummy.scale.set(0.8 + Math.random() * 0.6, 0.85 + Math.random() * 0.7, 0.8 + Math.random() * 0.6);
       _dummy.updateMatrix();
@@ -592,7 +600,7 @@ function buildInstancedCypress(positions) {
 
     const trees = new THREE.InstancedMesh(geo, mat, heroList.length);
     heroList.forEach((p, i) => {
-      _dummy.position.set(p[0], p[1] || 0, p[2]);
+      _dummy.position.set(p[0], p[1], p[2]);   // geometry base already at y=0
       // Per-instance yaw breaks the mirror symmetry between the two halves
       _dummy.rotation.set(
         (Math.random() - 0.5) * 0.06,
@@ -1340,13 +1348,20 @@ function addGround() {
   // ── EVERY GREEN AREA USES THE SAME TURF ────────────────────────────────
   // All of these sample the identical world-space grid, so they tile into one
   // another seamlessly — no seams, no scale jumps between zones.
+  // Zones are generous and overlapping on purpose: they share one world-space
+  // grid, so overlap is invisible, whereas a gap exposes the bare ground shader
+  // (the flat olive areas seen around the lake and villa frontages).
   const greens = [
     // [ width, depth, [x, y, z], options ]
     [ 180, 110, [-260, 0.10, -40], { chevron:true  } ],  // training field
-    [ 100, 300, [-232, 0.09,  10], { chevron:false } ],  // west villa frontage
-    [ 100, 300, [ 232, 0.09,  10], { chevron:false } ],  // east villa frontage
-    [ 380,  46, [   0, 0.09, -168], { chevron:false } ], // north arc frontage / lake lawn
-    [ 380,  52, [   0, 0.09,  168], { chevron:false } ], // south / clubhouse lawn
+    [ 150, 360, [-215, 0.09,   0], { chevron:false } ],  // west villa frontage (widened)
+    [ 150, 360, [ 215, 0.09,   0], { chevron:false } ],  // east villa frontage (widened)
+    [ 120, 360, [-100, 0.09,   0], { chevron:false } ],  // west inner verge
+    [ 120, 360, [ 100, 0.09,   0], { chevron:false } ],  // east inner verge
+    [ 430, 120, [   0, 0.09, -150], { chevron:false } ], // north: lake surround + arc frontage
+    [ 430,  70, [   0, 0.09,  118], { chevron:false } ], // north-inner: safety zone to lake
+    [ 430, 110, [   0, 0.09,  178], { chevron:false } ], // south / clubhouse lawn
+    [ 240, 120, [   0, 0.09,  235], { chevron:false } ], // south beyond the clubhouse
     [  80,  90, [ 240, 0.09,  -30], { chevron:false } ], // paddock turf
     [  80,  80, [ 240, 0.09,   45], { chevron:false } ], // game park turf
     [ 120, 150, [-330, 0.09,   40], { chevron:false } ], // west compound lawn
@@ -2152,8 +2167,9 @@ function loadStablesGLB() {
 function loadVillaGLB(){
   makeDracoLoader().load("assets/villa-mesh.glb", gltf => {
     gltf.scene.scale.setScalar(VILLA_SCALE);
-    // Wire through the full PBR material pipeline
-    // This gives villas: concrete normal maps, glass reflections, metal frame sheen
+    // villa-mesh.glb ships with baked PBR maps (albedo / normal / metal-rough)
+    // generated from its own atlas, so applyPS4Materials must NOT overwrite them
+    // with procedural substitutes. It only tunes envMap and shadow flags here.
     applyPS4Materials(gltf.scene);
     gltf.scene.traverse(c => {
       if(c.isMesh){ 
