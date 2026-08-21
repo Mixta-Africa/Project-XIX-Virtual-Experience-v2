@@ -467,23 +467,151 @@ function buildInstancedFencePosts(positions) {
   return mesh;
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  TREES — real scanned mesh, with the flat back solved
+// ══════════════════════════════════════════════════════════════════════════════
+//  assets/tree-mesh.glb is a photogrammetry scan: 463,758 verts / 877k tris,
+//  bounds 1.64w x 1.58h x 0.89d. The shallow depth is the giveaway — it was
+//  captured from one side, so the rear is a flat shell.
+//
+//  THE FIX — MIRROR-MERGE:
+//  We clone the geometry, negate Z on both position and normal, flip winding
+//  order so the mirrored half faces outward correctly, then merge it back
+//  against the original at the depth centroid. The scanned front is reused as
+//  the back, producing a closed, volumetric canopy that reads correctly from
+//  every angle. A small Z-jitter and per-instance yaw stop the two halves from
+//  looking like an obvious mirror.
+//
+//  POLY BUDGET — this matters:
+//  877k tris doubles to ~1.75M after the merge. Instance counts are therefore
+//  capped hard: rich 26, balanced 14, fast 0 (cones instead). Beyond the cap,
+//  and past 140m, cheap cone impostors are used. If you want more real trees,
+//  decimate the GLB in Blender to ~40k tris and the caps can rise 20x.
+// ══════════════════════════════════════════════════════════════════════════════
+
+function _mirrorMergeGeometry(srcGeo) {
+  const src = srcGeo.index ? srcGeo.toNonIndexed() : srcGeo.clone();
+  const pos = src.attributes.position.array;
+  const nrm = src.attributes.normal ? src.attributes.normal.array : null;
+  const uv  = src.attributes.uv ? src.attributes.uv.array : null;
+  const n   = pos.length / 3;
+
+  // Depth centroid — mirror plane sits at the middle of the scanned volume
+  let zMin = Infinity, zMax = -Infinity;
+  for (let k = 0; k < n; k++) { const z = pos[k*3+2]; if (z<zMin) zMin=z; if (z>zMax) zMax=z; }
+  const zMid = (zMin + zMax) * 0.5;
+
+  const P = new Float32Array(pos.length * 2);
+  const N = nrm ? new Float32Array(nrm.length * 2) : null;
+  const U = uv  ? new Float32Array(uv.length  * 2) : null;
+  P.set(pos); if (N) N.set(nrm); if (U) U.set(uv);
+
+  // Mirrored half, written triangle-by-triangle with reversed winding
+  for (let t = 0; t < n / 3; t++) {
+    for (let v = 0; v < 3; v++) {
+      const srcV = t*3 + (2 - v);          // reverse winding
+      const dstV = n + t*3 + v;
+      P[dstV*3  ] = pos[srcV*3  ];
+      P[dstV*3+1] = pos[srcV*3+1];
+      P[dstV*3+2] = zMid - (pos[srcV*3+2] - zMid);   // mirror in Z
+      if (N) { N[dstV*3]=nrm[srcV*3]; N[dstV*3+1]=nrm[srcV*3+1]; N[dstV*3+2]=-nrm[srcV*3+2]; }
+      if (U) { U[dstV*2]=uv[srcV*2];  U[dstV*2+1]=uv[srcV*2+1]; }
+    }
+  }
+
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(P, 3));
+  if (N) g.setAttribute('normal', new THREE.BufferAttribute(N, 3));
+  if (U) g.setAttribute('uv', new THREE.BufferAttribute(U, 2));
+  if (!N) g.computeVertexNormals();
+  g.computeBoundingSphere();
+  g.computeBoundingBox();
+  return g;
+}
+
+let _treePositions = [];
 function buildInstancedCypress(positions) {
-  const trunkGeo = new THREE.CylinderGeometry(0.25, 0.38, 5, 6);
-  const trunkMat = new THREE.MeshStandardMaterial({ color:0x8B6914, roughness:.8 });
-  const coneGeo  = new THREE.ConeGeometry(0.7, 4.5, 6);
-  const coneMat  = new THREE.MeshStandardMaterial({ color:0x2a5a20, roughness:.95 });
-  const trunks   = new THREE.InstancedMesh(trunkGeo, trunkMat, positions.length);
-  const cones    = new THREE.InstancedMesh(coneGeo,  coneMat,  positions.length);
-  trunks.castShadow = cones.castShadow = true;
-  positions.forEach(([x,z], i) => {
-    _dummy.position.set(x, 2.5, z); _dummy.rotation.set(0,0,0); _dummy.scale.set(1,1,1); _dummy.updateMatrix();
-    trunks.setMatrixAt(i, _dummy.matrix);
-    _dummy.position.set(x, 5.5, z); _dummy.updateMatrix();
-    cones.setMatrixAt(i, _dummy.matrix);
-  });
-  trunks.instanceMatrix.needsUpdate = true;
-  cones.instanceMatrix.needsUpdate  = true;
-  scene.add(trunks); scene.add(cones);
+  _treePositions = positions || [];
+  if (!_treePositions.length) return;
+
+  const CAP = PERF_MODE === 'rich' ? 26 : PERF_MODE === 'balanced' ? 14 : 0;
+
+  // Cone fallback for everything beyond the real-mesh cap (and all of fast mode)
+  const coneList = _treePositions.slice(CAP);
+  if (coneList.length) {
+    const cMat = new THREE.MeshStandardMaterial({ color: 0x2f5a24, roughness: 0.92, metalness: 0 });
+    const cGeo = new THREE.ConeGeometry(1.5, 6.5, 7);
+    const cones = new THREE.InstancedMesh(cGeo, cMat, coneList.length);
+    coneList.forEach((p, i) => {
+      _dummy.position.set(p[0], (p[1] || 0) + 3.2, p[2]);
+      _dummy.rotation.set(0, Math.random() * 6.28, 0);
+      _dummy.scale.set(0.8 + Math.random() * 0.6, 0.85 + Math.random() * 0.7, 0.8 + Math.random() * 0.6);
+      _dummy.updateMatrix();
+      cones.setMatrixAt(i, _dummy.matrix);
+    });
+    cones.instanceMatrix.needsUpdate = true;
+    cones.castShadow = PERF_MODE !== 'fast';
+    cones.receiveShadow = true;
+    scene.add(cones);
+  }
+
+  if (CAP === 0) return;
+  const heroList = _treePositions.slice(0, CAP);
+
+  makeDracoLoader().load('assets/tree-mesh.glb', gltf => {
+    let srcMesh = null;
+    gltf.scene.traverse(o => { if (o.isMesh && !srcMesh) srcMesh = o; });
+    if (!srcMesh) { console.warn('[XIX] tree-mesh.glb has no mesh'); return; }
+
+    const geo = _mirrorMergeGeometry(srcMesh.geometry);
+
+    // Recentre on origin, sit base at y=0, normalise to ~9m tall
+    geo.computeBoundingBox();
+    const bb = geo.boundingBox;
+    const cx = (bb.min.x + bb.max.x) / 2;
+    const cz = (bb.min.z + bb.max.z) / 2;
+    geo.translate(-cx, -bb.min.y, -cz);
+    const rawH = bb.max.y - bb.min.y;
+    geo.scale(9.0 / rawH, 9.0 / rawH, 9.0 / rawH);
+    geo.computeBoundingSphere();
+
+    const mat = srcMesh.material.clone();
+    mat.side = THREE.DoubleSide;          // canopy gaps must not show holes
+    mat.roughness = 0.88;
+    mat.metalness = 0.0;
+    mat.envMapIntensity = 0.65;
+    if (mat.map) {
+      mat.map.colorSpace = THREE.SRGBColorSpace;
+      mat.map.anisotropy = PERF_MODE === 'rich' ? 16 : 8;
+    }
+    if (_envMapRef) mat.envMap = _envMapRef;
+    if (mat.sheen !== undefined) { mat.sheen = 0.35; mat.sheenColor = new THREE.Color(0x8fc060); }
+
+    const trees = new THREE.InstancedMesh(geo, mat, heroList.length);
+    heroList.forEach((p, i) => {
+      _dummy.position.set(p[0], p[1] || 0, p[2]);
+      // Per-instance yaw breaks the mirror symmetry between the two halves
+      _dummy.rotation.set(
+        (Math.random() - 0.5) * 0.06,
+        Math.random() * Math.PI * 2,
+        (Math.random() - 0.5) * 0.06
+      );
+      const sc = 0.78 + Math.random() * 0.5;
+      // Slight non-uniform Z so no two trees mirror identically
+      _dummy.scale.set(sc, sc * (0.9 + Math.random() * 0.28), sc * (0.94 + Math.random() * 0.14));
+      _dummy.updateMatrix();
+      trees.setMatrixAt(i, _dummy.matrix);
+    });
+    trees.instanceMatrix.needsUpdate = true;
+    trees.castShadow = true;
+    trees.receiveShadow = true;
+    trees.frustumCulled = true;
+    trees.name = 'heroTrees';
+    scene.add(trees);
+
+    const tris = Math.round(geo.attributes.position.count / 3);
+    console.log(`[XIX] Trees: ${heroList.length} mirror-merged instances, ${tris.toLocaleString()} tris each`);
+  }, undefined, () => console.warn('[XIX] tree-mesh.glb not found — cones only'));
 }
 
 // ─── INSTANCED VILLA RENDERING WITH LOD ───────────────────────────────────────
@@ -724,6 +852,7 @@ function addVillaContactShadow(x, z) {
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 let sunLight, hemiLight;
+let _envMapRef = null;
 
 // ─── MOBILE / GPU TIER AUTO-DETECTION ────────────────────────────────────────
 // Call detectMobileTier() immediately after renderer is created in initScene().
@@ -788,6 +917,7 @@ export function initScene(canvas) {
       });
     });
     applyHDRITimeModulation(window._currentTimeOfDay || 'afternoon', scene);
+    _envMapRef = envMap;
     window._hdriReady = true;
     console.log('[XIX] HDRI IBL active');
   });
@@ -854,6 +984,13 @@ export function updateSkyForTime(timeName) {
   // HDRI time modulation — adjusts IBL intensity for this time of day (instant, no re-bake)
   window._currentTimeOfDay = timeName;
   applyHDRITimeModulation(timeName, scene);
+
+  // Keep the lake's reflected sun in step with the sky
+  if (window._xixLakeWater && sunLight) {
+    const wu = window._xixLakeWater.material.uniforms;
+    if (wu['sunDirection']) wu['sunDirection'].value.copy(sunLight.position).normalize();
+    if (wu['sunColor'])     wu['sunColor'].value.copy(sunLight.color);
+  }
   // Sky PMREM re-capture only fires if HDRI hasn't loaded (scheduleEnvMapRefresh is a no-op when HDRI active)
   if (PERF_MODE !== 'fast' && renderer && scene && _skyObj) {
     scheduleEnvMapRefresh(renderer, scene, _skyObj);
@@ -1341,9 +1478,11 @@ const TURF_VERT = /* glsl */`
     vBladeTop = stripV * stripV;
 
     if(uBladeStr > 0.05){
-      float bladeH  = (seed * 0.10 + 0.04) * uBladeStr;
+      // Blade height raised 4-14cm -> 11-38cm. At the old height the wind sway
+      // was sub-pixel at any realistic camera distance, so the gust never read.
+      float bladeH  = (seed * 0.27 + 0.11) * uBladeStr;
       float leanAng = seed2 * 6.2831;
-      float leanAmt = (seed2 * 0.4 + 0.2) * 0.06 * uBladeStr;
+      float leanAmt = (seed2 * 0.4 + 0.2) * 0.16 * uBladeStr;
       pos.z += bladeH * stripV;
       pos.x += cos(leanAng) * leanAmt * stripV;
       pos.y += sin(leanAng) * leanAmt * stripV;
@@ -1353,8 +1492,9 @@ const TURF_VERT = /* glsl */`
       vec2 wp = (modelMatrix * vec4(pos,1.0)).xz;
       float gust = sin(dot(wp, vec2(0.055, 0.031)) - uTime * 1.25) * 0.5 + 0.5;
       gust = pow(gust, 2.0);
-      float sway = (sin(uTime * 1.15 + seed * 6.28 + wp.x * 0.25) * 0.020
-                  + sin(uTime * 0.72 + seed2 * 3.14) * 0.010) * (0.35 + gust * 1.05);
+      // Sway amplitude scaled with the taller blades — now clearly visible.
+      float sway = (sin(uTime * 1.15 + seed * 6.28 + wp.x * 0.25) * 0.085
+                  + sin(uTime * 0.72 + seed2 * 3.14) * 0.045) * (0.35 + gust * 1.30);
       pos.x += sway * stripV;
       pos.y += sway * 0.45 * stripV;
 
@@ -1413,7 +1553,9 @@ const TURF_FRAG = /* glsl */`
 
     // ── CHEVRON MOW BANDS ────────────────────────────────────────────────
     float band   = floor(((wx + wz) * 0.7071) / 10.0);
-    float isEven = mix(0.5, mod(band, 2.0), uChevron);
+    // Unmown lawns sit at 0.28 rather than 0.5 — informal grass is darker and
+    // less uniform than a rolled pitch. At 0.5 they washed out pale and flat.
+    float isEven = mix(0.28, mod(band, 2.0), uChevron);
 
     vec3  albedo    = vec3(0.30, 0.50, 0.22);
     float roughness = 0.94;
@@ -1429,9 +1571,12 @@ const TURF_FRAG = /* glsl */`
       vec3 cB = texture2D(uGrassCol, uvB).rgb;
       vec3 turfCol = mix(cA, (cA + cB) * 0.5, 0.30 + lodFade * 0.45);
 
-      albedo = turfCol * mix(0.93, 1.07, isEven);
+      albedo = turfCol * mix(0.88, 1.06, isEven);
+      // Unmown areas get stronger, coarser colour variation than the pitch
       float health = fbm(vWorldPos.xz * 0.012 + 41.0);
+      float rough2 = fbm(vWorldPos.xz * 0.055 + 13.0);
       albedo *= mix(0.94, 1.06, health);
+      albedo *= mix(1.0, mix(0.82, 1.12, rough2), 1.0 - uChevron);
 
       float rTex = texture2D(uGrassRgh, uvA).r;
       roughness  = 0.88 + rTex * 0.11;
@@ -1597,9 +1742,11 @@ function makeTurfMaterial(opts) {
 
 // Convenience: a turf-covered plane with segment density scaled to its size.
 function turfPlane(w, d, pos, opts) {
-  const per = PERF_MODE === 'fast' ? 4.5 : PERF_MODE === 'balanced' ? 2.4 : 1.6;
-  const sx = Math.max(1, Math.min(200, Math.round(w / per)));
-  const sz = Math.max(1, Math.min(200, Math.round(d / per)));
+  // Segment spacing must stay near blade scale or the vertex stage cannot
+  // produce per-blade displacement and the surface reads as flat bright green.
+  const per = PERF_MODE === 'fast' ? 3.0 : PERF_MODE === 'balanced' ? 1.8 : 1.25;
+  const sx = Math.max(8, Math.min(220, Math.round(w / per)));
+  const sz = Math.max(8, Math.min(220, Math.round(d / per)));
   const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d, sx, sz), makeTurfMaterial(opts));
   m.rotation.x = -Math.PI / 2;
   m.position.set(pos[0], pos[1], pos[2]);
@@ -1798,7 +1945,7 @@ function addLake() {
     sunDirection: new THREE.Vector3(120, 220, 100).normalize(),
     sunColor:  0xfff4e0,
     waterColor: 0x184e63,     // Lagos lagoon teal
-    distortionScale: 1.6,     // calm inland water, not open ocean
+    distortionScale: 3.4,     // ripple visibility — 1.6 read as stagnant
     fog: scene.fog !== undefined,
     alpha: 0.94,
   });
@@ -1837,6 +1984,40 @@ function addLakeBanks() {
   }
 
   const rnd = (a, b) => a + Math.random() * (b - a);
+
+  // ── 0. GRADED BANK — the ground descends into the water ─────────────────
+  // A lake flush with flat ground reads as a puddle painted on a lawn. Three
+  // concentric rings step down toward the waterline, each slightly lower and
+  // darker, so the eye reads a real excavated basin with a shelving edge.
+  const bankSteps = [
+    { out: 11.0, y: 0.30, col: 0x5f6b3a, rough: 0.93 },  // dry upper bank
+    { out:  6.5, y: 0.22, col: 0x555c33, rough: 0.90 },  // mid slope
+    { out:  2.8, y: 0.13, col: 0x494327, rough: 0.72 },  // damp lower bank
+  ];
+  bankSteps.forEach(step => {
+    const mat = new THREE.MeshStandardMaterial({
+      color: step.col, roughness: step.rough, metalness: 0.0,
+    });
+    const geo = new THREE.CircleGeometry(step.out * 0.55, 8);
+    const mesh = new THREE.InstancedMesh(geo, mat, edge.length);
+    edge.forEach(([x, z], i) => {
+      // Push each ring progressively outward from the waterline
+      const nx = x * 0.012, nz = (z - 105) * 0.02;
+      const len = Math.hypot(nx, nz) || 1;
+      _dummy.position.set(
+        x + (nx / len) * step.out * 0.42,
+        step.y,
+        z + (nz / len) * step.out * 0.42
+      );
+      _dummy.rotation.set(-Math.PI / 2, 0, Math.random() * Math.PI * 2);
+      _dummy.scale.setScalar(0.8 + Math.random() * 0.7);
+      _dummy.updateMatrix();
+      mesh.setMatrixAt(i, _dummy.matrix);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.receiveShadow = true;
+    scene.add(mesh);
+  });
 
   // ── 1. WET MARGIN — damp, dark soil where water meets land ──────────────
   const marginMat = new THREE.MeshStandardMaterial({
@@ -2435,9 +2616,16 @@ export function tickScene(elapsed, camera) {
   // reflection), which owns its own uniforms — only 'time' needs advancing.
   // Sun direction is refreshed on time-of-day change rather than per frame.
 
-  // Three.js Water advances its own 'time' uniform
-  if (window._xixLakeWater && window._xixLakeWater.material.uniforms['time']) {
-    window._xixLakeWater.material.uniforms['time'].value += 1.0 / 60.0;
+  // Three.js Water: advance time, and drift the normal map so ripples travel
+  // across the surface instead of shimmering in place (which reads as stagnant).
+  if (window._xixLakeWater) {
+    const wu = window._xixLakeWater.material.uniforms;
+    if (wu['time']) wu['time'].value += 1.6 / 60.0;
+    const wn = wu['normalSampler'] && wu['normalSampler'].value;
+    if (wn && wn.offset) {
+      wn.offset.x = (elapsed * 0.014) % 1.0;
+      wn.offset.y = (elapsed * 0.0085) % 1.0;
+    }
   }
   tickWater(waterMeshes.filter(m => !m.userData.isPlanarWater), elapsed);
 
