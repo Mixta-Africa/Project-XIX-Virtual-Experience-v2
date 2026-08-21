@@ -511,103 +511,132 @@ export function applyPS4Materials(gltfScene) {
 
   gltfScene.traverse(child => {
     if (!child.isMesh || !child.material) return;
-    const mat = child.material;
+    const mats = Array.isArray(child.material) ? child.material : [child.material];
 
-    // Never override GLB PBR materials that have genuine texture maps —
-    // only set env map and adjust parameters, never replace the material itself
-    if (_envMap) { mat.envMap = _envMap; }
+    mats.forEach(mat => {
+      if (_envMap) mat.envMap = _envMap;
+      const name = ((mat.name || '') + ' ' + (child.name || '')).toLowerCase();
+      const hex  = mat.color ? mat.color.getHex() : 0xffffff;
+      const c    = mat.color ? mat.color : new THREE.Color(0xffffff);
+      const lum  = 0.299*c.r + 0.587*c.g + 0.114*c.b;
 
-    const name = (mat.name || child.name || '').toLowerCase();
-    const color = mat.color ? mat.color.getHex() : 0;
+      // ── GLASS ───────────────────────────────────────────────────────────
+      // Architectural glazing is not a grey panel. It is near-black in the
+      // diffuse channel with almost all of its appearance coming from
+      // reflection, plus a slight green-blue tint from the float-glass edge.
+      if (/glass|window|glaz|pane|curtain.?wall/.test(name)) {
+        mat.color.setHex(0x0b1416);
+        mat.roughness        = 0.02;
+        mat.metalness        = 0.0;
+        mat.transparent      = true;
+        mat.opacity          = 0.42;
+        mat.envMapIntensity  = 5.2;      // reflection is the whole material
+        mat.emissive         = new THREE.Color(0xffe4a0);
+        mat.emissiveIntensity= 0.0;      // driven per time-of-day
+        mat.depthWrite       = false;    // stops glazing z-fighting balustrades
+        mat.side             = THREE.DoubleSide;
+        if (mat.iridescence !== undefined) {
+          mat.iridescence          = 0.22;  // faint coating shimmer at grazing angles
+          mat.iridescenceIOR       = 1.32;
+          mat.iridescenceThicknessRange = [110, 420];
+        }
+        if (mat.clearcoat !== undefined) { mat.clearcoat = 1.0; mat.clearcoatRoughness = 0.02; }
+        child.userData.isGlassPanel = true;
+        child.castShadow = false;        // glass casting opaque shadow looks wrong
 
-    // ── Glass / window / glazing ────────────────────────────────────────────
-    if (name.includes('glass') || name.includes('window') || name.includes('glaz')
-        || name.includes('panel') && (name.includes('front') || name.includes('fac'))) {
-      mat.roughness = 0.03;
-      mat.metalness = 0.05;
-      mat.transparent = true;
-      mat.opacity = Math.min(mat.opacity || 0.52, 0.62);
-      mat.envMapIntensity = 4.0;  // Sky reflection is the hero of glass
-      // Emissive glint: picks up sun angle — warm in afternoon, orange at sunset
-      // Updated per-frame by tickScene via window._xixSunGlintIntensity
-      mat.emissive    = new THREE.Color(0xffe8b0);
-      mat.emissiveIntensity = 0.0; // set live by tickScene
-      child.userData.isGlassPanel = true;
+      // ── POLISHED / ANODISED METAL ───────────────────────────────────────
+      } else if (/metal|steel|alum|frame|mullion|railing|rail|balustrade.?post|handrail/.test(name)) {
+        mat.roughness       = 0.16;
+        mat.metalness       = 0.94;
+        mat.envMapIntensity = 3.4;
+        if (lum > 0.75) mat.color.setHex(0xd8dade);   // brushed silver
+        if (mat.clearcoat !== undefined) { mat.clearcoat = 0.5; mat.clearcoatRoughness = 0.18; }
+        child.castShadow = true;
 
-    // ── Brushed aluminium / steel / metal frames ─────────────────────────────
-    } else if (name.includes('metal') || name.includes('steel') || name.includes('alum')
-               || name.includes('frame') || name.includes('railing') || name.includes('rail')) {
-      mat.roughness = 0.22;
-      mat.metalness = 0.88;
-      mat.envMapIntensity = 2.8;
+      // ── ROOF ────────────────────────────────────────────────────────────
+      } else if (/roof|tile|shingle|parapet.?cap|coping/.test(name)) {
+        mat.roughness       = 0.72;
+        mat.metalness       = 0.04;
+        mat.envMapIntensity = 0.85;
+        if (!mat.normalMap) { mat.normalMap = concreteNM; mat.normalScale = new THREE.Vector2(0.4, 0.4); }
 
-    // ── Roof tiles (terracotta / slate) ──────────────────────────────────────
-    } else if (name.includes('roof') || name.includes('tile') || name.includes('shingle')) {
-      mat.roughness = 0.78;
-      mat.metalness = 0.01;
-      mat.envMapIntensity = 0.6;
+      // ── RENDERED / PAINTED WALL ─────────────────────────────────────────
+      // The dominant surface on every building, and previously the flattest.
+      // Real painted render has: a faint sheen (paint is not chalk), micro
+      // relief from the float coat, and a very slight warm bias where sun has
+      // aged it. Clearcoat at low strength is what makes paint read as paint.
+      } else if (/concrete|wall|plast|render|stucco|facade|paint|panel|body|cladding/.test(name)) {
+        mat.roughness       = 0.62;      // was 0.86 — too chalky, killed all light response
+        mat.metalness       = 0.0;
+        mat.envMapIntensity = 0.95;      // was 0.35 — walls now pick up sky bounce
+        if (mat.clearcoat !== undefined) { mat.clearcoat = 0.28; mat.clearcoatRoughness = 0.55; }
+        if (mat.sheen !== undefined)     { mat.sheen = 0.10; mat.sheenRoughness = 0.75; }
+        if (!mat.normalMap) {
+          mat.normalMap   = concreteNM;
+          mat.normalScale = new THREE.Vector2(0.85, 0.85);   // was 0.55
+        } else {
+          const sN = Math.min((mat.normalScale?.x || 1) * 1.45, 2.4);
+          mat.normalScale = new THREE.Vector2(sN, sN);
+        }
+        // Keep bright white render from clipping under the tropical sun
+        if (lum > 0.86) mat.color.multiplyScalar(0.93);
 
-    // ── Rendered concrete / plaster / facade walls ────────────────────────────
-    } else if (name.includes('concrete') || name.includes('wall') || name.includes('plast')
-               || name.includes('render') || name.includes('stucco') || name.includes('facade')) {
-      mat.roughness = 0.86;
-      mat.metalness = 0.0;
-      mat.envMapIntensity = 0.35;
-      // Inject procedural concrete normal map — adds micro-roughness and formwork joints
-      // Only if the material has no existing normal map (don't override GLB baked normals)
-      if (!mat.normalMap) {
-        mat.normalMap = concreteNM;
-        mat.normalScale = new THREE.Vector2(0.55, 0.55);
+      // ── TIMBER ──────────────────────────────────────────────────────────
+      // The vertical timber screens are a signature of these elevations, so
+      // they get anisotropic-feeling treatment: low-ish roughness with strong
+      // normal relief so each slat edge catches light separately.
+      } else if (/wood|timber|deck|board|slat|louvre|louver|batten|screen/.test(name)) {
+        mat.roughness       = 0.48;
+        mat.metalness       = 0.0;
+        mat.envMapIntensity = 0.9;
+        if (mat.clearcoat !== undefined) { mat.clearcoat = 0.45; mat.clearcoatRoughness = 0.32; }
+        if (mat.normalMap) {
+          const sN = Math.min((mat.normalScale?.x || 1) * 2.0, 3.0);
+          mat.normalScale = new THREE.Vector2(sN, sN);
+        }
+
+      // ── SOFFIT / CEILING — always in shadow, must not go pure black ──────
+      } else if (/soffit|ceiling|underside|overhang/.test(name)) {
+        mat.roughness       = 0.70;
+        mat.metalness       = 0.0;
+        mat.envMapIntensity = 1.15;      // lifted by bounce light
+        mat.color.lerp(new THREE.Color(0xfff2dc), 0.10);
+
+      // ── STONE / MASONRY ─────────────────────────────────────────────────
+      } else if (/stone|gabion|brick|masonry|granite|travertine/.test(name)) {
+        mat.roughness       = 0.82;
+        mat.metalness       = 0.0;
+        mat.envMapIntensity = 0.40;
+        if (!mat.normalMap) { mat.normalMap = concreteNM; mat.normalScale = new THREE.Vector2(1.3, 1.3); }
+
+      // ── PLANTING IN PLANTERS ────────────────────────────────────────────
+      } else if (/plant|foliage|leaf|hedge|shrub|green/.test(name)) {
+        mat.roughness       = 0.88;
+        mat.metalness       = 0.0;
+        mat.envMapIntensity = 0.5;
+        if (mat.sheen !== undefined) { mat.sheen = 0.4; mat.sheenColor = new THREE.Color(0x9fd070); }
+
+      // ── DEFAULT ─────────────────────────────────────────────────────────
       } else {
-        // Amplify existing normal map slightly
-        const s = Math.min((mat.normalScale?.x || 1.0) * 1.3, 2.2);
-        mat.normalScale = new THREE.Vector2(s, s);
+        mat.roughness       = Math.max(0.34, Math.min(mat.roughness ?? 0.68, 0.82));
+        mat.metalness       = Math.min(mat.metalness ?? 0, 0.4);
+        mat.envMapIntensity = Math.max(mat.envMapIntensity ?? 1.0, 0.85);
+        if (!mat.normalMap) { mat.normalMap = concreteNM; mat.normalScale = new THREE.Vector2(0.5, 0.5); }
       }
 
-    // ── Timber / wood / deck ──────────────────────────────────────────────────
-    } else if (name.includes('wood') || name.includes('timber') || name.includes('deck')
-               || name.includes('board') || name.includes('slat')) {
-      mat.roughness = 0.70;
-      mat.metalness = 0.0;
-      mat.envMapIntensity = 0.55;
-      // Vertical timber slats on loft terraces — amplify normals for grain depth
-      if (mat.normalMap) {
-        const s = Math.min((mat.normalScale?.x || 1.0) * 1.6, 2.5);
-        mat.normalScale = new THREE.Vector2(s, s);
+      // Universal upgrades
+      if (mat.map) {
+        mat.map.anisotropy = _renderer ? _renderer.capabilities.getMaxAnisotropy() : 8;
+        // Slight contrast lift stops photogrammetry albedo looking washed out
+        if (mat.color && !/glass|window/.test(name)) mat.color.convertSRGBToLinear?.();
       }
+      if (mat.aoMap)  mat.aoMapIntensity = 1.15;
+      mat._baseEnvInt = mat.envMapIntensity;
+      mat.needsUpdate = true;
+    });
 
-    // ── White render trim / balcony edge / balustrade ─────────────────────────
-    } else if (name.includes('trim') || name.includes('balcon') || name.includes('balu')
-               || name.includes('parapet') || name.includes('edge')) {
-      mat.roughness = 0.52;
-      mat.metalness = 0.0;
-      mat.envMapIntensity = 0.5;
-
-    // ── Gabion / stone / laterite ground ─────────────────────────────────────
-    } else if (name.includes('stone') || name.includes('gabion') || name.includes('brick')
-               || name.includes('masonry')) {
-      mat.roughness = 0.92;
-      mat.metalness = 0.0;
-      mat.envMapIntensity = 0.15;
-
-    // ── Default: PBR-safe clamp (never fully matte, never fully metallic) ────
-    } else {
-      mat.roughness  = Math.max(0.42, Math.min(mat.roughness  ?? 0.75, 0.88));
-      mat.metalness  = Math.min(mat.metalness  ?? 0, 0.45);
-      mat.envMapIntensity = mat.envMapIntensity ?? 1.0;
-    }
-
-    // Universal: preserve + amplify existing normal maps; cast and receive shadow
-    if (mat.normalMap && mat.normalScale && !name.includes('concrete') && !name.includes('wall')) {
-      const s = Math.min(mat.normalScale.x * 1.35, 2.0);
-      mat.normalScale.set(s, s);
-    }
-
-    // Store base envMapIntensity so time-modulation can scale it
-    mat._baseEnvInt = mat.envMapIntensity;
-    child.castShadow    = true;
+    child.castShadow    = child.castShadow !== false;
     child.receiveShadow = true;
-    mat.needsUpdate     = true;
   });
 }
 
