@@ -592,12 +592,47 @@ function _getArchDetailMap(THREE) {
   return tex;
 }
 
-// Per-tier presets. Triplanar costs three texture fetches instead of one, so
-// Fast drops to a single planar projection and a much tighter fade.
+// ── Tiling PBR sets ───────────────────────────────────────────────────────
+//  Two source materials packed as two 512 cells in one 1024x512 sheet:
+//     cell 0  u[0.0,0.5)  Wood088 plywood   -> mask R  (louvre screens, doors)
+//     cell 1  u[0.5,1.0)  beige_wall_002    -> mask G  (walls) and B (soffit)
+//  detail-col : mean-normalised COLOUR MODULATION, 0.5 = neutral
+//  detail-nrs : R,G = normal XY   B = roughness   A = AO
+//
+//  Colour is a modulation rather than a colour because the atlas already owns
+//  the palette. A tiling map carrying real colour would show its tile as
+//  repetition across a flat wall, which is the loudest tell of a tiled texture.
+//  A ratio map about 1.0 adds grain, streaks and knots and repeats invisibly.
+//
+//  Walls and soffit share cell 1 and one tile scale on purpose: giving them
+//  separate scales would cost two more texture fetches per pixel to express a
+//  difference that reads just as well as a roughness and normal-strength offset.
+const DETAIL_COL_URL = 'assets/detail-col.webp';
+const DETAIL_NRS_URL = 'assets/detail-nrs.webp';
+
+let _detCol = null, _detNRS = null;
+function _getDetailSheets() {
+  if (_detCol) return [_detCol, _detNRS];
+  const L = new THREE.TextureLoader();
+  const cfg = (t, srgb) => {
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+    t.anisotropy = 8;
+    return t;
+  };
+  _detCol = cfg(L.load(DETAIL_COL_URL, t => { t.needsUpdate = true; },
+    undefined, () => console.warn('[XIX] detail-col.webp missing - detail layer inert')), false);
+  _detNRS = cfg(L.load(DETAIL_NRS_URL, t => { t.needsUpdate = true; },
+    undefined, () => console.warn('[XIX] detail-nrs.webp missing - detail layer inert')), false);
+  return [_detCol, _detNRS];
+}
+
+// tileT / tileB are metres per tile.  nrm / rgh / col are per-mask-channel
+// strengths in the order  [ timber, wall, soffit ].
 export const ARCH_DETAIL_TIERS = {
-  fast:     { meters: 0.85, normalStr: 0.30, roughStr: 0.10, fadeNear: 10, fadeFar: 26, triplanar: false },
-  balanced: { meters: 0.85, normalStr: 0.45, roughStr: 0.15, fadeNear: 18, fadeFar: 48, triplanar: true  },
-  rich:     { meters: 0.75, normalStr: 0.55, roughStr: 0.18, fadeNear: 26, fadeFar: 70, triplanar: true  },
+  fast:     { tileT: 0.55, tileB: 0.90, nrm: [0.55, 0.35, 0.40], rgh: 0.45, col: [0.55, 0.22, 0.30], ao: 0.35, fadeNear: 10, fadeFar: 26 },
+  balanced: { tileT: 0.55, tileB: 0.90, nrm: [0.80, 0.50, 0.58], rgh: 0.65, col: [0.75, 0.30, 0.40], ao: 0.50, fadeNear: 20, fadeFar: 52 },
+  rich:     { tileT: 0.50, tileB: 0.85, nrm: [0.95, 0.60, 0.70], rgh: 0.75, col: [0.80, 0.32, 0.44], ao: 0.60, fadeNear: 28, fadeFar: 76 },
 };
 
 // Every material we have patched, so setPerfModeGraphics can retune uniforms
@@ -608,25 +643,34 @@ function _applyArchDetail(mat) {
   if (!mat || !mat.isMeshStandardMaterial) return;
   const t = ARCH_DETAIL_TIERS[_perfMode] || ARCH_DETAIL_TIERS.balanced;
 
-  if (mat.userData._archDetail) {               // already patched — retune only
+  // The mask rides in the emissiveTexture slot. No mask means no material
+  // classification for this asset, so there is nothing to drive the sets with.
+  if (!mat.emissiveMap) return;
+  mat.emissive = new THREE.Color(0x000000);   // mask must never light anything
+  mat.emissiveIntensity = 0.0;
+
+  if (mat.userData._archDetail) {             // already patched - retune only
     const u = mat.userData._archDetail;
-    u.uMeters.value    = t.meters;
-    u.uNrmStr.value    = t.normalStr;
-    u.uRghStr.value    = t.roughStr;
-    u.uFadeNear.value  = t.fadeNear;
-    u.uFadeFar.value   = t.fadeFar;
-    u.uTriplanar.value = t.triplanar ? 1 : 0;
+    u.uTileT.value = t.tileT;  u.uTileB.value = t.tileB;
+    u.uNrmStr.value.fromArray(t.nrm);
+    u.uColStr.value.fromArray(t.col);
+    u.uRghMix.value = t.rgh;   u.uAoStr.value = t.ao;
+    u.uFadeNear.value = t.fadeNear;  u.uFadeFar.value = t.fadeFar;
     return;
   }
 
+  const [dc, dn] = _getDetailSheets();
   const U = {
-    uArchDetail: { value: _getArchDetailMap(THREE) },
-    uMeters:     { value: t.meters },
-    uNrmStr:     { value: t.normalStr },
-    uRghStr:     { value: t.roughStr },
-    uFadeNear:   { value: t.fadeNear },
-    uFadeFar:    { value: t.fadeFar },
-    uTriplanar:  { value: t.triplanar ? 1 : 0 },
+    uDetCol:   { value: dc },
+    uDetNRS:   { value: dn },
+    uTileT:    { value: t.tileT },
+    uTileB:    { value: t.tileB },
+    uNrmStr:   { value: new THREE.Vector3().fromArray(t.nrm) },
+    uColStr:   { value: new THREE.Vector3().fromArray(t.col) },
+    uRghMix:   { value: t.rgh },
+    uAoStr:    { value: t.ao },
+    uFadeNear: { value: t.fadeNear },
+    uFadeFar:  { value: t.fadeFar },
   };
   mat.userData._archDetail = U;
   _archDetailMats.add(mat);
@@ -649,58 +693,91 @@ function _applyArchDetail(mat) {
         '#include <common>',
         'varying vec3 vArchWPos;',
         'varying vec3 vArchWNrm;',
-        'uniform sampler2D uArchDetail;',
-        'uniform float uMeters;',
-        'uniform float uNrmStr;',
-        'uniform float uRghStr;',
+        'uniform sampler2D uDetCol;',
+        'uniform sampler2D uDetNRS;',
+        'uniform float uTileT;',
+        'uniform float uTileB;',
+        'uniform vec3  uNrmStr;',
+        'uniform vec3  uColStr;',
+        'uniform float uRghMix;',
+        'uniform float uAoStr;',
         'uniform float uFadeNear;',
         'uniform float uFadeFar;',
-        'uniform float uTriplanar;',
-        'vec4 archDetail( vec3 p, vec3 n ) {',
-        '  vec4 py = texture2D( uArchDetail, p.xz / uMeters );',
-        '  if ( uTriplanar < 0.5 ) return py;',
-        '  vec3 bw = pow( abs( n ), vec3( 6.0 ) );',
-        '  bw /= max( bw.x + bw.y + bw.z, 1e-4 );',
-        '  vec4 px = texture2D( uArchDetail, p.zy / uMeters );',
-        '  vec4 pz = texture2D( uArchDetail, p.xy / uMeters );',
-        '  return px * bw.x + py * bw.y + pz * bw.z;',
+        // Dominant-axis projection. Full triplanar would triple the fetch count
+        // to express a difference that only shows on curved surfaces; this
+        // building is box-like and the detail fades out before the 45deg seam
+        // is ever legible.
+        'vec2 archPlane( vec3 p, vec3 n, float m ) {',
+        '  vec3 an = abs( n );',
+        '  vec2 w = ( an.y > max( an.x, an.z ) ) ? p.xz',
+        '         : ( an.x > an.z ) ? p.zy : p.xy;',
+        '  return w / m;',
+        '}',
+        // Half-texel inset stops bilinear filtering bleeding one 512 cell into
+        // its neighbour across the u=0.5 join.
+        'vec2 archCell( vec2 w, float cell ) {',
+        '  vec2 f = clamp( fract( w ), 0.0015, 0.9985 );',
+        '  return vec2( ( f.x + cell ) * 0.5, f.y );',
         '}',
       ].join('\n'))
 
-      // <roughnessmap_fragment> runs BEFORE <normal_fragment_maps> in
-      // meshphysical_frag, so archD and archFade declared here are still in
-      // scope for the normal block below. A perfectly constant roughness
-      // across a wall is the loudest single tell that a surface is CG.
+      // <map_fragment> is the FIRST of the three chunks we touch, so the sample
+      // happens here and the results stay in main scope for the roughness and
+      // normal blocks further down.
+      .replace('#include <map_fragment>', [
+        '#include <map_fragment>',
+        'float archFade = 1.0 - smoothstep( uFadeNear, uFadeFar, length( vViewPosition ) );',
+        'vec3  archN    = normalize( vArchWNrm );',
+        'vec3  archM    = texture2D( emissiveMap, vEmissiveMapUv ).rgb;',
+        'float archWT   = archM.r;',
+        'float archWB   = archM.g + archM.b;',
+        'float archCov  = clamp( archWT + archWB, 0.0, 1.0 ) * archFade;',
+        // .yx swaps the plane axes for the timber cell only. Wood088's grain runs
+        // horizontally in the source, so on a vertical louvre it would band across
+        // the slats instead of running down them. Swapping maps world height onto
+        // the texture's U axis, which stands the grain upright.
+        'vec2  archUvT  = archCell( archPlane( vArchWPos, archN, uTileT ).yx, 0.0 );',
+        'vec2  archUvB  = archCell( archPlane( vArchWPos, archN, uTileB ), 1.0 );',
+        'float archTot  = max( archWT + archWB, 1e-4 );',
+        'vec3  archCol  = ( texture2D( uDetCol, archUvT ).rgb * archWT',
+        '                 + texture2D( uDetCol, archUvB ).rgb * archWB ) / archTot;',
+        'vec4  archNRS  = ( texture2D( uDetNRS, archUvT ) * archWT',
+        '                 + texture2D( uDetNRS, archUvB ) * archWB ) / archTot;',
+        'float archCS   = dot( uColStr, archM ) / archTot;',
+        'float archNS   = dot( uNrmStr, archM ) / archTot;',
+        // 0.5 is neutral in the modulation map, hence the x2.
+        'diffuseColor.rgb *= mix( vec3( 1.0 ), archCol * 2.0, archCov * archCS );',
+        'diffuseColor.rgb *= mix( 1.0, archNRS.a, archCov * uAoStr );',
+      ].join('\n'))
+
       .replace('#include <roughnessmap_fragment>', [
         '#include <roughnessmap_fragment>',
-        'float archFade = 1.0 - smoothstep( uFadeNear, uFadeFar, length( vViewPosition ) );',
-        'vec4 archD = archDetail( vArchWPos, normalize( vArchWNrm ) );',
-        'roughnessFactor = clamp( roughnessFactor + ( archD.a - 0.5 ) * uRghStr * archFade, 0.04, 1.0 );',
+        // Soffit reads slightly rougher than wall off the same source cell.
+        'float archRgh = archNRS.b + archM.b * 0.06;',
+        'roughnessFactor = clamp( mix( roughnessFactor, archRgh, uRghMix * archCov ), 0.04, 1.0 );',
       ].join('\n'))
 
       // Difference blend: add only the detail normal's deviation from flat, so
-      // the baked normal map underneath is preserved rather than replaced.
+      // the baked normal map underneath survives instead of being replaced.
       .replace('#include <normal_fragment_maps>', [
         '#include <normal_fragment_maps>',
         '{',
-        '  vec3 aWN  = normalize( vArchWNrm );',
-        '  vec3 aDN  = normalize( archD.rgb * 2.0 - 1.0 );',
+        '  vec3 aDN  = vec3( archNRS.rg * 2.0 - 1.0, 0.0 );',
+        '  aDN.z     = sqrt( max( 1.0 - dot( aDN.xy, aDN.xy ), 1e-4 ) );',
         '  vec3 aDPX = dFdx( vArchWPos );',
-        '  vec3 aT   = aDPX - aWN * dot( aWN, aDPX );',
+        '  vec3 aT   = aDPX - archN * dot( archN, aDPX );',
         '  if ( length( aT ) > 1e-5 ) {',
         '    aT = normalize( aT );',
-        '    vec3 aB = normalize( cross( aWN, aT ) );',
-        '    vec3 aW = normalize( aT * aDN.x + aB * aDN.y + aWN * aDN.z );',
-        '    vec3 aV = normalize( ( viewMatrix * vec4( aW,  0.0 ) ).xyz );',
-        '    vec3 aF = normalize( ( viewMatrix * vec4( aWN, 0.0 ) ).xyz );',
-        '    normal = normalize( normal + ( aV - aF ) * uNrmStr * archFade );',
+        '    vec3 aB = normalize( cross( archN, aT ) );',
+        '    vec3 aW = normalize( aT * aDN.x + aB * aDN.y + archN * aDN.z );',
+        '    vec3 aV = normalize( ( viewMatrix * vec4( aW,    0.0 ) ).xyz );',
+        '    vec3 aF = normalize( ( viewMatrix * vec4( archN, 0.0 ) ).xyz );',
+        '    normal = normalize( normal + ( aV - aF ) * archNS * archCov );',
         '  }',
         '}',
       ].join('\n'));
   };
 
-  // Distinguishes the triplanar and single-plane programs in the cache.
-  mat.customProgramCacheKey = () => 'archDetail-' + (U.uTriplanar.value ? 't' : 's');
   mat.needsUpdate = true;
 }
 
@@ -744,9 +821,14 @@ export function applyPS4Materials(gltfScene) {
         //  anything but noise. The current bake is an honest band-pass micro-
         //  relief map with glass masked to zero, so those multipliers now just
         //  amplify grain and blow the highlights. Dial them back to neutral.
-        mat.envMapIntensity = 1.05;
-        mat.normalScale     = new THREE.Vector2(0.95, 0.95);
-        mat.aoMapIntensity  = 1.0;                  // the AO map is real now
+        //  envMapIntensity was cut to 1.05 in the previous pass at the same time
+        //  as an AO map was added for the first time. On a facade lit mainly by
+        //  IBL those two dimmers multiply, and GTAO multiplies again on top —
+        //  the villa lost roughly a third of its light in one step. The AO map
+        //  is now shallow (0.78–1.0) so env intensity goes back up.
+        mat.envMapIntensity = 1.30;
+        mat.normalScale     = new THREE.Vector2(1.15, 1.15);  // timber grain is the relief now
+        mat.aoMapIntensity  = 0.90;                 // GTAO already handles the macro occlusion
         if (mat.map) mat.map.anisotropy = _renderer ? _renderer.capabilities.getMaxAnisotropy() : 8;
         if (mat.normalMap)    mat.normalMap.anisotropy    = mat.map.anisotropy;
         if (mat.roughnessMap) mat.roughnessMap.anisotropy = mat.map.anisotropy;
