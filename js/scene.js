@@ -1323,7 +1323,8 @@ function addPoloField() {
     uniform sampler2D uGrassRgh;
     uniform sampler2D uGrassAO;
     uniform sampler2D uGrassHgt;
-    uniform float uHasTex;    // 1.0 when colour + normal are loaded
+    uniform float uHasTex;
+    uniform float uTexMeters;    // 1.0 when colour + normal are loaded
 
     varying vec2 vUv;
     varying vec3 vWorldPos;
@@ -1424,19 +1425,30 @@ function addPoloField() {
       if (uHasTex > 0.5) {
         float dist = length(cameraPosition - vWorldPos);
 
-        // Two scales only, and the second is a gentle de-tiling pass rather
-        // than a detail multiplier. No parallax: it was the direct cause of
-        // the swirling flow pattern.
-        vec2 uvA = vUv;
-        vec2 uvB = vUv * 3.17 + vec2(0.41, 0.23);
+        // ── PHYSICALLY-SCALED UVs ─────────────────────────────────────────
+        // Sample by world position in metres, NOT by vUv. One texture tile now
+        // covers uTexMeters (2m) of real ground, so the 274 x 146m pitch is
+        // tiled 137 x 73 times. Blades render at true physical size.
+        vec2 uvA = vWorldPos.xz / uTexMeters;
+
+        // Second sample at an irrational multiple + offset breaks the visible
+        // grid that regular tiling would otherwise produce.
+        vec2 uvB = vWorldPos.xz / (uTexMeters * 7.31) + vec2(0.41, 0.23);
+
+        // ── DISTANCE LOD ──────────────────────────────────────────────────
+        // At 137 tiles across the pitch the far end is far below one texel per
+        // pixel. Mipmaps handle most of it, but we also fade toward the macro
+        // sample with distance so the horizon settles instead of shimmering.
+        float lodFade = smoothstep(45.0, 190.0, dist);
 
         vec3 cA = texture2D(uGrassCol, uvA).rgb;
         vec3 cB = texture2D(uGrassCol, uvB).rgb;
 
-        // Break tiling by averaging toward the second sample — NOT multiplying.
-        // Multiplying two colour maps darkens and saturates into a fake look.
-        float detilt = 1.0 - smoothstep(20.0, 75.0, dist);
-        vec3 turfCol = mix(cA, (cA + cB) * 0.5, 0.35 * detilt);
+        // Break tiling by averaging toward the macro sample — never multiplying
+        // (multiplying two colour maps darkens and over-saturates).
+        // Near: mostly the detailed sample. Far: mostly macro, which mipmaps
+        // cleanly and removes high-frequency aliasing at the horizon.
+        vec3 turfCol = mix(cA, (cA + cB) * 0.5, 0.30 + lodFade * 0.45);
 
         // ── ALBEDO: the texture is the base, mow stripes tint it ──────────
         // Take the photo directly, then apply our chevron as a gentle ±7%
@@ -1454,9 +1466,10 @@ function addPoloField() {
         roughness = 0.88 + rTex * 0.11;          // 0.88 – 0.99
         roughness = mix(roughness, 0.55, uWetness * 0.7);  // only rain adds sheen
 
-        // ── NORMAL: shallow. Just enough to catch directional light. ──────
+        // ── NORMAL: shallow, and flattened at distance ────────────────────
+        // Far-field normal detail is sub-pixel and only produces sparkle.
         vec3 nA = texture2D(uGrassNrm, uvA).rgb * 2.0 - 1.0;
-        turfN = normalize(nA);
+        turfN = normalize(mix(nA, vec3(0.0, 0.0, 1.0), lodFade));
 
         // ── AO: single scale, gentle ──────────────────────────────────────
         turfAO = mix(1.0, texture2D(uGrassAO, uvA).r, 0.45);
@@ -1560,8 +1573,13 @@ function addPoloField() {
       uGrassNrm:  { value: null },  // normal (GL convention)
       uGrassRgh:  { value: null },  // roughness
       uGrassAO:   { value: null },  // ambient occlusion
-      uGrassHgt:  { value: null },  // displacement — drives parallax depth
+      uGrassHgt:  { value: null },  // displacement (currently unused)
       uHasTex:    { value: 0.0 },   // 1.0 once colour + normal have loaded
+      // Physical footprint of one texture tile, in metres. ambientCG Grass004
+      // photographs roughly a 2m x 2m patch. Sampling is done in world metres
+      // (vWorldPos.xz / uTexMeters), so the tiling is correct no matter what
+      // the geometry's UV layout is. Lower this for finer blades.
+      uTexMeters: { value: 2.0 },
     },
   });
 
@@ -1580,14 +1598,19 @@ function addPoloField() {
   //  Everything degrades to the procedural shader if the files are absent.
   (function loadTurf() {
     const L = new THREE.TextureLoader();
-    const REPEAT_X = 70, REPEAT_Y = 38;
     const setup = (t, srgb) => {
       if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+      // RepeatWrapping IS required — the shader feeds UVs far beyond 1.0.
       t.wrapS = t.wrapT = THREE.RepeatWrapping;
-      t.repeat.set(REPEAT_X, REPEAT_Y);
+      // NOTE: t.repeat is deliberately NOT set. Three.js applies .repeat via a
+      // uv-transform matrix that it injects into built-in materials only. A raw
+      // ShaderMaterial never receives it, so .repeat silently does nothing and
+      // the texture ends up stretched once across the entire mesh. Tiling is
+      // handled explicitly in the shader instead, in world metres.
       t.anisotropy = PERF_MODE === 'rich' ? 16 : PERF_MODE === 'balanced' ? 8 : 4;
       t.generateMipmaps = true;
       t.minFilter = THREE.LinearMipmapLinearFilter;
+      t.magFilter = THREE.LinearFilter;
       return t;
     };
     let got = 0;
