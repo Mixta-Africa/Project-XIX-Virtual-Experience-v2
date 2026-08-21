@@ -1190,23 +1190,35 @@ const MATS = {
 };
 
 function addGround() {
-  const groundMat = buildGroundMaterial();
-
-  // Single large ground plane — the GLSL shader handles all zone transitions internally.
-  // 900×700m covers the full estate footprint plus surroundings.
-  const gp = new THREE.Mesh(new THREE.PlaneGeometry(900, 700, 8, 8), groundMat);
+  // Estate floor: procedural laterite/grass zones (GLSL, no tiling artefacts).
+  const gp = new THREE.Mesh(new THREE.PlaneGeometry(900, 700, 8, 8), buildGroundMaterial());
   gp.rotation.x = -Math.PI / 2;
   gp.position.set(0, 0, 30);
   gp.receiveShadow = true;
-  scene.add(gp);
-  _terrainMeshes.push(gp);
+  scene.add(gp); _terrainMeshes.push(gp);
 
-  // Clubhouse forecourt: concrete apron (unchanged — a real surface material)
+  // ── EVERY GREEN AREA USES THE SAME TURF ────────────────────────────────
+  // All of these sample the identical world-space grid, so they tile into one
+  // another seamlessly — no seams, no scale jumps between zones.
+  const greens = [
+    // [ width, depth, [x, y, z], options ]
+    [ 180, 110, [-260, 0.10, -40], { chevron:true  } ],  // training field
+    [ 100, 300, [-232, 0.09,  10], { chevron:false } ],  // west villa frontage
+    [ 100, 300, [ 232, 0.09,  10], { chevron:false } ],  // east villa frontage
+    [ 380,  46, [   0, 0.09, -168], { chevron:false } ], // north arc frontage / lake lawn
+    [ 380,  52, [   0, 0.09,  168], { chevron:false } ], // south / clubhouse lawn
+    [  80,  90, [ 240, 0.09,  -30], { chevron:false } ], // paddock turf
+    [  80,  80, [ 240, 0.09,   45], { chevron:false } ], // game park turf
+    [ 120, 150, [-330, 0.09,   40], { chevron:false } ], // west compound lawn
+  ];
+  greens.forEach(([w, dp, pos, o]) => {
+    const m = turfPlane(w, dp, pos, Object.assign({ markings:false, wear:false, wind:1.0 }, o));
+    scene.add(m); _terrainMeshes.push(m);
+  });
+
+  // Hard surfaces
   s(plane(180, 80, MATS.concrete(), [0, .02, 122]));
-  // Stables cobblestone yard
-  s(plane(90, 70, MATS.cobble(), [-355, .02, 90]));
-  // West compound: additional lawn (slightly above ground to prevent z-fighting)
-  // West compound lawn handled by ground GLSL shader
+  s(plane(90,  70, MATS.cobble(),   [-355, .02, 90]));
 }
 
 function _makeMicroTexture(col1, col2, planeW, planeD) {
@@ -1252,416 +1264,400 @@ function addGrassRing() {
   return;
 }
 
-function addPoloField() {
-  // ─── Vertex shader — blade geometry displacement ───────────────────────
-  const vertexShader = /* glsl */`
-    uniform float uTime;
-    uniform float uBladeStr;
-    varying vec2  vUv;
-    varying vec3  vWorldPos;
-    varying vec3  vNormal;
-    varying float vBladeTop;
+// ══════════════════════════════════════════════════════════════════════════════
+//  SHARED TURF SYSTEM
+// ══════════════════════════════════════════════════════════════════════════════
+//  ONE material factory drives every green surface in the estate: the polo
+//  pitch, the training field, villa lawns, the paddock, verges — everything.
+//
+//  All sampling is done in WORLD METRES (vWorldPos.xz / uTexMeters), never in
+//  UV space. Two consequences that matter:
+//    1. Tiling is physically correct — one tile = 2m of real ground.
+//    2. Every patch is automatically seamless and continuous with every other
+//       patch, because they all read from the same world-space grid. Walking
+//       from the villa lawn onto the pitch shows no seam and no scale change.
+//
+//  Per-surface behaviour is switched by uniforms, not by separate shaders:
+//    uMarkings  1 = FIP pitch lines painted into the turf
+//    uChevron   1 = mown chevron banding
+//    uWear      1 = dirt wear at goal mouths
+// ══════════════════════════════════════════════════════════════════════════════
 
-    float hashv(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+const TURF_TEX = { col:null, nrm:null, rgh:null, ao:null, dirtCol:null, dirtNrm:null, dirtRgh:null, ready:0 };
+const _turfMaterials = [];
 
-    void main(){
-      vUv = uv;
-      vec3 pos = position;
+function _loadTurfTextures() {
+  if (TURF_TEX._started) return;
+  TURF_TEX._started = true;
+  const L = new THREE.TextureLoader();
+  const aniso = PERF_MODE === 'rich' ? 16 : PERF_MODE === 'balanced' ? 8 : 4;
+  const setup = (t, srgb) => {
+    if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+    // RepeatWrapping is required: the shader feeds UVs far above 1.0.
+    // t.repeat is NOT used — Three.js only injects the uv-transform into its
+    // built-in materials, never into a raw ShaderMaterial. Tiling is explicit.
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.anisotropy = aniso;
+    t.generateMipmaps = true;
+    t.minFilter = THREE.LinearMipmapLinearFilter;
+    t.magFilter = THREE.LinearFilter;
+    return t;
+  };
+  const push = (key, uni, srgb) => (t) => {
+    TURF_TEX[key] = setup(t, srgb);
+    _turfMaterials.forEach(m => { m.uniforms[uni].value = TURF_TEX[key]; });
+    if (key === 'col' || key === 'nrm') {
+      if (++TURF_TEX.ready >= 2) _turfMaterials.forEach(m => { m.uniforms.uHasTex.value = 1.0; });
+    }
+    if (key === 'dirtCol') _turfMaterials.forEach(m => { m.uniforms.uHasDirt.value = 1.0; });
+  };
+  const quiet = () => {};
+  L.load('assets/textures/grass-color.jpg',     push('col','uGrassCol',true),  undefined, quiet);
+  L.load('assets/textures/grass-normal.jpg',    push('nrm','uGrassNrm',false), undefined, quiet);
+  L.load('assets/textures/grass-roughness.jpg', push('rgh','uGrassRgh',false), undefined, quiet);
+  L.load('assets/textures/grass-ao.jpg',        push('ao','uGrassAO',false),   undefined, quiet);
+  L.load('assets/textures/dirt-color.png',      push('dirtCol','uDirtCol',true),  undefined, quiet);
+  L.load('assets/textures/dirt-normal.png',     push('dirtNrm','uDirtNrm',false), undefined, quiet);
+  L.load('assets/textures/dirt-roughness.png',  push('dirtRgh','uDirtRgh',false), undefined, quiet);
+}
 
-      // World cell: one unique blade per ~1.25m²
-      vec2 cell  = floor(pos.xy / 1.25);
-      float seed = hashv(cell);
-      float seed2= hashv(cell + vec2(3.7, 8.1));
+const TURF_VERT = /* glsl */`
+  uniform float uTime;
+  uniform float uBladeStr;
+  varying vec2  vUv;
+  varying vec3  vWorldPos;
+  varying vec3  vNormal;
+  varying float vBladeTop;
 
-      // Blade tip weight: in PlaneGeometry pos.y goes -0.5→+0.5 per segment
-      // We remap so the "top" of each local quad = 1.0
-      float stripV   = fract(pos.y / 1.25 + 0.5);  // 0=base 1=tip within each blade strip
-      vBladeTop = stripV * stripV;                   // quadratic — sharper at tip
+  float hashv(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
 
-      if(uBladeStr > 0.05){
-        float bladeH   = (seed  * 0.10 + 0.04) * uBladeStr;  // 4–14cm height
-        float leanAng  = seed2 * 6.2831;
-        float leanAmt  = (seed2 * 0.4 + 0.2) * 0.06 * uBladeStr;
+  void main(){
+    vUv = uv;
+    vec3 pos = position;
+    vec2 cell  = floor(pos.xy / 1.25);
+    float seed = hashv(cell);
+    float seed2= hashv(cell + vec2(3.7, 8.1));
+    float stripV = fract(pos.y / 1.25 + 0.5);
+    vBladeTop = stripV * stripV;
 
-        // Vertical displacement (Z because plane is XY before rotation)
-        pos.z += bladeH * stripV;
+    if(uBladeStr > 0.05){
+      float bladeH  = (seed * 0.10 + 0.04) * uBladeStr;
+      float leanAng = seed2 * 6.2831;
+      float leanAmt = (seed2 * 0.4 + 0.2) * 0.06 * uBladeStr;
+      pos.z += bladeH * stripV;
+      pos.x += cos(leanAng) * leanAmt * stripV;
+      pos.y += sin(leanAng) * leanAmt * stripV;
 
-        // Lean: tips shift in a unique XY direction
-        pos.x += cos(leanAng) * leanAmt * stripV;
-        pos.y += sin(leanAng) * leanAmt * stripV;
+      // Wind gust travelling across the field, in world space so the wave is
+      // continuous across every separate turf mesh in the estate.
+      vec2 wp = (modelMatrix * vec4(pos,1.0)).xz;
+      float gust = sin(dot(wp, vec2(0.055, 0.031)) - uTime * 1.25) * 0.5 + 0.5;
+      gust = pow(gust, 2.0);
+      float sway = (sin(uTime * 1.15 + seed * 6.28 + wp.x * 0.25) * 0.020
+                  + sin(uTime * 0.72 + seed2 * 3.14) * 0.010) * (0.35 + gust * 1.05);
+      pos.x += sway * stripV;
+      pos.y += sway * 0.45 * stripV;
 
-        // Wind: tips sway with time + per-blade phase
-        float wind = sin(uTime * 1.15 + seed * 6.28 + pos.x * 0.25) * 0.018
-                   + sin(uTime * 0.72 + seed2 * 3.14) * 0.009;
-        pos.x += wind * stripV;
+      vec3 N = normalize(vec3(-cos(leanAng)*leanAmt*3.0, -sin(leanAng)*leanAmt*3.0, 1.0));
+      vNormal = normalize(normalMatrix * N);
+    } else {
+      vNormal = normalize(normalMatrix * vec3(0.0, 0.0, 1.0));
+    }
 
-        // Tilted normal follows lean direction
-        vec3 N = normalize(vec3(-cos(leanAng)*leanAmt*3.0,
-                                -sin(leanAng)*leanAmt*3.0,
-                                 1.0));
-        vNormal = normalize(normalMatrix * N);
-      } else {
-        vNormal = normalize(normalMatrix * vec3(0.0, 0.0, 1.0));
+    vWorldPos   = (modelMatrix * vec4(pos, 1.0)).xyz;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+  }
+`;
+
+const TURF_FRAG = /* glsl */`
+  precision highp float;
+
+  uniform float uTime;
+  uniform vec3  uSunDir;
+  uniform vec3  uSunColor;
+  uniform float uWetness;
+  uniform float uSheen;
+  uniform float uTexMeters;
+  uniform float uHasTex;
+  uniform float uHasDirt;
+  uniform float uMarkings;
+  uniform float uChevron;
+  uniform float uWear;
+  uniform float uWindStr;
+
+  uniform sampler2D uGrassCol;
+  uniform sampler2D uGrassNrm;
+  uniform sampler2D uGrassRgh;
+  uniform sampler2D uGrassAO;
+  uniform sampler2D uDirtCol;
+  uniform sampler2D uDirtNrm;
+  uniform sampler2D uDirtRgh;
+
+  varying vec2  vUv;
+  varying vec3  vWorldPos;
+  varying vec3  vNormal;
+  varying float vBladeTop;
+
+  float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
+  float noise(vec2 p){
+    vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
+    return mix(mix(hash(i),hash(i+vec2(1,0)),f.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y);
+  }
+  float fbm(vec2 p){ float v=0.0,a=0.5; for(int i=0;i<5;i++){v+=a*noise(p);p*=2.1;a*=0.5;} return v; }
+  float sdLine(float pos, float halfW){ return smoothstep(halfW+0.14, halfW-0.05, abs(pos)); }
+
+  void main(){
+    float wx = vWorldPos.x;
+    float wz = vWorldPos.z;
+    float dist = length(cameraPosition - vWorldPos);
+
+    // ── CHEVRON MOW BANDS ────────────────────────────────────────────────
+    float band   = floor(((wx + wz) * 0.7071) / 10.0);
+    float isEven = mix(0.5, mod(band, 2.0), uChevron);
+
+    vec3  albedo    = vec3(0.30, 0.50, 0.22);
+    float roughness = 0.94;
+    vec3  turfN     = vec3(0.0, 0.0, 1.0);
+
+    if (uHasTex > 0.5) {
+      // Physically-scaled sampling: one tile = uTexMeters of real ground.
+      vec2 uvA = vWorldPos.xz / uTexMeters;
+      vec2 uvB = vWorldPos.xz / (uTexMeters * 7.31) + vec2(0.41, 0.23);
+      float lodFade = smoothstep(45.0, 190.0, dist);
+
+      vec3 cA = texture2D(uGrassCol, uvA).rgb;
+      vec3 cB = texture2D(uGrassCol, uvB).rgb;
+      vec3 turfCol = mix(cA, (cA + cB) * 0.5, 0.30 + lodFade * 0.45);
+
+      albedo = turfCol * mix(0.93, 1.07, isEven);
+      float health = fbm(vWorldPos.xz * 0.012 + 41.0);
+      albedo *= mix(0.94, 1.06, health);
+
+      float rTex = texture2D(uGrassRgh, uvA).r;
+      roughness  = 0.88 + rTex * 0.11;
+      roughness  = mix(roughness, 0.55, uWetness * 0.7);
+
+      vec3 nA = texture2D(uGrassNrm, uvA).rgb * 2.0 - 1.0;
+      turfN   = normalize(mix(nA, vec3(0.0,0.0,1.0), lodFade));
+
+      albedo *= mix(1.0, texture2D(uGrassAO, uvA).r, 0.45);
+    } else {
+      float bn = noise(vec2(wx*7.5, wz*7.5));
+      float bs = noise(vec2(wx*26.0 + wz*4.0, wz*3.0));
+      albedo *= 0.80 + (bn*0.55 + bs*0.45) * 0.40;
+      albedo  = mix(albedo * 0.86, albedo * 1.10, isEven);
+    }
+
+    // ── WIND GUSTS ACROSS THE SURFACE ────────────────────────────────────
+    // Blades bending away from the viewer expose their paler undersides, so a
+    // gust reads as a light band travelling over the turf. Two waves at
+    // different speeds and angles keep it from looking like a scrolling stripe.
+    if (uWindStr > 0.01) {
+      float g1 = sin(dot(vWorldPos.xz, vec2(0.055, 0.031)) - uTime * 1.25);
+      float g2 = sin(dot(vWorldPos.xz, vec2(-0.026, 0.048)) - uTime * 0.83 + 1.7);
+      float turb = fbm(vWorldPos.xz * 0.05 + uTime * 0.06) - 0.5;
+      float gust = (g1 * 0.6 + g2 * 0.4 + turb * 0.7) * 0.5 + 0.5;
+      gust = smoothstep(0.35, 0.95, gust);
+      albedo *= 1.0 + gust * 0.13 * uWindStr;
+      albedo  = mix(albedo, albedo * vec3(1.04, 1.06, 0.94), gust * 0.35 * uWindStr);
+      roughness += gust * 0.03 * uWindStr;
+    }
+
+    // ── GOAL-MOUTH WEAR (dirt showing through worn turf) ─────────────────
+    if (uWear > 0.5) {
+      // Two ellipses at the goal mouths, plus scuffing along the centre line.
+      float g1 = length(vec2((wx + 137.0) / 26.0, wz / 15.0));
+      float g2 = length(vec2((wx - 137.0) / 26.0, wz / 15.0));
+      float goalWear = max(1.0 - smoothstep(0.35, 1.0, g1), 1.0 - smoothstep(0.35, 1.0, g2));
+      float centreWear = (1.0 - smoothstep(0.0, 22.0, abs(wx))) * (1.0 - smoothstep(0.0, 46.0, abs(wz))) * 0.45;
+      float patchy = fbm(vWorldPos.xz * 0.09 + 7.3);
+      float wear = clamp((max(goalWear, centreWear) * 1.25) * (0.45 + patchy * 0.9), 0.0, 1.0);
+      wear = smoothstep(0.18, 0.92, wear);
+
+      vec3  dirtCol = vec3(0.42, 0.26, 0.15);
+      float dirtRgh = 0.97;
+      if (uHasDirt > 0.5) {
+        vec2 duv = vWorldPos.xz / (uTexMeters * 1.5);
+        dirtCol = texture2D(uDirtCol, duv).rgb;
+        dirtRgh = 0.90 + texture2D(uDirtRgh, duv).r * 0.09;
+        vec3 dn = texture2D(uDirtNrm, duv).rgb * 2.0 - 1.0;
+        turfN = normalize(mix(turfN, dn, wear));
       }
-
-      vWorldPos   = (modelMatrix * vec4(pos, 1.0)).xyz;
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
-    }
-  `;
-
-  // ─── Fragment shader — FBM turf, chevron mow, yard lines, sheen ─────────
-  const fragmentShader = /* glsl */`
-    precision highp float;
-
-    uniform float uTime;
-    uniform vec3  uSunDir;
-    uniform vec3  uSunColor;
-    uniform float uWetness;   // 0 = dry, 1 = wet (rain weather)
-    uniform float uSheen;     // 0 = fast (off), 1 = balanced/rich
-    uniform sampler2D uGrassCol;
-    uniform sampler2D uGrassNrm;
-    uniform sampler2D uGrassRgh;
-    uniform sampler2D uGrassAO;
-    uniform sampler2D uGrassHgt;
-    uniform float uHasTex;
-    uniform float uTexMeters;    // 1.0 when colour + normal are loaded
-
-    varying vec2 vUv;
-    varying vec3 vWorldPos;
-    varying vec3 vNormal;
-    varying float vBladeTop;
-
-    // ── Noise helpers (from realism-upgrade.js — 5-octave FBM) ───────────
-    float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-    float noise(vec2 p) {
-      vec2 i = floor(p), f = fract(p);
-      f = f * f * (3.0 - 2.0 * f);
-      return mix(mix(hash(i), hash(i + vec2(1,0)), f.x),
-                 mix(hash(i + vec2(0,1)), hash(i + vec2(1,1)), f.x), f.y);
-    }
-    float fbm(vec2 p) {
-      float v = 0.0, a = 0.5;
-      for (int i = 0; i < 5; i++) { v += a * noise(p); p *= 2.1; a *= 0.5; }
-      return v;
+      // Thinning turf first, then bare earth
+      albedo    = mix(albedo, albedo * vec3(0.86, 0.80, 0.62), min(wear * 1.6, 1.0));
+      albedo    = mix(albedo, dirtCol, wear * 0.88);
+      roughness = mix(roughness, dirtRgh, wear);
     }
 
-    // ── Smooth line helper ────────────────────────────────────────────────
-    float sdLine(float pos, float halfW) {
-      return smoothstep(halfW + 0.15, halfW - 0.05, abs(pos));
-    }
-
-    void main() {
-      float wx = vWorldPos.x;   // −137 → +137 (long axis)
-      float wz = vWorldPos.z;   // −73  → +73  (short axis)
-
-      // ── 1. CHEVRON MOW PATTERN (45° diagonal, 10m bands) ─────────────
-      float chevronAxis = (wx + wz) * 0.7071;
-      float band        = floor(chevronAxis / 10.0);
-      float isEven      = mod(band, 2.0);
-
-      // ── 2. FBM TURF DETAIL (3 scales — blade / patch / macro) ────────
-      float micro = fbm(vUv * 800.0 + uTime * 0.018);  // blade clumping
-      float meso  = fbm(vUv * 120.0);                   // patch variation
-      float macro = fbm(vUv *  20.0);                   // colour drift
-
-      // ── 3. GRASS BASE COLOUR — dry vs wet ────────────────────────────
-      // Lagos polo pitch: bright saturated turf — think Guards Polo Club, not a football pitch
-      // Light band: #5DA83C (the well-lit mow pass), Dark band: #3A7028 (the shadow-lean pass)
-      // ~30% luminance difference matches real turf photography from elevation
-      vec3 dryLight  = vec3(0.357, 0.659, 0.271);
-      vec3 dryDark   = vec3(0.259, 0.478, 0.188);
-      vec3 wetLight  = vec3(0.188, 0.400, 0.141);
-      vec3 wetDark   = vec3(0.122, 0.282, 0.094);
-      vec3 colLight  = mix(dryLight, wetLight, uWetness);
-      vec3 colDark   = mix(dryDark,  wetDark,  uWetness);
-      float fbmBlend = mix(micro * 0.6 + 0.4, macro, 0.80);
-      float shade    = mix(0.94, 1.0, fbmBlend);
-      vec3 albedo    = mix(colDark, colLight, isEven) * shade;
-      // Retroreflection: grass brightens at grazing angles — far field stays visible
-      vec3 V_dir = normalize(cameraPosition - vWorldPos);
-      float grazingFactor = 1.0 - max(dot(V_dir, vec3(0.0, 1.0, 0.0)), 0.0);
-      albedo = albedo * (1.0 + grazingFactor * 0.28);
-      float roughness = mix(0.92, 0.42, uWetness);
-      roughness      *= mix(0.94, 1.0, meso);
-
-      // ── 5. YARD LINES IN SHADER (world-space SDF) ─────────────────────
-      // Centre line
-      float centreLine = sdLine(wx, 0.22);
-      // Yard lines: 27.4m, 36.6m, 54.9m from each goal line (x = ±137)
-      float yl1 = sdLine(abs(wx) - (137.0 - 27.4), 0.22);
-      float yl2 = sdLine(abs(wx) - (137.0 - 36.6), 0.22);
-      float yl3 = sdLine(abs(wx) - (137.0 - 54.9), 0.22);
-      // Goal lines
+    // ── PITCH MARKINGS — PAINTED INTO THE TURF ───────────────────────────
+    // Not a white rectangle laid over the grass. Line marking paint coats the
+    // blades: it desaturates and lifts them toward white while the underlying
+    // blade texture, shadow and clumping all still read through. So we keep the
+    // sampled luminance and push chroma out, exactly like a screen/overlay
+    // blend rather than a flat fill.
+    if (uMarkings > 0.5) {
+      float lw = 0.22;
+      float centreLine = sdLine(wx, lw);
+      float yl1 = sdLine(abs(wx) - (137.0 - 27.4), lw);
+      float yl2 = sdLine(abs(wx) - (137.0 - 36.6), lw);
+      float yl3 = sdLine(abs(wx) - (137.0 - 54.9), lw);
       float gl  = sdLine(abs(wx) - 137.0, 0.30);
-      // Side board lines
-      float sl  = sdLine(abs(wz) - 73.0,  0.22);
+      float sl  = sdLine(abs(wz) - 73.0,  lw);
+      float lines = max(max(max(max(centreLine, yl1), max(yl2, yl3)), gl), sl);
 
-      float allLines = max(max(max(max(centreLine, yl1), max(yl2, yl3)), gl), sl);
-      vec3  lineCol  = vec3(0.952, 0.945, 0.890) * (0.92 + 0.08 * micro);
-      albedo = mix(albedo, lineCol, allLines * 0.94);
+      float arc1 = sdLine(length(vec2(wx - 137.0, wz)) - 36.0, lw);
+      float arc2 = sdLine(length(vec2(wx + 137.0, wz)) - 36.0, lw);
+      float inField = step(abs(wx), 137.0) * step(abs(wz), 73.0);
+      lines = max(lines, max(arc1, arc2) * inField);
 
-      // ── 6. GOAL MOUTH PENALTY ARCS (FIP standard, r ≈ 36m) ───────────
-      // Arc centres are at the goal lines (x = ±137), centred on z = 0
-      float arcDist1 = length(vec2(wx - 137.0, wz)) - 36.0;
-      float arcDist2 = length(vec2(wx + 137.0, wz)) - 36.0;
-      float arcLine  = max(sdLine(arcDist1, 0.22), sdLine(arcDist2, 0.22));
-      // Only draw arc where it falls inside the field bounds
-      float insideField = step(abs(wx), 137.0) * step(abs(wz), 73.0);
-      albedo = mix(albedo, lineCol, arcLine * 0.90 * insideField);
+      // Paint is worn and re-applied — it is never perfectly opaque or straight.
+      float paintWear = 0.62 + fbm(vWorldPos.xz * 1.6) * 0.55;
+      float paint = clamp(lines * paintWear, 0.0, 1.0);
 
-      // ── 7. BLADE DETAIL ───────────────────────────────────────────────
-      // ══════════════════════════════════════════════════════════════════
-      //  (a) PHOTOGRAPHIC TURF — render the texture FAITHFULLY
-      // ══════════════════════════════════════════════════════════════════
-      //  Previous version pushed normal strength to 1.9 and added parallax
-      //  offset, which turned a matte surface into a swirling glossy one that
-      //  looked like oil on water. Grass is a near-pure diffuse material:
-      //  roughness ~0.95, almost no specular, very shallow normal relief.
-      //  The photo IS the look — the shader's job is to show it, not restyle it.
-      // ══════════════════════════════════════════════════════════════════
-      vec3  turfN  = vec3(0.0, 0.0, 1.0);
-      float turfAO = 1.0;
-
-      if (uHasTex > 0.5) {
-        float dist = length(cameraPosition - vWorldPos);
-
-        // ── PHYSICALLY-SCALED UVs ─────────────────────────────────────────
-        // Sample by world position in metres, NOT by vUv. One texture tile now
-        // covers uTexMeters (2m) of real ground, so the 274 x 146m pitch is
-        // tiled 137 x 73 times. Blades render at true physical size.
-        vec2 uvA = vWorldPos.xz / uTexMeters;
-
-        // Second sample at an irrational multiple + offset breaks the visible
-        // grid that regular tiling would otherwise produce.
-        vec2 uvB = vWorldPos.xz / (uTexMeters * 7.31) + vec2(0.41, 0.23);
-
-        // ── DISTANCE LOD ──────────────────────────────────────────────────
-        // At 137 tiles across the pitch the far end is far below one texel per
-        // pixel. Mipmaps handle most of it, but we also fade toward the macro
-        // sample with distance so the horizon settles instead of shimmering.
-        float lodFade = smoothstep(45.0, 190.0, dist);
-
-        vec3 cA = texture2D(uGrassCol, uvA).rgb;
-        vec3 cB = texture2D(uGrassCol, uvB).rgb;
-
-        // Break tiling by averaging toward the macro sample — never multiplying
-        // (multiplying two colour maps darkens and over-saturates).
-        // Near: mostly the detailed sample. Far: mostly macro, which mipmaps
-        // cleanly and removes high-frequency aliasing at the horizon.
-        vec3 turfCol = mix(cA, (cA + cB) * 0.5, 0.30 + lodFade * 0.45);
-
-        // ── ALBEDO: the texture is the base, mow stripes tint it ──────────
-        // Take the photo directly, then apply our chevron as a gentle ±7%
-        // luminance shift. Real mow banding is subtle — it is blade lean
-        // catching light, not a colour change.
-        float mowShift = mix(0.93, 1.07, isEven);
-        albedo = turfCol * mowShift;
-
-        // Broad health drift so the pitch is not perfectly uniform
-        float health = fbm(vWorldPos.xz * 0.012 + 41.0);
-        albedo *= mix(0.94, 1.06, health);
-
-        // ── ROUGHNESS: grass is matte. Full stop. ─────────────────────────
-        float rTex = texture2D(uGrassRgh, uvA).r;
-        roughness = 0.88 + rTex * 0.11;          // 0.88 – 0.99
-        roughness = mix(roughness, 0.55, uWetness * 0.7);  // only rain adds sheen
-
-        // ── NORMAL: shallow, and flattened at distance ────────────────────
-        // Far-field normal detail is sub-pixel and only produces sparkle.
-        vec3 nA = texture2D(uGrassNrm, uvA).rgb * 2.0 - 1.0;
-        turfN = normalize(mix(nA, vec3(0.0, 0.0, 1.0), lodFade));
-
-        // ── AO: single scale, gentle ──────────────────────────────────────
-        turfAO = mix(1.0, texture2D(uGrassAO, uvA).r, 0.45);
-        albedo *= turfAO;
+      if (paint > 0.001) {
+        float lum = dot(albedo, vec3(0.299, 0.587, 0.114));
+        // Desaturate toward the blade's own luminance, then lift to chalk white.
+        vec3 painted = mix(vec3(lum), vec3(0.96, 0.95, 0.91), 0.86);
+        // Re-apply the texture's own light/dark variation over the paint so the
+        // blade structure stays visible through it.
+        painted *= (0.74 + lum * 1.05);
+        albedo    = mix(albedo, painted, paint * 0.90);
+        roughness = mix(roughness, 0.80, paint * 0.6);
       }
-
-      // (b) Procedural blade streaks — only when there is no texture at all.
-      if (uHasTex < 0.5) {
-        float bladeNoise  = noise(vec2(wx * 7.5, wz * 7.5));
-        float bladeStreak = noise(vec2(wx * 26.0 + wz * 4.0, wz * 3.0));
-        albedo *= 0.80 + (bladeNoise * 0.55 + bladeStreak * 0.45) * 0.40;
-      }
-
-      // (c) Tip brightening from the vertex blade displacement
-      float tipBright = vBladeTop * vBladeTop * 0.10;
-      albedo *= (1.0 + tipBright * 0.35);
-
-      // Combine the geometric blade normal with the photographic turf normal.
-      // Tangent space here is effectively world XZ since the pitch is flat.
-      vec3 N = vNormal;
-      if (uHasTex > 0.5) {
-        // Shallow: 0.45. At 1.9 the perturbed normals caught specular from
-        // every direction and the surface read as polished stone. Grass needs
-        // only enough relief to make light direction legible.
-        N = normalize(vNormal + vec3(turfN.x, 0.0, turfN.y) * 0.45);
-      }
-
-      // ── 8. PBR LIGHTING (Lambert + specular) ──────────────────────────
-      vec3 L   = normalize(uSunDir);
-      float NdL = max(dot(N, L), 0.0);
-      vec3  V   = normalize(cameraPosition - vWorldPos);
-      vec3  H   = normalize(L + V);
-      float NdH = max(dot(N, H), 0.0);
-
-      // Specular — only on low-roughness (wet) turf
-      float specStr = pow(NdH, 32.0) * (1.0 - roughness) * 0.25;
-
-      // Anisotropic chevron sheen — only Balanced/Rich (uSheen)
-      float sheen = 0.0;
-      if (uSheen > 0.5) {
-        vec3  mowDir = normalize(vec3(0.7071, 0.0, 0.7071));
-        float vDotM  = max(dot(V, mowDir), 0.0);
-        sheen = pow(vDotM, 14.0) * 0.16 * (1.0 - isEven * 0.5);
-      }
-
-      // Sky ambient: Lagos blue sky contributes significant fill from overhead
-      // Strong ambient prevents the field looking black when sun angle is low
-      // ══════════════════════════════════════════════════════════════════
-      //  GRASS LIGHTING — diffuse-dominant
-      // ══════════════════════════════════════════════════════════════════
-      //  Grass reflects almost no specular. The previous version stacked
-      //  anisotropic sheen (0.30) + tip glint (0.32) + spec on top of an
-      //  over-perturbed normal, which is what produced the oil-slick look.
-      //  Everything specular here is now an order of magnitude smaller, and
-      //  the translucency term does the heavy lifting instead — that is what
-      //  actually reads as living grass.
-      // ══════════════════════════════════════════════════════════════════
-      vec3 H_grass = normalize(L + V_dir);
-
-      // 1. TRANSLUCENCY — thin blades transmit light. This is diffuse-side,
-      //    not specular, so it adds life without adding gloss.
-      float backLit = max(dot(V_dir, -L), 0.0);
-      float sss     = pow(backLit, 3.0) * 0.22;
-      vec3  sssColor = vec3(0.58, 0.88, 0.34);
-
-      // 2. WRAPPED DIFFUSE — softens the terminator the way fine geometry does
-      float wrapped = max((dot(N, L) + 0.30) / 1.30, 0.0);
-
-      // 3. MINIMAL SPECULAR — a whisper, and only where roughness allows
-      float specTerm = pow(max(dot(H_grass, N), 0.0), 18.0)
-                     * (1.0 - roughness) * 0.14;
-
-      vec3 skyAmb     = albedo * vec3(0.36, 0.42, 0.39);
-      float directStr = wrapped * 1.10;
-
-      vec3 color = albedo * uSunColor * directStr
-                 + sssColor * albedo * sss * uSunColor
-                 + vec3(specTerm) * uSunColor
-                 + skyAmb;
-
-      // ── 9. EDGE AO (slight darkening near boundary) ───────────────────
-      float edgeAO = smoothstep(0.0, 7.0,
-        min(min(137.0 - abs(wx), 73.0 - abs(wz)), 7.0));
-      color *= mix(0.87, 1.0, edgeAO);
-
-      gl_FragColor = vec4(color, 1.0);
     }
-  `;
 
-  const fieldMat = new THREE.ShaderMaterial({
-    vertexShader,
-    fragmentShader,
+    // ── BLADE TIPS ───────────────────────────────────────────────────────
+    albedo *= 1.0 + (vBladeTop * vBladeTop * 0.10) * 0.35;
+
+    vec3 N = vNormal;
+    if (uHasTex > 0.5) N = normalize(vNormal + vec3(turfN.x, 0.0, turfN.y) * 0.45);
+
+    // ── LIGHTING: diffuse-dominant, grass is near-matte ──────────────────
+    vec3 L = normalize(uSunDir);
+    vec3 V = normalize(cameraPosition - vWorldPos);
+    vec3 H = normalize(L + V);
+
+    float backLit = max(dot(V, -L), 0.0);
+    float sss     = pow(backLit, 3.0) * 0.22;
+    vec3  sssCol  = vec3(0.58, 0.88, 0.34);
+    float wrapped = max((dot(N, L) + 0.30) / 1.30, 0.0);
+    float spec    = pow(max(dot(H, N), 0.0), 18.0) * (1.0 - roughness) * 0.14;
+
+    float sheen = 0.0;
+    if (uSheen > 0.5) {
+      vec3 mowDir = normalize(vec3(0.7071, 0.0, 0.7071));
+      sheen = pow(max(dot(V, mowDir), 0.0), 14.0) * 0.05;
+    }
+
+    vec3 skyAmb = albedo * vec3(0.36, 0.42, 0.39);
+    vec3 color  = albedo * uSunColor * wrapped * 1.10
+                + sssCol * albedo * sss * uSunColor
+                + vec3(spec + sheen) * uSunColor
+                + skyAmb;
+
+    float lum2 = dot(color, vec3(0.299, 0.587, 0.114));
+    color = mix(color, albedo * 0.42, max(0.0, 0.26 - lum2));
+
+    gl_FragColor = vec4(color, 1.0);
+  }
+`;
+
+// Build a turf material. Every instance shares the same world-space grid, so
+// separate meshes tile seamlessly into one another with no visible join.
+function makeTurfMaterial(opts) {
+  opts = opts || {};
+  _loadTurfTextures();
+  const fast = PERF_MODE === 'fast';
+  const mat = new THREE.ShaderMaterial({
+    vertexShader: TURF_VERT,
+    fragmentShader: TURF_FRAG,
     uniforms: {
-      uTime:     { value: 0.0 },
-      uSunDir:   { value: new THREE.Vector3(120, 220, 100).normalize() },
-      uSunColor: { value: new THREE.Color(0xfff4e0) },
-      uWetness:  { value: 0.0 },
-      uSheen:    { value: PERF_MODE === 'fast' ? 0.0 : 1.0 },
-      uBladeStr: { value: PERF_MODE === 'fast' ? 0.0 : 1.0 },
-      uGrassCol:  { value: null },  // ambientCG Grass004 — colour
-      uGrassNrm:  { value: null },  // normal (GL convention)
-      uGrassRgh:  { value: null },  // roughness
-      uGrassAO:   { value: null },  // ambient occlusion
-      uGrassHgt:  { value: null },  // displacement (currently unused)
-      uHasTex:    { value: 0.0 },   // 1.0 once colour + normal have loaded
-      // Physical footprint of one texture tile, in metres. ambientCG Grass004
-      // photographs roughly a 2m x 2m patch. Sampling is done in world metres
-      // (vWorldPos.xz / uTexMeters), so the tiling is correct no matter what
-      // the geometry's UV layout is. Lower this for finer blades.
-      uTexMeters: { value: 2.0 },
+      uTime:      { value: 0.0 },
+      uSunDir:    { value: new THREE.Vector3(120, 220, 100).normalize() },
+      uSunColor:  { value: new THREE.Color(0xfff4e0) },
+      uWetness:   { value: 0.0 },
+      uSheen:     { value: fast ? 0.0 : 1.0 },
+      uBladeStr:  { value: fast ? 0.0 : 1.0 },
+      uTexMeters: { value: opts.texMeters !== undefined ? opts.texMeters : 2.0 },
+      uHasTex:    { value: TURF_TEX.ready >= 2 ? 1.0 : 0.0 },
+      uHasDirt:   { value: TURF_TEX.dirtCol ? 1.0 : 0.0 },
+      uMarkings:  { value: opts.markings ? 1.0 : 0.0 },
+      uChevron:   { value: opts.chevron  ? 1.0 : 0.0 },
+      uWear:      { value: opts.wear     ? 1.0 : 0.0 },
+      uWindStr:   { value: opts.wind !== undefined ? opts.wind : 1.0 },
+      uGrassCol:  { value: TURF_TEX.col }, uGrassNrm: { value: TURF_TEX.nrm },
+      uGrassRgh:  { value: TURF_TEX.rgh }, uGrassAO:  { value: TURF_TEX.ao  },
+      uDirtCol:   { value: TURF_TEX.dirtCol }, uDirtNrm: { value: TURF_TEX.dirtNrm },
+      uDirtRgh:   { value: TURF_TEX.dirtRgh },
     },
   });
+  _turfMaterials.push(mat);
+  return mat;
+}
 
-  // Expose for tickScene() uniform updates and weather system
-  window._xixFieldMat = fieldMat;
+// Convenience: a turf-covered plane with segment density scaled to its size.
+function turfPlane(w, d, pos, opts) {
+  const per = PERF_MODE === 'fast' ? 4.5 : PERF_MODE === 'balanced' ? 2.4 : 1.6;
+  const sx = Math.max(1, Math.min(200, Math.round(w / per)));
+  const sz = Math.max(1, Math.min(200, Math.round(d / per)));
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d, sx, sz), makeTurfMaterial(opts));
+  m.rotation.x = -Math.PI / 2;
+  m.position.set(pos[0], pos[1], pos[2]);
+  m.receiveShadow = true;
+  return m;
+}
 
-  // ── REAL TURF TEXTURES (ambientCG Grass004, web-optimised) ───────────────
-  //  assets/textures/grass-color.jpg      1024²  ~284KB
-  //  assets/textures/grass-normal.jpg     1024²  ~293KB   ← blade relief
-  //  assets/textures/grass-roughness.jpg   512²   ~56KB
-  //  assets/textures/grass-ao.jpg          512²   ~64KB
-  //
-  //  Tiled 70×38 across the 274×146m pitch ≈ one 3.9m tile — the scale real
-  //  mown turf reads at from standing height. Colour and normal are required
-  //  for uHasTex to flip on; roughness and AO are progressive enhancements.
-  //  Everything degrades to the procedural shader if the files are absent.
-  (function loadTurf() {
-    const L = new THREE.TextureLoader();
-    const setup = (t, srgb) => {
-      if (srgb) t.colorSpace = THREE.SRGBColorSpace;
-      // RepeatWrapping IS required — the shader feeds UVs far beyond 1.0.
-      t.wrapS = t.wrapT = THREE.RepeatWrapping;
-      // NOTE: t.repeat is deliberately NOT set. Three.js applies .repeat via a
-      // uv-transform matrix that it injects into built-in materials only. A raw
-      // ShaderMaterial never receives it, so .repeat silently does nothing and
-      // the texture ends up stretched once across the entire mesh. Tiling is
-      // handled explicitly in the shader instead, in world metres.
-      t.anisotropy = PERF_MODE === 'rich' ? 16 : PERF_MODE === 'balanced' ? 8 : 4;
-      t.generateMipmaps = true;
-      t.minFilter = THREE.LinearMipmapLinearFilter;
-      t.magFilter = THREE.LinearFilter;
-      return t;
-    };
-    let got = 0;
-    const flag = () => { if (++got >= 2) fieldMat.uniforms.uHasTex.value = 1.0; };
-
-    L.load('assets/textures/grass-color.jpg',
-      t => { fieldMat.uniforms.uGrassCol.value = setup(t, true);  flag();
-             console.log('[XIX] turf colour map loaded'); },
-      undefined,
-      () => console.log('[XIX] no grass-color.jpg — procedural turf only'));
-
-    L.load('assets/textures/grass-normal.jpg',
-      t => { fieldMat.uniforms.uGrassNrm.value = setup(t, false); flag();
-             console.log('[XIX] turf normal map loaded'); },
-      undefined, () => {});
-
-    L.load('assets/textures/grass-roughness.jpg',
-      t => { fieldMat.uniforms.uGrassRgh.value = setup(t, false); },
-      undefined, () => {});
-
-    L.load('assets/textures/grass-ao.jpg',
-      t => { fieldMat.uniforms.uGrassAO.value = setup(t, false); },
-      undefined, () => {});
-
-    L.load('assets/textures/grass-height.jpg',
-      t => { fieldMat.uniforms.uGrassHgt.value = setup(t, false); },
-      undefined, () => {});
-  })();
-
+function addPoloField() {
   const segsX = PERF_MODE === 'fast' ? 64  : PERF_MODE === 'balanced' ? 128 : 182;
   const segsZ = PERF_MODE === 'fast' ? 34  : PERF_MODE === 'balanced' ?  68 :  97;
-  const fieldGeo  = new THREE.PlaneGeometry(274, 146, segsX, segsZ);
-  const fieldMesh = new THREE.Mesh(fieldGeo, fieldMat);
-  fieldMesh.rotation.x = -Math.PI / 2;
-  fieldMesh.position.set(0, 0.12, 0);
-  fieldMesh.receiveShadow = true;
-  fieldMesh.name = 'poloField';
-  scene.add(fieldMesh);
-  _terrainMeshes.push(fieldMesh);
-  // Note: yard line boxes removed — rendered in shader above (−8 draw calls)
+  const mat  = makeTurfMaterial({ markings:true, chevron:true, wear:true, wind:1.0 });
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(274, 146, segsX, segsZ), mat);
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.set(0, 0.12, 0);
+  mesh.receiveShadow = true;
+  mesh.name = 'poloField';
+  scene.add(mesh);
+  _terrainMeshes.push(mesh);
+  window._xixFieldMat = mat;   // weather + time systems drive this
 }
 
 function addSafetyZone() {
-  // Lagos laterite: ochre-terracotta compacted earth
-  const safetyMat = new THREE.MeshStandardMaterial({
-    color: 0xC4724A, roughness: 0.96, metalness: 0.0, envMapIntensity: 0.05
-  });
-  s(plane(298, 25, safetyMat, [0, .11, -85.5]));
-  s(plane(298, 25, safetyMat, [0, .11,  85.5]));
-  s(plane(11,  146, safetyMat, [-142.5, .11, 0]));
-  s(plane(11,  146, safetyMat, [ 142.5, .11, 0]));
+  // Compacted laterite run-off around the pitch, using the real dirt PBR set.
+  // Tiling uses the SAME physical logic as the turf: one tile = 3m of ground.
+  // MeshStandardMaterial does receive Three.js's uv-transform, so .repeat works
+  // here — but it must be computed per-plane from that plane's real dimensions,
+  // otherwise each strip stretches differently.
+  const TILE_M = 3.0;
+  const L = new THREE.TextureLoader();
+  const base = { col:null, nrm:null, rgh:null };
+
+  const mkMat = (w, d) => {
+    const m = new THREE.MeshStandardMaterial({
+      color: 0xC4724A, roughness: 0.96, metalness: 0.0, envMapIntensity: 0.05,
+    });
+    const fit = (t, srgb) => {
+      if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.repeat.set(w / TILE_M, d / TILE_M);   // physical, per-plane
+      t.anisotropy = PERF_MODE === 'rich' ? 16 : 8;
+      return t;
+    };
+    L.load('assets/textures/dirt-color.png',
+      t => { m.map = fit(t, true); m.color.set(0xffffff); m.needsUpdate = true; },
+      undefined, () => {});
+    L.load('assets/textures/dirt-normal.png',
+      t => { m.normalMap = fit(t, false); m.normalScale = new THREE.Vector2(1.1, 1.1); m.needsUpdate = true; },
+      undefined, () => {});
+    L.load('assets/textures/dirt-roughness.png',
+      t => { m.roughnessMap = fit(t, false); m.needsUpdate = true; },
+      undefined, () => {});
+    return m;
+  };
+
+  s(plane(298, 25, mkMat(298, 25), [0, .11, -85.5]));
+  s(plane(298, 25, mkMat(298, 25), [0, .11,  85.5]));
+  s(plane(11, 146, mkMat(11, 146), [-142.5, .11, 0]));
+  s(plane(11, 146, mkMat(11, 146), [ 142.5, .11, 0]));
 }
 
 function addYardMarkings() {
@@ -1743,11 +1739,18 @@ function addRoads() {
 }
 
 function addLake() {
-  // ── Crescent lake — GLSL wave shader with sky colour injection ───────────
-  // Three.js Water (planar reflection) + stone-normal.png had wrong wave frequency.
-  // This replaces it with a ShaderMaterial whose wave normals are correct for
-  // a calm tropical lagoon: long, low-frequency swells with small wind chop.
-  // Sky colour is injected via uniform so the lake changes with time of day.
+  // ══════════════════════════════════════════════════════════════════════
+  //  CRESCENT LAKE — true planar reflection
+  // ══════════════════════════════════════════════════════════════════════
+  //  The GLSL version only faked sky colour via a uniform, so it never showed
+  //  the actual sky, clouds, villas or palms. Three.js Water renders the scene
+  //  into a reflection buffer each frame from the mirrored camera — a real
+  //  reflection, correct for whatever the sky and buildings are doing.
+  //
+  //  The old crash came from feeding it stone-normal.png (wrong frequency, and
+  //  a null .image during load). The normal map is now generated procedurally,
+  //  so it is valid on frame one and has water-correct wave frequency.
+  // ══════════════════════════════════════════════════════════════════════
 
   const shape = new THREE.Shape();
   shape.moveTo(-75, 92);
@@ -1757,132 +1760,159 @@ function addLake() {
   shape.quadraticCurveTo(-85, 92, -75, 92);
   const waterGeo = new THREE.ShapeGeometry(shape, 80);
 
-  const lakeVert = /* glsl */`
-    varying vec2 vUv;
-    varying vec3 vWorldPos;
-    varying vec3 vNormal;
-    uniform float uTime;
-    uniform float uPerfMode; // 0=fast, 1=balanced/rich
-
-    float waveH(vec2 p, float t) {
-      // Two overlapping swell frequencies — Lagos lagoon, not ocean
-      float w1 = sin(p.x * 0.045 + p.y * 0.028 + t * 0.38) * 0.12;
-      float w2 = sin(p.x * 0.018 - p.y * 0.052 + t * 0.55) * 0.06;
-      float chop = (uPerfMode > 0.5) ? sin(p.x * 0.18 + p.y * 0.24 + t * 1.1) * 0.02 : 0.0;
-      return w1 + w2 + chop;
+  // Procedural water normal map — low-frequency overlapping swells.
+  const waterNormals = (() => {
+    const S = 512, c = document.createElement('canvas');
+    c.width = c.height = S;
+    const ctx = c.getContext('2d');
+    const img = ctx.createImageData(S, S);
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        const u = x / S * Math.PI * 2, v = y / S * Math.PI * 2;
+        // Sum of sines -> height field, then finite-difference the normal
+        const h  = Math.sin(u*3)*0.5 + Math.sin(v*2.3+1.1)*0.4 + Math.sin((u+v)*4.7)*0.22;
+        const hx = Math.sin((u+0.02)*3)*0.5 + Math.sin(v*2.3+1.1)*0.4 + Math.sin(((u+0.02)+v)*4.7)*0.22;
+        const hy = Math.sin(u*3)*0.5 + Math.sin((v+0.02)*2.3+1.1)*0.4 + Math.sin((u+(v+0.02))*4.7)*0.22;
+        const nx = (h - hx) * 6.0, ny = (h - hy) * 6.0, nz = 1.0;
+        const len = Math.hypot(nx, ny, nz);
+        const o = (y*S + x) * 4;
+        img.data[o]   = ((nx/len)*0.5 + 0.5) * 255;
+        img.data[o+1] = ((ny/len)*0.5 + 0.5) * 255;
+        img.data[o+2] = ((nz/len)*0.5 + 0.5) * 255;
+        img.data[o+3] = 255;
+      }
     }
+    ctx.putImageData(img, 0, 0);
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    return t;
+  })();
 
-    void main() {
-      vUv = uv;
-      vec3 pos = position;
-      // Displace Y by wave function (only in balanced/rich — fast uses flat)
-      if (uPerfMode > 0.5) pos.y += waveH(vec2(pos.x, pos.z), uTime);
-      vWorldPos = (modelMatrix * vec4(pos, 1.0)).xyz;
-      // Analytical normal from finite differences
-      float eps = 0.8;
-      float hL = waveH(vec2(pos.x - eps, pos.z), uTime);
-      float hR = waveH(vec2(pos.x + eps, pos.z), uTime);
-      float hD = waveH(vec2(pos.x, pos.z - eps), uTime);
-      float hU = waveH(vec2(pos.x, pos.z + eps), uTime);
-      vNormal = normalize(vec3(hL - hR, 2.0 * eps, hD - hU));
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
-    }
-  `;
+  const resPerMode = { fast: 256, balanced: 512, rich: 1024 };
+  const res = resPerMode[PERF_MODE] || 512;
 
-  const lakeFrag = /* glsl */`
-    precision highp float;
-    uniform float uTime;
-    uniform vec3  uSkyColor;    // Injected from current sky (changes with time)
-    uniform vec3  uSunDir;      // For specular highlight on water
-    uniform vec3  uSunColor;
-    uniform float uWetness;     // Weather: rain makes water darker and choppier
-
-    varying vec2 vUv;
-    varying vec3 vWorldPos;
-    varying vec3 vNormal;
-
-    void main() {
-      vec3 V = normalize(cameraPosition - vWorldPos);
-      vec3 N = normalize(vNormal);
-      vec3 L = normalize(uSunDir);
-
-      // Fresnel: water is more reflective at grazing angles (Schlick approx)
-      float fresnel = pow(1.0 - max(dot(V, N), 0.0), 4.0);
-      fresnel = mix(0.04, 1.0, fresnel);
-
-      // Deep water colour: Lagos lagoon — deep blue-green teal
-      vec3 deepColor  = vec3(0.055, 0.200, 0.290); // deep blue-green
-      vec3 shallowColor = vec3(0.110, 0.350, 0.420); // lighter at edges
-
-      // Mix deep + shallow based on fake depth (UV distance from centre)
-      float edgeDist = length(vUv - 0.5) * 2.0;
-      vec3 waterColor = mix(deepColor, shallowColor, edgeDist * 0.6);
-
-      // Sky reflection: inject actual sky colour into the surface
-      // At grazing angles the water becomes a mirror of the sky
-      vec3 reflected = reflect(-V, N);
-      float skyMix = fresnel * 0.72;
-      vec3 finalColor = mix(waterColor, uSkyColor * 0.75, skyMix);
-
-      // ── Sun specular — CLAMPED ────────────────────────────────────────
-      // Previously pow(dot, 220.0) * 2.5 produced values far above 1.0 across
-      // a wide band of the surface. Bloom then picked that up and smeared it
-      // into a harsh white glare over the whole scene. Now: tighter exponent,
-      // much lower gain, and a hard clamp so it can never exceed the bloom
-      // threshold by more than a hair.
-      // NOTE: never use backticks in GLSL comments — this source lives inside a
-      // JS template literal and a stray backtick terminates the shader string.
-      float specRaw  = pow(max(dot(reflected, L), 0.0), 420.0);
-      float sunSpec  = min(specRaw * 0.55, 0.85);
-      // Fade the highlight out at grazing angles where it would streak
-      sunSpec *= smoothstep(0.0, 0.35, max(dot(V, N), 0.0));
-      finalColor += uSunColor * sunSpec;
-
-      // Fine ripple shimmer — subtle, never additive enough to bloom
-      float shimmer = sin(vWorldPos.x * 0.8 + uTime * 2.2) *
-                      sin(vWorldPos.z * 0.6 + uTime * 1.8) * 0.012;
-      finalColor += vec3(shimmer * fresnel * 0.5);
-
-      // Final safety clamp — water can never blow out the frame
-      finalColor = min(finalColor, vec3(1.15));
-
-      // Rain darkens the water surface
-      finalColor *= mix(1.0, 0.72, uWetness);
-
-      // Soft edge fade at shore boundary
-      float alpha = mix(0.88, 0.97, fresnel);
-
-      gl_FragColor = vec4(finalColor, alpha);
-    }
-  `;
-
-  const lakeMat = new THREE.ShaderMaterial({
-    vertexShader: lakeVert,
-    fragmentShader: lakeFrag,
-    uniforms: {
-      uTime:      { value: 0.0 },
-      uSkyColor:  { value: new THREE.Color(0x7aaac8) },  // Lagos afternoon sky
-      uSunDir:    { value: new THREE.Vector3(0.48, 0.88, 0.40).normalize() },
-      uSunColor:  { value: new THREE.Color(0xfff4e0) },
-      uWetness:   { value: 0.0 },
-      uPerfMode:  { value: PERF_MODE === 'fast' ? 0.0 : 1.0 },
-    },
-    transparent: true,
-    side: THREE.FrontSide,
-    depthWrite: false,
+  const lake = new Water(waterGeo, {
+    textureWidth:  res,
+    textureHeight: res,
+    waterNormals,
+    sunDirection: new THREE.Vector3(120, 220, 100).normalize(),
+    sunColor:  0xfff4e0,
+    waterColor: 0x184e63,     // Lagos lagoon teal
+    distortionScale: 1.6,     // calm inland water, not open ocean
+    fog: scene.fog !== undefined,
+    alpha: 0.94,
   });
+  lake.rotation.x = -Math.PI / 2;
+  lake.position.set(0, 0.34, 0);
+  lake.name = 'crescentLake';
+  lake.userData.isPlanarWater = true;
+  scene.add(lake);
+  waterMeshes.push(lake);
+  window._xixLakeWater = lake;
 
-  const lakeMesh = new THREE.Mesh(waterGeo, lakeMat);
-  lakeMesh.rotation.x = -Math.PI / 2;
-  lakeMesh.position.set(0, 0.34, 0);
-  lakeMesh.receiveShadow = false; // Water doesn't receive shadows — looks wrong
-  lakeMesh.name = 'crescentLake';
-  lakeMesh.userData.isLakeGLSL = true;
-  scene.add(lakeMesh);
-  waterMeshes.push(lakeMesh);
+  addLakeBanks();
+}
 
-  // Expose mat so tickScene and weather system can update uniforms
-  window._xixLakeMat = lakeMat;
+// ══════════════════════════════════════════════════════════════════════════
+//  LAKE BANKS
+// ══════════════════════════════════════════════════════════════════════════
+//  A hard line between turf and water reads as a swimming pool. Real banks
+//  have a wet margin, reed beds, boulders and scattered planting. All of it
+//  is instanced, so the whole shoreline costs 4 draw calls.
+// ══════════════════════════════════════════════════════════════════════════
+function addLakeBanks() {
+  // Sample points along the lake's crescent edge
+  const edge = [];
+  const N = PERF_MODE === 'fast' ? 40 : PERF_MODE === 'balanced' ? 80 : 130;
+  for (let i = 0; i <= N; i++) {
+    const t = i / N;
+    // Outer curve: quadratic through (-80,102) -> (0,135) -> (80,102)
+    const x = -80 + 160 * t;
+    const z = 102 + 33 * Math.sin(Math.PI * t);
+    edge.push([x, z]);
+  }
+  // Straight south shore
+  for (let i = 0; i <= Math.floor(N * 0.7); i++) {
+    edge.push([-75 + 150 * (i / Math.floor(N * 0.7)), 92]);
+  }
+
+  const rnd = (a, b) => a + Math.random() * (b - a);
+
+  // ── 1. WET MARGIN — damp, dark soil where water meets land ──────────────
+  const marginMat = new THREE.MeshStandardMaterial({
+    color: 0x4a4032, roughness: 0.55, metalness: 0.0,
+  });
+  const marginGeo = new THREE.CircleGeometry(3.4, 7);
+  const margin = new THREE.InstancedMesh(marginGeo, marginMat, edge.length);
+  edge.forEach(([x, z], i) => {
+    _dummy.position.set(x + rnd(-1.2, 1.2), 0.16, z + rnd(-1.2, 1.2));
+    _dummy.rotation.set(-Math.PI / 2, 0, rnd(0, Math.PI * 2));
+    _dummy.scale.setScalar(rnd(0.7, 1.5));
+    _dummy.updateMatrix();
+    margin.setMatrixAt(i, _dummy.matrix);
+  });
+  margin.instanceMatrix.needsUpdate = true;
+  margin.receiveShadow = true;
+  scene.add(margin);
+
+  // ── 2. REED BEDS — tall marginal planting, the signature of a real bank ──
+  const reedMat = new THREE.MeshStandardMaterial({
+    color: 0x5d7a34, roughness: 0.9, metalness: 0.0, side: THREE.DoubleSide,
+  });
+  const reedGeo = new THREE.ConeGeometry(0.16, 2.2, 4, 1, true);
+  const reedCount = Math.floor(edge.length * (PERF_MODE === 'fast' ? 2 : 5));
+  const reeds = new THREE.InstancedMesh(reedGeo, reedMat, reedCount);
+  for (let i = 0; i < reedCount; i++) {
+    const [ex, ez] = edge[Math.floor(Math.random() * edge.length)];
+    const out = rnd(-2.0, 3.2);
+    _dummy.position.set(ex + rnd(-2.5, 2.5), rnd(0.8, 1.5), ez + out);
+    _dummy.rotation.set(rnd(-0.22, 0.22), rnd(0, Math.PI * 2), rnd(-0.22, 0.22));
+    _dummy.scale.set(rnd(0.7, 1.5), rnd(0.7, 1.7), rnd(0.7, 1.5));
+    _dummy.updateMatrix();
+    reeds.setMatrixAt(i, _dummy.matrix);
+  }
+  reeds.instanceMatrix.needsUpdate = true;
+  reeds.castShadow = PERF_MODE !== 'fast';
+  scene.add(reeds);
+
+  // ── 3. BOULDERS — irregular rock revetment holding the bank ─────────────
+  const rockMat = new THREE.MeshStandardMaterial({
+    color: 0x6b6459, roughness: 0.94, metalness: 0.0,
+  });
+  const rockGeo = new THREE.DodecahedronGeometry(1.0, 0);
+  const rockCount = Math.floor(edge.length * 0.42);
+  const rocks = new THREE.InstancedMesh(rockGeo, rockMat, rockCount);
+  for (let i = 0; i < rockCount; i++) {
+    const [ex, ez] = edge[Math.floor(Math.random() * edge.length)];
+    _dummy.position.set(ex + rnd(-3, 3), rnd(0.1, 0.5), ez + rnd(-1.5, 2.6));
+    _dummy.rotation.set(rnd(0, 3.14), rnd(0, 6.28), rnd(0, 3.14));
+    _dummy.scale.set(rnd(0.4, 1.3), rnd(0.3, 0.8), rnd(0.4, 1.3));
+    _dummy.updateMatrix();
+    rocks.setMatrixAt(i, _dummy.matrix);
+  }
+  rocks.instanceMatrix.needsUpdate = true;
+  rocks.castShadow = PERF_MODE !== 'fast';
+  rocks.receiveShadow = true;
+  scene.add(rocks);
+
+  // ── 4. SHRUB CLUMPS — low planting softening the turf-to-water line ─────
+  const shrubMat = new THREE.MeshStandardMaterial({
+    color: 0x35592a, roughness: 0.93, metalness: 0.0,
+  });
+  const shrubGeo = new THREE.IcosahedronGeometry(1.0, 0);
+  const shrubCount = Math.floor(edge.length * 0.34);
+  const shrubs = new THREE.InstancedMesh(shrubGeo, shrubMat, shrubCount);
+  for (let i = 0; i < shrubCount; i++) {
+    const [ex, ez] = edge[Math.floor(Math.random() * edge.length)];
+    _dummy.position.set(ex + rnd(-5, 5), rnd(0.5, 1.1), ez + rnd(1.5, 6.5));
+    _dummy.rotation.set(0, rnd(0, 6.28), 0);
+    _dummy.scale.set(rnd(0.9, 2.1), rnd(0.6, 1.3), rnd(0.9, 2.1));
+    _dummy.updateMatrix();
+    shrubs.setMatrixAt(i, _dummy.matrix);
+  }
+  shrubs.instanceMatrix.needsUpdate = true;
+  shrubs.castShadow = PERF_MODE !== 'fast';
+  scene.add(shrubs);
 }
 
 function addEastLake(){
@@ -2343,19 +2373,23 @@ export function tickScene(elapsed, camera) {
   }
 
   // ── b. POLO FIELD SHADER UNIFORMS ────────────────────────────────────────
-  if (window._xixFieldMat) {
-    const u = window._xixFieldMat.uniforms;
-    u.uTime.value  = elapsed;
-    u.uSheen.value    = (PERF_MODE === 'fast') ? 0.0 : 1.0;
-    u.uBladeStr.value = (PERF_MODE === 'fast') ? 0.0 : 1.0;
-    // Sync sun direction and colour from the live sun light
-    if (sunLight) {
-      u.uSunColor.value.copy(sunLight.color);
-      u.uSunDir.value.copy(sunLight.position).normalize();
-    }
-    // Wetness from weather state (set by app.js via window._xixWetness)
-    if (window._xixWetness !== undefined) {
-      u.uWetness.value += (window._xixWetness - u.uWetness.value) * 0.04;
+  if (_turfMaterials.length) {
+    const fast = PERF_MODE === 'fast';
+    for (let i = 0; i < _turfMaterials.length; i++) {
+      const u = _turfMaterials[i].uniforms;
+      u.uTime.value      = elapsed;
+      u.uSheen.value     = fast ? 0.0 : 1.0;
+      u.uBladeStr.value  = fast ? 0.0 : 1.0;
+      if (sunLight) {
+        u.uSunColor.value.copy(sunLight.color);
+        u.uSunDir.value.copy(sunLight.position).normalize();
+      }
+      if (window._xixWetness !== undefined) {
+        u.uWetness.value += (window._xixWetness - u.uWetness.value) * 0.04;
+      }
+      if (window._xixWindStr !== undefined) {
+        u.uWindStr.value += (window._xixWindStr - u.uWindStr.value) * 0.03;
+      }
     }
   }
 
@@ -2396,28 +2430,16 @@ export function tickScene(elapsed, camera) {
     }
   }
 
-  // ── d. WATER UNIFORMS ────────────────────────────────────────────────────
-  if (window._xixLakeMat) {
-    const lu = window._xixLakeMat.uniforms;
-    lu.uTime.value = elapsed;
-    lu.uPerfMode.value = PERF_MODE === 'fast' ? 0.0 : 1.0;
-    // Sync wetness from weather system
-    if (window._xixWetness !== undefined) {
-      lu.uWetness.value += (window._xixWetness - lu.uWetness.value) * 0.03;
-    }
-    // Sync sun direction and colour from live sun light
-    if (sunLight) {
-      lu.uSunDir.value.copy(sunLight.position).normalize();
-      lu.uSunColor.value.copy(sunLight.color);
-    }
-    // Sync sky colour from current fog colour (proxy for sky horizon colour)
-    if (scene && scene.fog) {
-      lu.uSkyColor.value.copy(scene.fog.color);
-    }
-  }
+  // ── d. WATER ─────────────────────────────────────────────────────────────
+  // The GLSL lake material was replaced by Three.js Water (true planar
+  // reflection), which owns its own uniforms — only 'time' needs advancing.
+  // Sun direction is refreshed on time-of-day change rather than per frame.
 
-  // Existing Three.js Water tick (for east lake — uses createWaterMat)
-  tickWater(waterMeshes.filter(m => !m.userData.isLakeGLSL), elapsed);
+  // Three.js Water advances its own 'time' uniform
+  if (window._xixLakeWater && window._xixLakeWater.material.uniforms['time']) {
+    window._xixLakeWater.material.uniforms['time'].value += 1.0 / 60.0;
+  }
+  tickWater(waterMeshes.filter(m => !m.userData.isPlanarWater), elapsed);
 
   waterMeshes.forEach(m => {
     if (m.userData.isPlanarWater && m.material.uniforms && m.material.uniforms['time']) {
