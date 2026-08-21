@@ -1,7 +1,8 @@
 /**
- * Project XIX -- Controls v6 (Phase 3 Luxury Production Pass)
+ * Project XIX -- Controls v7
  * Upgrades: Exponential Decay Look Smoothing, Cadence-Synced Head-Bob & Trot Pitch
  * Preserved: Mobile Joystick, WebXR, Gyro, App Y-Ownership Logic
+ * v7 FIX: removed the invisible left-half virtual joystick (see onTouchStart)
  */
 
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
@@ -30,10 +31,10 @@ let _appOwnsY = true;   // ride mode by default
 export function setYOwner(owner) { _appOwnsY = (owner === 'app'); }
 
 // Touch state
-let joyOrigin = null;  
+let joyOrigin = null;
 let joyDelta  = { x: 0, y: 0 };
-let lookTouch = null;  
-let lookLast  = null;  
+let lookTouch = null;
+let lookLast  = null;
 
 let joystickEl = null, joystickDotEl = null;
 let touchSprint = false;
@@ -55,8 +56,8 @@ export function initControls(cam, ren) {
     const tag = e.target.tagName.toLowerCase();
     if (['button','a','input','select','textarea'].includes(tag)) return;
     const rect = renderer.domElement.getBoundingClientRect();
-    if (rect.bottom - e.clientY < 100) return; 
-    if (e.clientY - rect.top < 60) return; 
+    if (rect.bottom - e.clientY < 100) return;
+    if (e.clientY - rect.top < 60) return;
     renderer.domElement.requestPointerLock();
   });
 
@@ -95,7 +96,10 @@ function buildJoystickUI() {
 
   joystickEl = document.createElement('div');
   joystickEl.className = 'vj-base';
-  joystickEl.style.pointerEvents = 'auto'; 
+  // .vj-base is now the ONLY element whose touches start movement, so it must
+  // be an easy target and must swallow the gesture rather than scrolling.
+  joystickEl.style.pointerEvents = 'auto';
+  joystickEl.style.touchAction   = 'none';
   overlay.appendChild(joystickEl);
 
   joystickDotEl = document.createElement('div');
@@ -114,31 +118,43 @@ function updateJoystickDot() {
 
 function onTouchStart(e) {
   if (!active) return;
-  
+
   const isCanvas   = e.target.tagName.toLowerCase() === 'canvas';
   const isJoystick = !!e.target.closest('.vj-base');
 
   if (isCanvas || isJoystick) {
     e.preventDefault();
   } else {
-    return; 
+    return;
   }
-
-  const screenW = window.innerWidth;
 
   for (const t of e.changedTouches) {
     if (isJoystick && !joyOrigin) {
+      // Movement: only ever started by a direct touch on the joystick itself.
       joyOrigin = { x: t.clientX, y: t.clientY, id: t.identifier };
       joyDelta  = { x: 0, y: 0 };
       if (joystickEl) joystickEl.style.opacity = '1';
     }
     else if (isCanvas) {
-      const inLeftZone = t.clientX < screenW * 0.45;
-      if (inLeftZone && !joyOrigin) {
-        joyOrigin = { x: t.clientX, y: t.clientY, id: t.identifier };
-        joyDelta  = { x: 0, y: 0 };
-        if (joystickEl) joystickEl.style.opacity = '1';
-      } else if (!inLeftZone && !lookTouch) {
+      // ══════════════════════════════════════════════════════════════════
+      //  CANVAS TOUCHES ARE ALWAYS LOOK — NEVER MOVEMENT
+      // ══════════════════════════════════════════════════════════════════
+      //  This block previously spawned an invisible floating joystick
+      //  anywhere in the left 45% of the screen:
+      //
+      //      const inLeftZone = t.clientX < screenW * 0.45;
+      //      if (inLeftZone && !joyOrigin) { joyOrigin = { ... }; }
+      //      else if (!inLeftZone && !lookTouch) { lookTouch = { ... }; }
+      //
+      //  The consequence was that panning anywhere on the left half of the
+      //  screen walked the camera forward instead of turning it, and the
+      //  visible joystick graphic had no bearing on whether movement fired —
+      //  it was never the thing being hit-tested.
+      //
+      //  Movement now requires a direct touch on .vj-base (handled above),
+      //  leaving the entire rest of the screen free for camera panning.
+      // ══════════════════════════════════════════════════════════════════
+      if (!lookTouch) {
         lookTouch = { id: t.identifier };
         lookLast  = { x: t.clientX, y: t.clientY };
       }
@@ -148,7 +164,7 @@ function onTouchStart(e) {
 
 function onTouchMove(e) {
   if (!active) return;
-  
+
   for (const t of e.changedTouches) {
     if (joyOrigin && t.identifier === joyOrigin.id) {
       e.preventDefault();
@@ -205,16 +221,16 @@ function onGyro(e) {
 export function updateControls(delta) {
   if (!active || !camera) return;
 
-  // Phase 3: Matterport-style Exponential Decay Smoothing (Framerate Independent)
+  // Matterport-style Exponential Decay Smoothing (framerate independent)
   const decay = 1 - Math.exp(-18 * delta);
 
-  // PREVENT CRASH: Wrap angles to prevent floating-point overflow on infinite spinning
+  // Wrap angles to prevent floating-point overflow on infinite spinning
   if (Math.abs(targetYaw) > 1000) {
     targetYaw %= (Math.PI * 2);
     currentYaw %= (Math.PI * 2);
   }
 
-  // Calculate shortest-path difference to prevent 360-degree snapbacks
+  // Shortest-path difference prevents 360-degree snapbacks
   let yawDiff = targetYaw - currentYaw;
   while (yawDiff > Math.PI) yawDiff -= Math.PI * 2;
   while (yawDiff < -Math.PI) yawDiff += Math.PI * 2;
@@ -223,7 +239,6 @@ export function updateControls(delta) {
   currentPitch += (targetPitch - currentPitch) * decay;
 
   const speed   = (keys.has('shift') || touchSprint || window.__touchSprint) ? SPRINT : WALK;
-  // Movement follows the smoothed current camera direction
   const forward = new THREE.Vector3(-Math.sin(currentYaw), 0, -Math.cos(currentYaw));
   const right   = new THREE.Vector3( Math.cos(currentYaw), 0, -Math.sin(currentYaw));
   const move    = new THREE.Vector3();
@@ -243,7 +258,7 @@ export function updateControls(delta) {
   if (isMoving) {
     move.normalize().multiplyScalar(speed * delta);
     camera.position.add(move);
-    walkTime += delta * (speed === SPRINT ? 15.0 : 10.0); // Advance cadence tracker
+    walkTime += delta * (speed === SPRINT ? 15.0 : 10.0);
   }
 
   camera.position.x = clamp(camera.position.x, WORLD.xMin || -320, WORLD.xMax || 320);
@@ -251,23 +266,20 @@ export function updateControls(delta) {
 
   let finalPitch = currentPitch;
 
-  // Phase 3: Head-Bob and Trot Synchronization
   if (!_appOwnsY) {
-    // Walk Mode: controls.js owns Y. Apply footstep Y-axis bobbing.
+    // Walk Mode: controls.js owns Y. Apply footstep bobbing.
     if (isMoving) {
       camera.position.y = EYE_H + Math.sin(walkTime) * 0.012;
     } else {
-      // Gently settle back to standing height using framerate-independent decay
       camera.position.y += (EYE_H - camera.position.y) * (1 - Math.exp(-10 * delta));
     }
   } else {
-    // Ride Mode: app.js owns Y. Apply a rhythmic horse-trot pitch oscillation instead.
+    // Ride Mode: app.js owns Y. Rhythmic horse-trot pitch oscillation.
     if (isMoving) {
-      finalPitch += Math.sin(walkTime * 1.1) * 0.0035; 
+      finalPitch += Math.sin(walkTime * 1.1) * 0.0035;
     }
   }
 
-  // Apply final smoothed rotation
   camera.rotation.order = 'YXZ';
   camera.rotation.y = currentYaw;
   camera.rotation.x = finalPitch;
@@ -278,7 +290,8 @@ export function activate()   {
   const hasTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
   if (hasTouch) {
     const overlay = document.getElementById('joystick-overlay');
-    if (overlay) overlay.style.display = 'block';
+    // flex matches the pinned style ui.js applies in showJoystick()
+    if (overlay) overlay.style.display = 'flex';
     if (joystickEl) joystickEl.style.opacity = '0.35';
   }
 }
@@ -299,7 +312,7 @@ export function setView(pos, newYaw = Math.PI, newPitch = 0) {
   // Snap BOTH target and current to prevent sweeping transition on teleport
   targetYaw = newYaw; currentYaw = newYaw;
   targetPitch = newPitch; currentPitch = newPitch;
-  
+
   camera.rotation.order = 'YXZ';
   camera.rotation.y = currentYaw;
   camera.rotation.x = currentPitch;
