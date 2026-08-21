@@ -516,6 +516,32 @@ export function applyPS4Materials(gltfScene) {
     mats.forEach(mat => {
       if (_envMap) mat.envMap = _envMap;
       const name = ((mat.name || '') + ' ' + (child.name || '')).toLowerCase();
+
+      // ══════════════════════════════════════════════════════════════════
+      //  BAKED-ASSET GUARD
+      // ══════════════════════════════════════════════════════════════════
+      //  villa-mesh.glb and tree-mesh.glb are photogrammetry assets with a
+      //  SINGLE material ("pbr_material") covering render, timber, glazing and
+      //  soffits alike. Name matching cannot classify them — every branch below
+      //  would miss and they would fall through to the default, which is why
+      //  no amount of material work has changed how the villas look.
+      //
+      //  They now ship with purpose-baked albedo / normal / metallicRoughness
+      //  maps derived from their own atlas. Where those exist we must NOT
+      //  substitute procedural values — we only tune env response and shadows.
+      // ══════════════════════════════════════════════════════════════════
+      if (mat.normalMap && mat.roughnessMap && mat.map) {
+        mat.envMapIntensity = 1.35;                 // strong IBL: sells the relief
+        mat.normalScale     = new THREE.Vector2(1.5, 1.5);
+        mat.aoMapIntensity  = 1.2;
+        if (mat.map) mat.map.anisotropy = _renderer ? _renderer.capabilities.getMaxAnisotropy() : 8;
+        if (mat.normalMap)    mat.normalMap.anisotropy    = mat.map.anisotropy;
+        if (mat.roughnessMap) mat.roughnessMap.anisotropy = mat.map.anisotropy;
+        mat._baseEnvInt = mat.envMapIntensity;
+        mat.needsUpdate = true;
+        child.castShadow = true; child.receiveShadow = true;
+        return;   // leave the baked maps alone
+      }
       const hex  = mat.color ? mat.color.getHex() : 0xffffff;
       const c    = mat.color ? mat.color : new THREE.Color(0xffffff);
       const lum  = 0.299*c.r + 0.587*c.g + 0.114*c.b;
