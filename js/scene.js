@@ -482,11 +482,12 @@ function buildInstancedFencePosts(positions) {
 //  every angle. A small Z-jitter and per-instance yaw stop the two halves from
 //  looking like an obvious mirror.
 //
-//  POLY BUDGET — this matters:
-//  877k tris doubles to ~1.75M after the merge. Instance counts are therefore
-//  capped hard: rich 26, balanced 14, fast 0 (cones instead). Beyond the cap,
-//  and past 140m, cheap cone impostors are used. If you want more real trees,
-//  decimate the GLB in Blender to ~40k tris and the caps can rise 20x.
+//  POLY BUDGET:
+//  The shipped tree-mesh.glb has been decimated from 877k triangles to 35k
+//  (meshoptimizer, 0.002 error tolerance) and its textures reduced to 1024px
+//  WebP with Draco geometry compression — 4.67 MB down to 371 KB. After the
+//  mirror-merge each tree is ~70k triangles, so the caps are rich 200,
+//  balanced 110, fast 40. Cone impostors cover anything beyond the cap.
 // ══════════════════════════════════════════════════════════════════════════════
 
 function _mirrorMergeGeometry(srcGeo) {
@@ -534,7 +535,9 @@ function buildInstancedCypress(positions) {
   _treePositions = positions || [];
   if (!_treePositions.length) return;
 
-  const CAP = PERF_MODE === 'rich' ? 26 : PERF_MODE === 'balanced' ? 14 : 0;
+  // Caps raised: the optimised tree-mesh.glb is 35k tris (was 877k), so after
+  // mirror-merging to ~70k we can afford roughly 25x more instances.
+  const CAP = PERF_MODE === 'rich' ? 200 : PERF_MODE === 'balanced' ? 110 : 40;
 
   // Cone fallback for everything beyond the real-mesh cap (and all of fast mode)
   const coneList = _treePositions.slice(CAP);
