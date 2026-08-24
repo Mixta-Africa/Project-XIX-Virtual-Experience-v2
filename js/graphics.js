@@ -521,6 +521,133 @@ function _getConcreteNormalMap(THREE) {
   return tex;
 }
 
+// ── GLASS SPLIT ────────────────────────────────────────────────────────────
+//  Meshy exports arrive as ONE mesh with ONE opaque material and no alpha
+//  channel, so the glazing is just dark pixels painted into the base colour.
+//  Nothing you set on that material can make the windows transparent without
+//  making the walls transparent too — this is the same single-material wall
+//  the name-based classifier hit, and the answer is the same: stop trying to
+//  configure one material and split the geometry instead.
+//
+//  Each triangle is classified by sampling the base colour atlas at its UV
+//  centroid. Glass is smooth, desaturated, mid-to-dark and cool — the local
+//  variance test is what stops shadowed render and dark soffits being caught
+//  with it. Triangles that pass move to a second BufferGeometry which gets a
+//  real MeshPhysicalMaterial with transmission; the rest keep the original.
+//
+//  Runs once at load. Costs a few hundred ms on a 200k-tri mesh, which is
+//  cheaper than shipping two GLBs and cannot fall out of sync with the asset.
+function _atlasSampler(tex) {
+  const img = tex && (tex.image || tex.source?.data);
+  if (!img || !img.width) return null;
+  const W = Math.min(img.width, 512), H = Math.min(img.height, 512);
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d', { willReadFrequently: true });
+  try { ctx.drawImage(img, 0, 0, W, H); } catch (e) { return null; }
+  const d = ctx.getImageData(0, 0, W, H).data;
+  return { W, H, d,
+    at(u, v) {
+      const x = Math.min(W - 1, Math.max(0, Math.round(u * W) % W));
+      const y = Math.min(H - 1, Math.max(0, Math.round((1 - v) * H) % H));
+      const o = (y * W + x) * 4;
+      return [d[o] / 255, d[o + 1] / 255, d[o + 2] / 255];
+    },
+    // Mean absolute deviation over a small neighbourhood: flat glazing is
+    // smooth, timber grain and foliage are not.
+    varAt(u, v) {
+      const x0 = Math.round(u * W), y0 = Math.round((1 - v) * H);
+      let mn = 2, mx = -1;
+      for (let dy = -2; dy <= 2; dy += 2) for (let dx = -2; dx <= 2; dx += 2) {
+        const x = ((x0 + dx) % W + W) % W, y = ((y0 + dy) % H + H) % H;
+        const o = (y * W + x) * 4;
+        const l = (d[o] * 0.2126 + d[o + 1] * 0.7152 + d[o + 2] * 0.0722) / 255;
+        if (l < mn) mn = l; if (l > mx) mx = l;
+      }
+      return mx - mn;
+    } };
+}
+
+export function splitGlassPanels(root, opts = {}) {
+  const o = { transmission: 0.55, roughness: 0.08, tint: 0x2a3a46, ior: 1.5, ...opts };
+  const out = [];
+
+  root.traverse(obj => {
+    if (!obj.isMesh || obj.userData._glassSplit) return;
+    const mat = Array.isArray(obj.material) ? obj.material[0] : obj.material;
+    if (!mat || !mat.map) return;
+    const g = obj.geometry;
+    const pos = g.attributes.position, uv = g.attributes.uv;
+    if (!pos || !uv) return;
+    const S = _atlasSampler(mat.map);
+    if (!S) { console.warn('[XIX] glass split: atlas unreadable, left opaque'); return; }
+
+    const idx = g.index ? g.index.array : null;
+    const triCount = (idx ? idx.length : pos.count) / 3;
+    const glassTris = [], solidTris = [];
+
+    for (let t = 0; t < triCount; t++) {
+      const a = idx ? idx[t*3] : t*3, b = idx ? idx[t*3+1] : t*3+1, c = idx ? idx[t*3+2] : t*3+2;
+      const u = (uv.getX(a) + uv.getX(b) + uv.getX(c)) / 3;
+      const v = (uv.getY(a) + uv.getY(b) + uv.getY(c)) / 3;
+      const [r, gg, bb] = S.at(u, v);
+      const mx = Math.max(r, gg, bb), mn = Math.min(r, gg, bb);
+      const sat = mx > 1e-4 ? (mx - mn) / mx : 0;
+      const isGlass = S.varAt(u, v) < 0.16 && sat < 0.30 && mx > 0.08 && mx < 0.62 && bb >= r * 0.96;
+      (isGlass ? glassTris : solidTris).push(a, b, c);
+    }
+
+    if (!glassTris.length || !solidTris.length) {
+      console.log(`[XIX] glass split: no clean separation on ${obj.name || 'mesh'}, left as-is`);
+      return;
+    }
+
+    const sub = (list) => {
+      const ng = g.clone();
+      ng.setIndex(list);
+      ng.clearGroups();
+      return ng;
+    };
+
+    obj.geometry = sub(solidTris);
+    obj.userData._glassSplit = true;
+
+    const glassMat = new THREE.MeshPhysicalMaterial({
+      color: new THREE.Color(o.tint),
+      metalness: 0.0,
+      roughness: o.roughness,
+      transmission: o.transmission,   // real refraction, not just opacity
+      thickness: 0.02,
+      ior: o.ior,
+      transparent: true,
+      opacity: 1.0,
+      // Single-sided: doubleSided glazing draws the far pane through the near
+      // one and sorts wrong, which is most of what makes CG glass look solid.
+      side: THREE.FrontSide,
+      depthWrite: false,
+      envMapIntensity: 1.4,
+    });
+    if (mat.envMap) glassMat.envMap = mat.envMap;
+    if (mat.normalMap) { glassMat.normalMap = mat.normalMap; glassMat.normalScale = new THREE.Vector2(0.25, 0.25); }
+
+    const glass = new THREE.Mesh(sub(glassTris), glassMat);
+    glass.name = (obj.name || 'mesh') + '_glass';
+    glass.userData._glassSplit = true;
+    glass.castShadow = false;          // glazing should not cast a solid shadow
+    glass.receiveShadow = false;
+    glass.renderOrder = 2;             // after the opaque shell
+    obj.add(glass);                    // child, so it inherits every transform
+    glass.position.set(0, 0, 0);
+    glass.rotation.set(0, 0, 0);
+    glass.scale.set(1, 1, 1);
+
+    out.push(`${obj.name || 'mesh'}: ${glassTris.length/3} glass / ${solidTris.length/3} solid tris`);
+  });
+
+  if (out.length) console.log('[XIX] glass split -> ' + out.join('; '));
+  return out;
+}
+
 // ── World-metre micro-detail for baked photogrammetry assets ──────────────
 //  The turf reads as real because it samples by world metres (vWorldPos.xz /
 //  uTexMeters), so its detail frequency is locked to the ground rather than to
