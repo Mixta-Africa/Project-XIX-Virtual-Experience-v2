@@ -108,7 +108,18 @@ export function updateMinimap(worldX, worldZ, yawRad) {
   //        Direction wedge (facing direction)
   minimapCtx.save();
   minimapCtx.translate(px, py);
-  minimapCtx.rotate(yawRad); // yaw 0 = north (-Z) = arrow up; yaw PI/2 = east (+X) = arrow right
+  //  HEADING WAS MIRRORED. controls.js defines forward as
+  //      (-sin(yaw), 0, -cos(yaw))
+  //  so yaw = PI/2 gives (-1, 0, 0), which is -X, which is WEST. The old
+  //  comment here claimed PI/2 was east and the canvas rotated by +yaw, which
+  //  turns the arrow clockwise and lands it due east — a mirror of the truth
+  //  about the north-south axis. Facing the apartment blocks in the west read
+  //  as east on the map.
+  //
+  //  Canvas +y runs down and py maps +Z downward, so screen-up already equals
+  //  -Z = north and yaw 0 needs no rotation. Negating fixes every other
+  //  heading: PI/2 -> arrow left (west), PI -> arrow down (south).
+  minimapCtx.rotate(-yawRad);
 
   minimapCtx.beginPath();
   minimapCtx.moveTo(0, -14);
