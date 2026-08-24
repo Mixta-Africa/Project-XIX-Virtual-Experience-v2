@@ -1558,41 +1558,56 @@ window.startIsolatedInterior = function(propKey) {
   const uiContainer = document.createElement('div');
   uiContainer.id = 'interior-walkthrough-ui';
   
-  // 3. Create Floor Navigation Buttons (Right side of screen)
-  const plot = typeof plotRegistry !== 'undefined' ? plotRegistry.get(propKey) : null;
-  if (plot) {
-    const camLocalZ = 2.0; 
-    const worldX = plot.x + Math.sin(plot.ry) * camLocalZ;
-    const worldZ = plot.z + Math.cos(plot.ry) * camLocalZ;
-    
-    // Eye-level heights based on architectural sections
-    const L2_CAM_Y = 2.85 + 1.65; // Ground Floor Living
-    const L3_CAM_Y = 6.15 + 1.65; // First Floor Master Bed
+  // ── 3. FLOOR NAVIGATION ──────────────────────────────────────────────────
+  //  These "buttons" were never buttons. The template literal below held the
+  //  two labels as BARE TEXT with no <button> elements, so
+  //  getElementById('btn-floor-3') returned null and .addEventListener threw a
+  //  TypeError on the very next line. Three symptoms, one bug: the labels
+  //  appeared as unstyled text across the bottom of the screen, floors could
+  //  not be switched, and the Exit Walkthrough button further down never got
+  //  created because the exception aborted the rest of this function.
+  //
+  //  Eye heights are no longer inlined here — scene.js owns them through
+  //  setInteriorLevel(), so geometry and camera cannot drift apart.
+  const levels = (window._xixInteriorAnchor && window._xixInteriorAnchor.levels) || [
+    { n:1, label:'Undercroft & Entry' }, { n:2, label:'Living & Dining' }, { n:3, label:'Master Bedroom' },
+  ];
 
-    uiContainer.innerHTML = `
-      
-        Level 3: Master Bedroom
-        Level 2: Living & Dining
-      
-    `;
+  uiContainer.style.cssText = [
+    'position:fixed','right:12px','top:50%','transform:translateY(-50%)',
+    'display:flex','flex-direction:column','gap:8px','z-index:60','pointer-events:auto',
+    'padding-right:env(safe-area-inset-right,0px)',
+  ].join(';');
 
-    document.getElementById('world-overlay')?.appendChild(uiContainer);
-
-    // Teleport Logic
-    document.getElementById('btn-floor-3').addEventListener('click', (e) => {
-      if (typeof setView === 'function') setView([worldX, L3_CAM_Y, worldZ], plot.ry, 0);
-      e.target.style.background = 'var(--gold-500, #c9a84c)'; e.target.style.color = '#061208'; e.target.style.fontWeight = 'bold';
-      const otherBtn = document.getElementById('btn-floor-2');
-      otherBtn.style.background = 'rgba(6,18,8,0.8)'; otherBtn.style.color = '#c9a84c'; otherBtn.style.fontWeight = 'normal';
+  let paint;
+  const btns = levels.map(lv => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.level = String(lv.n);
+    b.textContent = `Level ${lv.n} · ${lv.label}`;
+    b.style.cssText = [
+      'font:600 12px/1 Inter,sans-serif','letter-spacing:.04em','padding:11px 14px',
+      'border-radius:8px','cursor:pointer','white-space:nowrap','min-height:44px',
+      'border:1px solid rgba(201,168,76,0.42)','background:rgba(6,18,8,0.86)','color:#c9a84c',
+      'backdrop-filter:blur(6px)','-webkit-backdrop-filter:blur(6px)',
+    ].join(';');
+    b.addEventListener('click', () => {
+      if (typeof window.setInteriorLevel === 'function') window.setInteriorLevel(lv.n);
+      paint(lv.n);
     });
+    return b;
+  });
 
-    document.getElementById('btn-floor-2').addEventListener('click', (e) => {
-      if (typeof setView === 'function') setView([worldX, L2_CAM_Y, worldZ], plot.ry, 0);
-      e.target.style.background = 'var(--gold-500, #c9a84c)'; e.target.style.color = '#061208'; e.target.style.fontWeight = 'bold';
-      const otherBtn = document.getElementById('btn-floor-3');
-      otherBtn.style.background = 'rgba(6,18,8,0.8)'; otherBtn.style.color = '#c9a84c'; otherBtn.style.fontWeight = 'normal';
-    });
-  }
+  paint = (active) => btns.forEach(b => {
+    const on = Number(b.dataset.level) === active;
+    b.style.background = on ? '#c9a84c' : 'rgba(6,18,8,0.86)';
+    b.style.color      = on ? '#061208' : '#c9a84c';
+    b.style.fontWeight = on ? '700' : '600';
+  });
+
+  btns.forEach(b => uiContainer.appendChild(b));
+  paint(window._xixInteriorLevel || 2);
+  document.getElementById('world-overlay')?.appendChild(uiContainer);
 
   // 4. Create the "Exit Walkthrough" button
   const exitBtn = document.createElement('button');
