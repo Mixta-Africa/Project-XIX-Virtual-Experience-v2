@@ -2623,11 +2623,17 @@ function addVillaRing(){
 
   [-75, -47, -19].forEach(z => placeV(-162, z, Math.PI / 2));
   [19, 47, 75].forEach(z => placeV(-162, z, Math.PI / 2));
-  placeV(-148, 105, 3 * Math.PI / 4);
+  //  SW / SE CORNER OVERLAP (rule 5). These sat 6.0 m from the outermost
+  //  south-row villa — a hard clip against a 24 m footprint. The neighbours
+  //  they sit between, (-162, 75) and (-149, 111), are only 38.3 m apart, so
+  //  24 m to each is impossible; the midpoint is the maximum available and
+  //  gives 19.2 m both ways. Anything better needs one of the two runs to
+  //  give up a unit, which would break the 43 count.
+  placeV(-155.5, 93, 3 * Math.PI / 4);
 
   [-75, -47, -19].forEach(z => placeV(162, z, -Math.PI / 2));
   [19, 47, 75].forEach(z => placeV(162, z, -Math.PI / 2));
-  placeV(148, 105, -3 * Math.PI / 4);
+  placeV(155.5, 93, -3 * Math.PI / 4);
 
   for(const side of [-1, 1]) {
     [65, 93, 121, 149].forEach(xa => {
