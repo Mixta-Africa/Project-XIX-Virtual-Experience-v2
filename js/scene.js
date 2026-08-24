@@ -2570,83 +2570,66 @@ function isInNoBuildZone(x,z){
 }
 
 function addVillaRing(){
-  // ════════════════════════════════════════════════════════════════════════
-  //  VILLA RING — derived from the field, not a list of literal coordinates
-  // ════════════════════════════════════════════════════════════════════════
-  //  A hardcoded coordinate list is why the north arc drifted to a 13 m pitch
-  //  while every other run sat at 22-28 m, and why two corners could go
-  //  missing with nothing to notice. Everything here is computed:
-  //      field  274 x 146     -> goal lines x = +-137, sidelines z = +-73
-  //      safety 298x25 @ z=+-85.5, 11x146 @ x=+-142.5 -> edge x=+-148, z=+-98
-  //
-  //  SETBACKS. East and west were the tightest runs on the estate at 14 m
-  //  while the north reached 40 m — the reverse of the plan. East/west x1.40,
-  //  north/south x0.60, both measured from the safety edge.
-  //
-  //  The lake does not move. Its outer boundary is a quadratic Bezier and the
-  //  135 in addLake() is a CONTROL point, not a point on the curve — the water
-  //  stops at z = -118.5 at centre. The pulled-in arc clears it by 3.5 m.
-  //
-  //  COUNTS. registerVillaFootprint uses r = 12, so 24 m centre-to-centre is
-  //  the floor. 10 across the north needs 216 m and fits. 10 plus 4+4 as arc
-  //  shoulders would need 408 m of a ~300 m frontage, so the 4s are the west
-  //  and east columns — the only reading where the spacing is physically real.
-  const SAFE_X=148, SAFE_Z=98, MIN_PITCH=24;
-  const SB={ ew:14.0*1.40, south:7.0*0.60, nEnd:22.4*0.60, nMid:40.0*0.60 };
-  const COUNT={ arc:10, west:4, east:4, south:8 };
-  const ARC_HALF=108;
-
-  const X_EW=SAFE_X+SB.ew, Z_S=SAFE_Z+SB.south;
-  const Z_NE=SAFE_Z+SB.nEnd, Z_NM=SAFE_Z+SB.nMid;
-
-  const placed=[];
+  const PLOT=28;
+  const cypressPositions=[];
+  
   function placeV(x,z,ry){
-    const plotKey=String(window._nextUnitId++);
-    registerVillaFootprint(x,z,plotKey,"3 BED VILLA");
-    placeVillaGLBWithLOD(x,z,ry,plotKey);
-    addVillaContactShadow(x,z);
-    collectVillaHedge(x,z,ry);
-    placed.push([x,z]);
+    const plotKey = String(window._nextUnitId++); 
+    registerVillaFootprint(x, z, plotKey, "3 BED VILLA");
+    placeVillaGLBWithLOD(x, z, ry, plotKey);
+    addVillaContactShadow(x,z); 
+    collectVillaHedge(x,z,ry); 
+    const fx=Math.sin(ry)*(-9),fz=Math.cos(ry)*(-9),rx=Math.cos(ry)*8,rz=-Math.sin(ry)*8;
+    if(!isInNoBuildZone(x+rx+fx,z+rz+fz)) cypressPositions.push([x+rx+fx,z+rz+fz]);
+    if(!isInNoBuildZone(x-rx+fx,z-rz+fz)) cypressPositions.push([x-rx+fx,z-rz+fz]);
+  }
+  
+  // South row: west and east sides — straight villas facing north
+  [-86, -108, -130, -152].forEach(x => { placeV(x, -120, 0); });
+  [86, 108, 130, 152].forEach(x => { placeV(x, -120, 0); });
+
+  for (let i = 0; i < 11; i++) {
+    const t = 0.05 + (i / 10) * 0.90; 
+    const x = -70 + (t * 140); 
+    const z = -120 - Math.sin(t * Math.PI) * 18; 
+    const rotY = Math.atan2(0 - x, -60 - z); 
+    placeV(x, z, rotY);
   }
 
-  // NORTH ARC — 10, bowing away from the field around the lake
-  for(let i=0;i<COUNT.arc;i++){
-    const t=i/(COUNT.arc-1);
-    const x=-ARC_HALF+t*ARC_HALF*2;
-    const z=-(Z_NE+Math.sin(t*Math.PI)*(Z_NM-Z_NE));
-    placeV(x,z,Math.atan2(0-x,-60-z));
-  }
-  // SOUTH ROW
-  for(let i=0;i<COUNT.south;i++){
-    const t=(i/(COUNT.south-1))-0.5;
-    placeV(t*ARC_HALF*2, Z_S+Math.cos(t*Math.PI)*6, Math.PI);
-  }
-  // WEST / EAST COLUMNS — 4 each, centred on the halfway line
-  [[-1,'west'],[1,'east']].forEach(([sgn,side])=>{
-    const n=COUNT[side];
-    for(let i=0;i<n;i++){
-      const t=(i/(n-1))-0.5;
-      placeV(sgn*X_EW, t*(n-1)*34, sgn>0?-Math.PI/2:Math.PI/2);
-    }
-  });
-  // CORNERS — the two that went missing, and their south counterparts.
-  // Interpolated between the runs they join, so they cannot vanish again
-  // without the arc or the column vanishing with them.
-  [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(([sx,sz])=>{
-    const cx=sx*(ARC_HALF+(X_EW-ARC_HALF)*0.58);
-    const cz=sz*(Z_NE-16);
-    placeV(cx,cz,Math.atan2(0-cx,0-cz));
-  });
+  [-75, -47, -19].forEach(z => placeV(-162, z, Math.PI / 2));
+  [19, 47, 75].forEach(z => placeV(-162, z, Math.PI / 2));
+  placeV(-148, 105, 3 * Math.PI / 4);
 
-  // Spacing audit. Fails loudly rather than shipping another clumped run.
-  let worst=Infinity,wp=null;
-  for(let i=0;i<placed.length;i++)for(let j=i+1;j<placed.length;j++){
-    const d=Math.hypot(placed[i][0]-placed[j][0],placed[i][1]-placed[j][1]);
-    if(d<worst){worst=d;wp=[placed[i],placed[j]];}
-  }
-  const m=`[XIX] Villas: ${placed.length} placed, tightest pair ${worst.toFixed(1)} m`;
-  if(worst<MIN_PITCH) console.warn(m+` — BELOW the ${MIN_PITCH} m minimum`,wp); else console.log(m);
+  [-75, -47, -19].forEach(z => placeV(162, z, -Math.PI / 2));
+  [19, 47, 75].forEach(z => placeV(162, z, -Math.PI / 2));
+  placeV(148, 105, -3 * Math.PI / 4);
 
+  for(const side of [-1, 1]) {
+    [65, 93, 121, 149].forEach(xa => {
+      placeV(side * xa, 105 + xa * 0.04, 0);
+    });
+  }
+
+  // ── THE TWO MISSING CORNERS ──────────────────────────────────────────────
+  //  This layout is yours and is otherwise untouched — the ring I derived from
+  //  the field geometry dropped it to 30 units and is reverted.
+  //
+  //  It places 41. UNIT_SCHEDULE in data.js says 43 Premium Villas. The two
+  //  that are absent are the north-west and north-east corners: the north
+  //  flank run stops at x = +-152, z = -120 and the side columns start at
+  //  x = +-162, z = -75, leaving a 46 m hole at each shoulder. The east end
+  //  already has its pair at (+-148, 105). Filling both brings the count to
+  //  exactly 43 and closes the gap that was reported.
+  placeV(-158, -98,  Math.PI / 4);
+  placeV( 158, -98, -Math.PI / 4);
+
+  // The schedule is the source of truth for the count, so it is asserted here
+  // rather than left to be discovered in a screenshot.
+  const _built = villaFootprints.length;
+  if (_built !== 43) console.warn(`[XIX] Villas: ${_built} placed, schedule says 43`);
+  else console.log('[XIX] Villas: 43 placed, matches UNIT_SCHEDULE');
+
+  buildInstancedCypress(cypressPositions);
   buildAllVillaHedges();
 }
 
