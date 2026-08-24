@@ -554,7 +554,11 @@ function _radialShellGeometry(srcGeo, copies = 2) {
 }
 
 let _treePositions = [];
+// Withdrawn — the scan read as malformed at every tier and no shell
+// arrangement fixed it. Kept rather than deleted so the poly-budget notes
+// survive if the asset is ever replaced.
 function buildInstancedCypress(positions) {
+  return;
   // ══════════════════════════════════════════════════════════════════════
   //  POSITION FORMAT: entries are [x, z] — TWO elements, not three.
   //  Reading p[1] as height and p[2] as Z sent every tree into the sky at an
@@ -784,6 +788,8 @@ function _makeHotspotCanvas(label, sublabel) {
   return c;
 }
 
+export const HOTSPOT_LAYER = 1;
+
 export function addLandmarkHotspots() {
   HOTSPOT_DEFS.forEach(def => {
     const canvas  = _makeHotspotCanvas(def.label, def.sublabel);
@@ -801,6 +807,12 @@ export function addLandmarkHotspots() {
     sprite.userData.productKey = def.productKey;
     sprite.userData.label      = def.label;
     sprite.userData.isHotspot  = true;
+    // Three's Water builds its own virtual camera for the reflection pass and
+    // leaves it on the default layer mask, so anything moved off layer 0 never
+    // enters the reflection buffer. The label still floats above the villa —
+    // the main camera opts back in inside tickScene — it just no longer
+    // appears upside down in the water.
+    sprite.layers.set(HOTSPOT_LAYER);
     scene.add(sprite);
     _hotspots.push({ sprite, productKey: def.productKey });
   });
@@ -827,50 +839,95 @@ function collectVillaHedge(x, z, ry) {
   _hedgeInstData.push({ x, z, ry });
 }
 
+// A hedge is not a box. Six stretched cubes per villa is what produced the
+// flat green slabs: no silhouette, no gaps, and a dead-straight top line that
+// nothing living has. Real clipped hedging is a RUN OF CLUMPS whose crowns
+// overlap into one mass but whose top edge undulates and whose ends round off,
+// so each run is walked at a fixed pitch dropping one bush per step.
+function _hedgeClumpGeometry() {
+  // Icosahedron, not a UV sphere: even triangles, no pole pinching, 80 tris.
+  const g = new THREE.IcosahedronGeometry(0.5, 1);
+  const p = g.attributes.position, v = new THREE.Vector3();
+  for (let i = 0; i < p.count; i++) {
+    v.fromBufferAttribute(p, i);
+    v.multiplyScalar(1.0 + Math.sin(v.x*9.1)*Math.cos(v.y*7.3)*Math.sin(v.z*8.7)*0.26);
+    v.y *= 0.86;                       // clipped flatter than it is wide
+    p.setXYZ(i, v.x, v.y, v.z);
+  }
+  g.computeVertexNormals();
+  return g;
+}
+
 function buildAllVillaHedges() {
   if (_hedgeInstData.length === 0) return;
-  const count = _hedgeInstData.length;
-  const geo = new THREE.BoxGeometry(1, 1.4, 1);
+  const geo = _hedgeClumpGeometry();
   const mat = new THREE.MeshStandardMaterial({
-    color: 0x2d5a1e, roughness: 0.95, metalness: 0, envMapIntensity: 0.2
+    color: 0xffffff,                   // per-instance colour does the work
+    roughness: 0.94, metalness: 0, envMapIntensity: 0.25,
   });
-
-  const SEGS_PER_VILLA = 6;
-  const total = count * SEGS_PER_VILLA;
-  const mesh = new THREE.InstancedMesh(geo, mat, total);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  mesh.frustumCulled = false;
-
+  // Pitch tighter than clump radius so crowns overlap with no see-through.
+  const PITCH = PERF_MODE === 'fast' ? 1.15 : PERF_MODE === 'balanced' ? 0.85 : 0.68;
   const dummy = new THREE.Object3D();
+  const col = new THREE.Color();
+  const runs = [];
   let idx = 0;
 
   _hedgeInstData.forEach(({ x, z, ry }) => {
-    const W = 10.5, D = 8.5, H = 0.7, T = 0.55;
-    const segments = [
-      { lx: 0,     lz: -(D+T),  sx: W*2, sz: T },
-      { lx: -(W*0.5+1), lz: D+T, sx: W-2, sz: T },
-      { lx:  (W*0.5+1), lz: D+T, sx: W-2, sz: T },
-      { lx: -(W+T),  lz: 0,   sx: T, sz: D*2 },
-      { lx:  (W+T),  lz: -D*0.3, sx: T, sz: D*1.4 },
-      { lx:  (W+T),  lz:  D*0.7, sx: T, sz: D*0.6 },
-    ];
-
-    const cosR = Math.cos(ry), sinR = Math.sin(ry);
-    segments.forEach(seg => {
-      const wx = x + seg.lx * cosR - seg.lz * sinR;
-      const wz = z + seg.lx * sinR + seg.lz * cosR;
-      dummy.position.set(wx, H, wz);
-      dummy.rotation.set(0, ry, 0);
-      dummy.scale.set(seg.sx, 1, seg.sz);
-      dummy.updateMatrix();
-      mesh.setMatrixAt(idx++, dummy.matrix);
-    });
+    const W = 10.5, D = 8.5, T = 0.55;
+    [ { lx: 0,          lz: -(D+T), sx: W*2, sz: T },
+      { lx: -(W*0.5+1), lz:  D+T,   sx: W-2, sz: T },
+      { lx:  (W*0.5+1), lz:  D+T,   sx: W-2, sz: T },
+      { lx: -(W+T),     lz:  0,     sx: T,   sz: D*2 },
+      { lx:  (W+T),     lz: -D*0.3, sx: T,   sz: D*1.4 },
+      { lx:  (W+T),     lz:  D*0.7, sx: T,   sz: D*0.6 },
+    ].forEach(seg => runs.push({ x, z, ry, seg }));
   });
 
-  mesh.count = idx; 
+  let total = 0;
+  runs.forEach(({ seg }) => {
+    total += Math.max(2, Math.ceil(Math.max(seg.sx, seg.sz) / PITCH) + 1);
+  });
+
+  const mesh = new THREE.InstancedMesh(geo, mat, total);
+  mesh.castShadow = mesh.receiveShadow = true;
+  mesh.frustumCulled = false;
+
+  // Deterministic — a hedge that reshuffles on reload reads as a bug, and the
+  // estate has to look identical across two side-by-side sessions.
+  let seed = 1907;
+  const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+
+  runs.forEach(({ x, z, ry, seg }) => {
+    const alongZ = seg.sz > seg.sx;
+    const len = alongZ ? seg.sz : seg.sx, thick = alongZ ? seg.sx : seg.sz;
+    const n = Math.max(2, Math.ceil(len / PITCH) + 1);
+    const cosR = Math.cos(ry), sinR = Math.sin(ry);
+    for (let i = 0; i < n; i++) {
+      const t  = i / (n - 1);
+      const oa = (t - 0.5) * len, ob = (rnd() - 0.5) * thick * 0.45;
+      const lx = alongZ ? seg.lx + ob : seg.lx + oa;
+      const lz = alongZ ? seg.lz + oa : seg.lz + ob;
+      // Ends taper so the run rounds off instead of stopping dead.
+      const fade = Math.min(1, Math.sin(Math.PI * Math.min(t, 1 - t) * 2 + 0.55));
+      const rad = (1.30 + rnd()*0.30) * (0.72 + 0.28*fade);
+      const hgt = (1.34 + rnd()*0.34) * (0.70 + 0.30*fade);
+      dummy.position.set(x + lx*cosR - lz*sinR, hgt*0.44 + rnd()*0.05, z + lx*sinR + lz*cosR);
+      dummy.rotation.set((rnd()-0.5)*0.20, rnd()*Math.PI*2, (rnd()-0.5)*0.20);
+      dummy.scale.set(rad, hgt, rad * (0.86 + rnd()*0.24));
+      dummy.updateMatrix();
+      mesh.setMatrixAt(idx, dummy.matrix);
+      const lift = 0.80 + rnd()*0.34;
+      col.setHSL(0.263 + (rnd()-0.5)*0.030, 0.44 + rnd()*0.14, 0.155*lift + 0.045);
+      mesh.setColorAt(idx, col);
+      idx++;
+    }
+  });
+
+  mesh.count = idx;
   mesh.instanceMatrix.needsUpdate = true;
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
   scene.add(mesh);
+  console.log(`[XIX] Hedges: ${idx.toLocaleString()} clumps across ${runs.length} runs`);
 }
 
 // ─── AO CONTACT SHADOWS ───────────────────────────────────────────────────────
@@ -1100,16 +1157,37 @@ function buildLighting() {
 const _nightLights = [];
 let   _nightLightsActive = false;
 
+// Point lights are the most expensive thing in a forward renderer — each one
+// costs in every lit fragment shader and Three has a hard uniform ceiling
+// besides. A lamp beside all 26 villas plus the estate lamps as real lights
+// would not compile, let alone run on a phone.
+//
+// So every position gets a POST and an emissive GLOBE (the globe is what
+// actually reads as a lamp at distance, and both are instanced), while the
+// real PointLights come from a small pool reassigned each frame to whichever
+// lamps are nearest the camera. Light always falls where the viewer is
+// standing and the cost is constant however many lamps the estate grows to.
+const _lampPool = [];
+const _lampNodes = [];
+const LAMP_POOL_SIZE = { fast: 4, balanced: 8, rich: 14 };
+let _lampTargetIntensity = 0;
+
 function buildNightLights() {
-  if (_nightLights.length > 0) return; 
+  if (_nightLights.length > 0) return;
   const lampPositions = [
-    [-155,0,-80],[-155,0,-40],[-155,0,0],[-155,0,40],[-155,0,80],
-    [155,0,-80],[155,0,-40],[155,0,0],[155,0,40],[155,0,80],
     [-120,0,215],[-60,0,215],[0,0,215],[60,0,215],[120,0,215],
     [-80,0,-105],[-20,0,-105],[40,0,-105],[100,0,-105],
     [-40,0,108],[0,0,108],[40,0,108],
     [-360,0,80],[-375,0,60],[-390,0,40],
   ];
+
+  // One lamp beside every villa, at the front-right of the plot so it stands
+  // outside the hedge line rather than in the garden. Positions come from the
+  // same villa records the hedges use, so the two cannot drift apart.
+  _hedgeInstData.forEach(({ x, z, ry }) => {
+    const c = Math.cos(ry), s = Math.sin(ry), lx = 12.4, lz = -10.6;
+    lampPositions.push([x + lx*c - lz*s, 0, z + lx*s + lz*c]);
+  });
 
   const postMat = new THREE.MeshStandardMaterial({ color:0x2a3020, roughness:.7 });
   const globeMat = new THREE.MeshStandardMaterial({
@@ -1117,22 +1195,49 @@ function buildNightLights() {
     roughness:.3, transparent:true, opacity:.9
   });
 
-  lampPositions.forEach(([x, , z]) => {
-    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08,0.10,5,6), postMat);
-    post.position.set(x, 2.5, z);
-    post.castShadow = false;
-    scene.add(post);
-
-    const globe = new THREE.Mesh(new THREE.SphereGeometry(0.22,8,6), globeMat);
-    globe.position.set(x, 5.25, z);
-    scene.add(globe);
-    _nightLights.push({ post, globe });
-
-    const pt = new THREE.PointLight(0xffaa44, 0, 22, 1.8); 
-    pt.position.set(x, 5.0, z);
-    scene.add(pt);
-    _nightLights.push({ pt });
+  const posts  = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.08,0.10,5,6), postMat,  lampPositions.length);
+  const globes = new THREE.InstancedMesh(new THREE.SphereGeometry(0.22,8,6),        globeMat, lampPositions.length);
+  posts.frustumCulled = globes.frustumCulled = false;
+  const d = new THREE.Object3D();
+  lampPositions.forEach(([x, , z], i) => {
+    d.position.set(x, 2.5, z);  d.updateMatrix(); posts.setMatrixAt(i, d.matrix);
+    d.position.set(x, 5.25, z); d.updateMatrix(); globes.setMatrixAt(i, d.matrix);
+    _lampNodes.push({ x, y: 5.0, z });
   });
+  posts.instanceMatrix.needsUpdate = globes.instanceMatrix.needsUpdate = true;
+  scene.add(posts); scene.add(globes);
+  _nightLights.push({ globes });
+
+  const poolSize = LAMP_POOL_SIZE[PERF_MODE] ?? 8;
+  for (let i = 0; i < poolSize; i++) {
+    const pt = new THREE.PointLight(0xffaa44, 0, 24, 1.8);
+    pt.visible = false;
+    scene.add(pt); _lampPool.push(pt); _nightLights.push({ pt });
+  }
+  console.log(`[XIX] Lamps: ${lampPositions.length} posts, ${poolSize} pooled point lights`);
+}
+
+// Reassign the pool to the nearest lamps. Driven from tickScene.
+const _lampSort = [];
+export function tickLampPool(camera) {
+  if (!_lampPool.length || !_nightLightsActive || !camera) return;
+  _lampSort.length = 0;
+  const cx = camera.position.x, cz = camera.position.z;
+  for (const n of _lampNodes) {
+    const dx = n.x - cx, dz = n.z - cz;
+    _lampSort.push({ n, d2: dx*dx + dz*dz });
+  }
+  _lampSort.sort((a, b) => a.d2 - b.d2);
+  const R2 = 90 * 90;
+  for (let i = 0; i < _lampPool.length; i++) {
+    const s = _lampSort[i], pt = _lampPool[i];
+    if (!s || s.d2 > R2) { pt.visible = false; continue; }
+    pt.position.set(s.n.x, s.n.y, s.n.z);
+    pt.visible = true;
+    // Fade the outermost in rather than popping them on.
+    const k = 1 - Math.min(1, s.d2 / R2);
+    pt.intensity = _lampTargetIntensity * k * k;
+  }
 }
 
 export function updateNightLights(timeName) {
@@ -1141,16 +1246,17 @@ export function updateNightLights(timeName) {
 
   if (isNight || isSunset) buildNightLights();
 
+  _lampTargetIntensity = isNight ? 3.2 : isSunset ? 1.4 : 0;
   _nightLights.forEach(item => {
-    if (item.pt) {
-      item.pt.intensity = isNight ? 2.8 : isSunset ? 1.2 : 0;
-    }
-    if (item.globe) {
-      item.globe.material.emissiveIntensity = isNight ? 2.5 : isSunset ? 1.2 : 0;
-      item.globe.material.opacity = (isNight || isSunset) ? 0.95 : 0.0;
+    if (item.pt && _lampTargetIntensity === 0) { item.pt.intensity = 0; item.pt.visible = false; }
+    if (item.globes) {
+      item.globes.material.emissiveIntensity = isNight ? 2.5 : isSunset ? 1.2 : 0;
+      item.globes.material.opacity = (isNight || isSunset) ? 0.95 : 0.0;
+      item.globes.visible = (isNight || isSunset);
     }
   });
-  _nightLightsActive = isNight;
+  // Sunset counts as active so the pool tracks before full dark.
+  _nightLightsActive = isNight || isSunset;
 }
 
 // Glass mesh cache — populated by applyPS4Materials via userData.isGlassPanel flag.
@@ -2330,10 +2436,40 @@ function addPlotOverlay(x,z,ry,plotKey,villaClone){
   plotRegistry.set(plotKey, { ...existingData, status: "available", overlay, villaClone, x, z, ry });
 }
 
+// Selection used to slam material.opacity between 0 and 0.35 the instant the
+// raycast changed, so the hologram snapped on and off and flickered whenever
+// the ray grazed an edge between two plots. Two changes:
+//   - the hard write becomes a TARGET that tickPlotHighlights eases toward, so
+//     every appearance and disappearance is a short fade rather than a cut
+//   - the eased value also drives a slow pulse, so a held selection breathes
+//     instead of sitting inert
+const _plotFade = new Map();
 export function highlightPlot(plotKey){
   plotRegistry.forEach((plot,key)=>{
     if(!plot.overlay) return;
-    plot.overlay.material.opacity = (key===plotKey&&plot.status==='available') ? 0.35 : (plot.status==='reserved' ? 0.5 : 0);
+    const target = (key===plotKey && plot.status==='available') ? 0.38
+                 : (plot.status==='reserved' ? 0.50 : 0.0);
+    plot.overlay.userData._fadeTarget = target;
+    if (!_plotFade.has(key)) _plotFade.set(key, plot.overlay.material.opacity || 0);
+    if (target > 0) plot.overlay.visible = true;
+  });
+}
+
+export function tickPlotHighlights(delta, elapsed){
+  // Framerate-independent easing — a fixed per-frame lerp would fade at
+  // different speeds on a 60 Hz phone and a 120 Hz one.
+  const k = 1 - Math.exp(-11 * Math.min(delta, 0.05));
+  const pulse = 1 + Math.sin(elapsed * 2.1) * 0.10;
+  plotRegistry.forEach((plot,key)=>{
+    const ov = plot.overlay; if(!ov || !ov.material) return;
+    const target = ov.userData._fadeTarget ?? 0;
+    let cur = _plotFade.get(key) ?? ov.material.opacity ?? 0;
+    cur += (target - cur) * k;
+    if (Math.abs(cur - target) < 0.002) cur = target;
+    _plotFade.set(key, cur);
+    ov.material.opacity = cur * (target > 0 ? pulse : 1);
+    // Hidden once fully faded so it stops costing a transparent draw call.
+    ov.visible = cur > 0.004;
   });
 }
 
@@ -2434,47 +2570,83 @@ function isInNoBuildZone(x,z){
 }
 
 function addVillaRing(){
-  const PLOT=28;
-  const cypressPositions=[];
-  
+  // ════════════════════════════════════════════════════════════════════════
+  //  VILLA RING — derived from the field, not a list of literal coordinates
+  // ════════════════════════════════════════════════════════════════════════
+  //  A hardcoded coordinate list is why the north arc drifted to a 13 m pitch
+  //  while every other run sat at 22-28 m, and why two corners could go
+  //  missing with nothing to notice. Everything here is computed:
+  //      field  274 x 146     -> goal lines x = +-137, sidelines z = +-73
+  //      safety 298x25 @ z=+-85.5, 11x146 @ x=+-142.5 -> edge x=+-148, z=+-98
+  //
+  //  SETBACKS. East and west were the tightest runs on the estate at 14 m
+  //  while the north reached 40 m — the reverse of the plan. East/west x1.40,
+  //  north/south x0.60, both measured from the safety edge.
+  //
+  //  The lake does not move. Its outer boundary is a quadratic Bezier and the
+  //  135 in addLake() is a CONTROL point, not a point on the curve — the water
+  //  stops at z = -118.5 at centre. The pulled-in arc clears it by 3.5 m.
+  //
+  //  COUNTS. registerVillaFootprint uses r = 12, so 24 m centre-to-centre is
+  //  the floor. 10 across the north needs 216 m and fits. 10 plus 4+4 as arc
+  //  shoulders would need 408 m of a ~300 m frontage, so the 4s are the west
+  //  and east columns — the only reading where the spacing is physically real.
+  const SAFE_X=148, SAFE_Z=98, MIN_PITCH=24;
+  const SB={ ew:14.0*1.40, south:7.0*0.60, nEnd:22.4*0.60, nMid:40.0*0.60 };
+  const COUNT={ arc:10, west:4, east:4, south:8 };
+  const ARC_HALF=108;
+
+  const X_EW=SAFE_X+SB.ew, Z_S=SAFE_Z+SB.south;
+  const Z_NE=SAFE_Z+SB.nEnd, Z_NM=SAFE_Z+SB.nMid;
+
+  const placed=[];
   function placeV(x,z,ry){
-    const plotKey = String(window._nextUnitId++); 
-    registerVillaFootprint(x, z, plotKey, "3 BED VILLA");
-    placeVillaGLBWithLOD(x, z, ry, plotKey);
-    addVillaContactShadow(x,z); 
-    collectVillaHedge(x,z,ry); 
-    const fx=Math.sin(ry)*(-9),fz=Math.cos(ry)*(-9),rx=Math.cos(ry)*8,rz=-Math.sin(ry)*8;
-    if(!isInNoBuildZone(x+rx+fx,z+rz+fz)) cypressPositions.push([x+rx+fx,z+rz+fz]);
-    if(!isInNoBuildZone(x-rx+fx,z-rz+fz)) cypressPositions.push([x-rx+fx,z-rz+fz]);
-  }
-  
-  // South row: west and east sides — straight villas facing north
-  [-86, -108, -130, -152].forEach(x => { placeV(x, -120, 0); });
-  [86, 108, 130, 152].forEach(x => { placeV(x, -120, 0); });
-
-  for (let i = 0; i < 11; i++) {
-    const t = 0.05 + (i / 10) * 0.90; 
-    const x = -70 + (t * 140); 
-    const z = -120 - Math.sin(t * Math.PI) * 18; 
-    const rotY = Math.atan2(0 - x, -60 - z); 
-    placeV(x, z, rotY);
+    const plotKey=String(window._nextUnitId++);
+    registerVillaFootprint(x,z,plotKey,"3 BED VILLA");
+    placeVillaGLBWithLOD(x,z,ry,plotKey);
+    addVillaContactShadow(x,z);
+    collectVillaHedge(x,z,ry);
+    placed.push([x,z]);
   }
 
-  [-75, -47, -19].forEach(z => placeV(-162, z, Math.PI / 2));
-  [19, 47, 75].forEach(z => placeV(-162, z, Math.PI / 2));
-  placeV(-148, 105, 3 * Math.PI / 4);
-
-  [-75, -47, -19].forEach(z => placeV(162, z, -Math.PI / 2));
-  [19, 47, 75].forEach(z => placeV(162, z, -Math.PI / 2));
-  placeV(148, 105, -3 * Math.PI / 4);
-
-  for(const side of [-1, 1]) {
-    [65, 93, 121, 149].forEach(xa => {
-      placeV(side * xa, 105 + xa * 0.04, 0);
-    });
+  // NORTH ARC — 10, bowing away from the field around the lake
+  for(let i=0;i<COUNT.arc;i++){
+    const t=i/(COUNT.arc-1);
+    const x=-ARC_HALF+t*ARC_HALF*2;
+    const z=-(Z_NE+Math.sin(t*Math.PI)*(Z_NM-Z_NE));
+    placeV(x,z,Math.atan2(0-x,-60-z));
   }
+  // SOUTH ROW
+  for(let i=0;i<COUNT.south;i++){
+    const t=(i/(COUNT.south-1))-0.5;
+    placeV(t*ARC_HALF*2, Z_S+Math.cos(t*Math.PI)*6, Math.PI);
+  }
+  // WEST / EAST COLUMNS — 4 each, centred on the halfway line
+  [[-1,'west'],[1,'east']].forEach(([sgn,side])=>{
+    const n=COUNT[side];
+    for(let i=0;i<n;i++){
+      const t=(i/(n-1))-0.5;
+      placeV(sgn*X_EW, t*(n-1)*34, sgn>0?-Math.PI/2:Math.PI/2);
+    }
+  });
+  // CORNERS — the two that went missing, and their south counterparts.
+  // Interpolated between the runs they join, so they cannot vanish again
+  // without the arc or the column vanishing with them.
+  [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(([sx,sz])=>{
+    const cx=sx*(ARC_HALF+(X_EW-ARC_HALF)*0.58);
+    const cz=sz*(Z_NE-16);
+    placeV(cx,cz,Math.atan2(0-cx,0-cz));
+  });
 
-  buildInstancedCypress(cypressPositions);
+  // Spacing audit. Fails loudly rather than shipping another clumped run.
+  let worst=Infinity,wp=null;
+  for(let i=0;i<placed.length;i++)for(let j=i+1;j<placed.length;j++){
+    const d=Math.hypot(placed[i][0]-placed[j][0],placed[i][1]-placed[j][1]);
+    if(d<worst){worst=d;wp=[placed[i],placed[j]];}
+  }
+  const m=`[XIX] Villas: ${placed.length} placed, tightest pair ${worst.toFixed(1)} m`;
+  if(worst<MIN_PITCH) console.warn(m+` — BELOW the ${MIN_PITCH} m minimum`,wp); else console.log(m);
+
   buildAllVillaHedges();
 }
 
@@ -2624,8 +2796,17 @@ function _createFlatBlock(x,z){
 let _tickFrame=0;
 let _prevElapsed=0;
 
+let _lastTickT = 0;
 export function tickScene(elapsed, camera) {
   _tickFrame++;
+  const _dt = Math.min(Math.max(elapsed - _lastTickT, 0), 0.05); _lastTickT = elapsed;
+
+  // Main camera opts in to the hotspot layer; the lake's reflection camera
+  // never does. Idempotent, so it is safe to reassert in case a cinematic or
+  // aerial transition swapped the camera out.
+  if (camera && !camera.layers.isEnabled(HOTSPOT_LAYER)) camera.layers.enable(HOTSPOT_LAYER);
+  tickLampPool(camera);
+  tickPlotHighlights(_dt, elapsed);
 
   // ── a. GLASS SUN GLINT — update emissiveIntensity on glass panels ──────────
   // Every 20 frames — cheap traverse, avoids full scene walk every frame
@@ -2790,7 +2971,11 @@ window.triggerInteriorBuild = function(plotKey) {
   if (!plot) return;
 
   if (window._xixInteriorGroup) scene.remove(window._xixInteriorGroup);
-  if (plot.villaClone) plot.villaClone.visible = false;
+  // Loft units register an invisible raycast hitbox and NO villaClone, so this
+  // used to leave the real block standing and drop the shell through it.
+  window._xixInteriorHidden = [];
+  [plot.villaClone, plot.overlay && plot.overlay.userData.villaClone, plot.lod]
+    .forEach(o => { if (o && o.visible) { o.visible = false; window._xixInteriorHidden.push(o); } });
   window._xixInteriorPlotKey = plotKey;
 
   window._xixInteriorGroup = new THREE.Group();
@@ -2802,8 +2987,34 @@ window.triggerInteriorBuild = function(plotKey) {
   const glassMat = new THREE.MeshStandardMaterial({ color: 0xccddff, transparent: true, opacity: 0.25, roughness: 0.1, metalness: 0.8 });
   const woodMat = new THREE.MeshStandardMaterial({ color: 0xb58e65, roughness: 0.5 }); 
 
-  const L2_Y = 2.85; const L3_Y = 6.15; const CEIL_H = 3.3; 
-  
+  //  LEVELS. L1 is the two-car undercroft the villa actually has. The previous
+  //  build started at L2 = 2.85 and put NOTHING beneath it, which is exactly
+  //  why the walkthrough shell hung in mid-air with a clear gap under it.
+  const L1_Y = 0.15; const L2_Y = 2.85; const L3_Y = 6.15; const CEIL_H = 3.3;
+
+  window._xixInteriorGroup.userData.levels = [
+    { n:1, y:L1_Y, eye:L1_Y+1.65, label:'Undercroft & Entry' },
+    { n:2, y:L2_Y, eye:L2_Y+1.65, label:'Living & Dining'    },
+    { n:3, y:L3_Y, eye:L3_Y+1.65, label:'Master Bedroom'     },
+  ];
+
+  // ── LEVEL 1 — on the ground ──────────────────────────────────────────────
+  const screedMat = new THREE.MeshStandardMaterial({ color: 0x9a958c, roughness: 0.92 });
+  window._xixInteriorGroup.add(box(17.5, 0.30, 14.5, screedMat, [0, L1_Y-0.15, 0], 0, false));
+  // Piloti carrying the first-floor slab. Without them the eye has nothing to
+  // explain how the upper storeys stand up, which is most of why the old build
+  // read as a naked shell rather than a house.
+  [[-6.6,-4.8],[-6.6,4.8],[6.6,-4.8],[6.6,4.8],[0,-4.8],[0,4.8]].forEach(([cx,cz]) => {
+    window._xixInteriorGroup.add(box(0.42, L2_Y-L1_Y, 0.42, wallMat, [cx,(L1_Y+L2_Y)/2,cz]));
+  });
+  window._xixInteriorGroup.add(box(16, L2_Y-L1_Y, 0.4, wallMat, [0,(L1_Y+L2_Y)/2,-6.3]));
+  window._xixInteriorGroup.add(box(0.3, L2_Y-L1_Y, 5.0, wallMat, [4.6,(L1_Y+L2_Y)/2,-3.6]));
+  for (let i = 0; i < 4; i++)
+    window._xixInteriorGroup.add(box(3.2, 0.18, 0.34, screedMat, [4.0, L1_Y+0.09+i*0.18, 5.4-i*0.34], 0, false));
+  const bayMat = new THREE.MeshStandardMaterial({ color: 0xd8d4cc, roughness: 0.95 });
+  [-3.4,-0.2].forEach(bx => window._xixInteriorGroup.add(box(0.08,0.02,5.0,bayMat,[bx,L1_Y+0.02,1.2],0,false)));
+
+  // ── LEVEL 2 ──────────────────────────────────────────────────────────────
   window._xixInteriorGroup.add(box(16, 0.2, 13, floorMat, [0, L2_Y, 0], 0, false)); 
   window._xixInteriorGroup.add(box(16, CEIL_H, 0.4, wallMat, [0, L2_Y + (CEIL_H/2), -6.3])); 
   window._xixInteriorGroup.add(box(0.4, CEIL_H, 13, wallMat, [-7.8, L2_Y + (CEIL_H/2), 0])); 
@@ -2829,15 +3040,31 @@ window.triggerInteriorBuild = function(plotKey) {
   window._xixInteriorGroup.add(box(15.2, CEIL_H, 0.1, glassMat, [0, L3_Y + (CEIL_H/2), 6.3]));
   window._xixInteriorGroup.add(box(15.2, 1.1, 0.05, glassMat, [0, L3_Y + 0.55, 7.5])); 
 
+  // Roof slab. Without one the top storey is open to the sky and the whole
+  // thing reads as a section drawing rather than a building.
+  window._xixInteriorGroup.add(box(16.4, 0.24, 13.4, floorMat, [0, L3_Y+CEIL_H, 0], 0, false));
+
   scene.add(window._xixInteriorGroup);
 
-  const camLocalZ = 2.0; 
-  const worldX = plot.x + Math.sin(plot.ry) * camLocalZ;
-  const worldZ = plot.z + Math.cos(plot.ry) * camLocalZ;
-  const camY = L2_Y + 1.65; 
-  
+  const camLocalZ = 2.0;
+  window._xixInteriorAnchor = {
+    x: plot.x + Math.sin(plot.ry) * camLocalZ,
+    z: plot.z + Math.cos(plot.ry) * camLocalZ,
+    ry: plot.ry, levels: window._xixInteriorGroup.userData.levels,
+  };
   if (typeof window.setMoveMode === 'function') window.setMoveMode('walk');
-  if (typeof setView === 'function') setView([worldX, camY, worldZ], plot.ry, 0);
+  window.setInteriorLevel(2);
+};
+
+// Single entry point for floor navigation. app.js used to inline the eye
+// heights in two click handlers; owning them here means the geometry and the
+// camera can only ever be edited together.
+window.setInteriorLevel = function(n) {
+  const a = window._xixInteriorAnchor; if (!a) return null;
+  const lv = a.levels.find(l => l.n === n) || a.levels[1];
+  if (typeof setView === 'function') setView([a.x, lv.eye, a.z], a.ry, 0);
+  window._xixInteriorLevel = lv.n;
+  return lv;
 };
 
 window.destroyInteriorBuild = function() {
@@ -2845,9 +3072,8 @@ window.destroyInteriorBuild = function() {
     scene.remove(window._xixInteriorGroup);
     window._xixInteriorGroup = null;
   }
-  if (window._xixInteriorPlotKey) {
-    const plot = plotRegistry.get(window._xixInteriorPlotKey);
-    if (plot && plot.villaClone) plot.villaClone.visible = true;
-    window._xixInteriorPlotKey = null;
-  }
+  (window._xixInteriorHidden || []).forEach(o => { o.visible = true; });
+  window._xixInteriorHidden = [];
+  window._xixInteriorAnchor = null;
+  window._xixInteriorPlotKey = null;
 };
