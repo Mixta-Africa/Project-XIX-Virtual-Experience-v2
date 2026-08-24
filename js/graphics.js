@@ -170,7 +170,20 @@ export function setPerfModeGraphics(mode) {
   if (_renderer) {
     const dpr = window.devicePixelRatio || 1;
     // Fast: 1.0 (not 1.5) — on Retina mobile, 1.5× doubles fill cost for minimal gain
-    const pixelRatioMap = { fast: 1.0, balanced: Math.min(dpr, 1.75), rich: Math.min(dpr, 2.0) };
+    //  DISTANT BUILDINGS LOOKING PIXELATED
+    //  The villa LOD only swaps at 400 m, so this was never a geometry or
+    //  texture problem — it was render resolution. Fast pinned the pixel ratio
+    //  to 1.0, which on a 3x-DPR phone renders at a third of native and then
+    //  upscales, and Fast also bypasses the composer so there is no
+    //  antialiasing to hide the stair-stepping. A distant roofline is a
+    //  near-horizontal high-contrast edge, which is the worst case for both.
+    //  Raised across every tier, still clamped to the device so nothing
+    //  supersamples beyond what the panel can show.
+    const pixelRatioMap = {
+      fast:     Math.min(dpr, 1.5),
+      balanced: Math.min(dpr, 2.0),
+      rich:     Math.min(dpr, 2.5),
+    };
     _renderer.setPixelRatio(pixelRatioMap[mode] || 1.0);
 
     if (mode !== 'fast' && _scene) {
