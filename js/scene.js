@@ -1484,13 +1484,24 @@ function addGround() {
   const greens = [
     // [ width, depth, [x, y, z], options ]
     [ 180, 110, [-260, 0.10, -40], { chevron:true  } ],  // training field
-    [ 150, 360, [-215, 0.09,   0], { chevron:false } ],  // west villa frontage (widened)
-    [ 150, 360, [ 215, 0.09,   0], { chevron:false } ],  // east villa frontage (widened)
-    [ 120, 360, [-100, 0.09,   0], { chevron:false } ],  // west inner verge
-    [ 120, 360, [ 100, 0.09,   0], { chevron:false } ],  // east inner verge
-    [ 430, 120, [   0, 0.09, -150], { chevron:false } ], // north: lake surround + arc frontage
-    [ 430,  70, [   0, 0.09,  118], { chevron:false } ], // north-inner: safety zone to lake
-    [ 430, 110, [   0, 0.09,  178], { chevron:false } ], // south / clubhouse lawn
+    //  GRASS ENCROACHING THE SETBACK
+    //  Two separate faults. First, these planes were sized to overlap the
+    //  laterite rather than butt against it: the inner verges were 120 m wide
+    //  centred at x = +-100, spanning x = -160..-40, which runs straight over
+    //  the west safety strip (x = -148..-137) AND 97 m into the pitch itself.
+    //  The north and south patches crossed their strips the same way.
+    //  Second, they sat at y = 0.09 against laterite at y = 0.11 — a 2 cm gap.
+    //  At 100 m that is below depth-buffer precision, so the two surfaces
+    //  stitch into each other and the grass appears to creep over the edge in
+    //  a wavy line. Trimmed to the safety edge (x = +-148, z = +-98) with a
+    //  4 cm drop, so neither the overlap nor the z-fight can happen.
+    [ 142, 360, [-219, 0.07,   0], { chevron:false } ],  // west villa frontage -> stops at x=-148
+    [ 142, 360, [ 219, 0.07,   0], { chevron:false } ],  // east villa frontage -> stops at x=+148
+    [  46, 360, [-171, 0.07,   0], { chevron:false } ],  // west inner verge, outside the strip
+    [  46, 360, [ 171, 0.07,   0], { chevron:false } ],  // east inner verge, outside the strip
+    [ 430, 108, [   0, 0.07, -156], { chevron:false } ], // north: lake surround + arc frontage
+    [ 430,  56, [   0, 0.07,  130], { chevron:false } ], // south-inner: starts clear of the strip
+    [ 430, 110, [   0, 0.07,  186], { chevron:false } ], // south / clubhouse lawn
     [ 240, 120, [   0, 0.09,  235], { chevron:false } ], // south beyond the clubhouse
     [  80,  90, [ 240, 0.09,  -30], { chevron:false } ], // paddock turf
     [  80,  80, [ 240, 0.09,   45], { chevron:false } ], // game park turf
@@ -2093,12 +2104,22 @@ function addLake() {
   //  so it is valid on frame one and has water-correct wave frequency.
   // ══════════════════════════════════════════════════════════════════════
 
+  //  LAKE — narrowed and pulled toward the field.
+  //  The far boundary is a quadratic Bezier, and the y value in the middle
+  //  control point is NOT a point on the curve: with 92 / 102 / 135 the water
+  //  actually reached z = -118.5, not -135. Rebuilt so the numbers mean what
+  //  they look like, and so the villa arc has real room:
+  //      near edge  z = -99    (was -92, now clear of the safety strip at -98)
+  //      far  edge  z = -117.5 at centre, -109 at x = +-63
+  //      half width x = +-70   (was +-80)
+  //  That returns roughly 9-10 m of bank between the water and the villa
+  //  footprints, where the old geometry left 3.
   const shape = new THREE.Shape();
-  shape.moveTo(-75, 92);
-  shape.lineTo(75, 92);
-  shape.quadraticCurveTo(85, 92, 80, 102);
-  shape.quadraticCurveTo(0, 135, -80, 102);
-  shape.quadraticCurveTo(-85, 92, -75, 92);
+  shape.moveTo(-65, 99);
+  shape.lineTo(65, 99);
+  shape.quadraticCurveTo(74, 99, 70, 107);
+  shape.quadraticCurveTo(0, 128, -70, 107);
+  shape.quadraticCurveTo(-74, 99, -65, 99);
   const waterGeo = new THREE.ShapeGeometry(shape, 80);
 
   // Procedural water normal map — low-frequency overlapping swells.
@@ -2588,12 +2609,16 @@ function addVillaRing(){
   [-86, -108, -130, -152].forEach(x => { placeV(x, -120, 0); });
   [86, 108, 130, 152].forEach(x => { placeV(x, -120, 0); });
 
+  //  The arc sat 10-20 m outside the line the west and east columns hold, so
+  //  it read as a separate row floating above the ring instead of part of it.
+  //  Count and x positions are untouched — only the standoff changes, from
+  //  -120/-138 to -118/-128, which is the flattest bow the lake still clears
+  //  by a villa half-depth.
   for (let i = 0; i < 11; i++) {
-    const t = 0.05 + (i / 10) * 0.90; 
-    const x = -70 + (t * 140); 
-    const z = -120 - Math.sin(t * Math.PI) * 18; 
-    const rotY = Math.atan2(0 - x, -60 - z); 
-    placeV(x, z, rotY);
+    const t = 0.05 + (i / 10) * 0.90;
+    const x = -70 + (t * 140);
+    const z = -118 - Math.sin(t * Math.PI) * 10;
+    placeV(x, z, Math.atan2(0 - x, -60 - z));
   }
 
   [-75, -47, -19].forEach(z => placeV(-162, z, Math.PI / 2));
