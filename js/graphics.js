@@ -229,7 +229,16 @@ export function setPerfModeGraphics(mode) {
       // Vignette draws the eye to the centre; CA adds filmic micro-fringing.
       // Both are zero on Fast, subtle on Balanced, deliberate on Rich.
       vignettePass.uniforms.uVignette.value   = mode === 'rich' ? 0.52 : mode === 'balanced' ? 0.26 : 0.0;
-      vignettePass.uniforms.uCAStrength.value = mode === 'rich' ? 0.0042 : mode === 'balanced' ? 0.0012 : 0.0;
+      //  CHROMATIC ABERRATION REMOVED. This was reported as "an empty
+      //  duplicate that cross-cuts the original" on every AVAILABLE banner
+      //  and building edge — that description is exactly what CA produces:
+      //  it splits the R and B channels apart from the UV centre, and on
+      //  a small high-contrast UI element like a text badge, that split
+      //  reads as a visible ghost outline rather than a subtle filmic
+      //  touch. On a client-facing sales tool where legibility of the
+      //  AVAILABLE/RESERVED badges is the entire point, that trade is not
+      //  worth it at any strength. Set to zero on every tier.
+      vignettePass.uniforms.uCAStrength.value = 0.0;
     }
   }
 
