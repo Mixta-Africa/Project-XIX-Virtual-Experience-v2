@@ -1543,23 +1543,7 @@ window.openGallery = function(type) {
 
 // ─── SPAWN-ON-DEMAND INTERIOR TRIGGER ────────────────────────────────────────
 // ─── VILLA EXPERIENCE (replaces the fake interior shell) ─────────────────────
-const VILLA_VIEWPOINTS = [
-  { id:'undercroft', label:'Undercroft & Entry',     icon:'🚗',
-    lx:-1.5, ly:1.35, lz: 0.5, yawOff:0,         pitch:-0.06,
-    desc:'Standing in the two-car undercroft, looking toward the entry ramp.' },
-  { id:'living',     label:'Living & Dining',         icon:'🛋',
-    lx: 1.2, ly:4.50, lz: 3.2, yawOff:0,         pitch: 0.00,
-    desc:'Ground floor — full-height glazing, direct polo field view.' },
-  { id:'kitchen',    label:'Kitchen & North Terrace', icon:'🍽',
-    lx:-1.0, ly:4.50, lz:-1.5, yawOff:Math.PI,   pitch: 0.00,
-    desc:'Kitchen terrace — looking north toward the crescent lake.' },
-  { id:'master',     label:'Master Bedroom',          icon:'🛏',
-    lx:-2.0, ly:7.80, lz:-1.0, yawOff:0,         pitch: 0.00,
-    desc:'First floor master suite — elevated view over the polo field.' },
-  { id:'lounge',     label:'Family Lounge & Terrace', icon:'🌅',
-    lx: 2.0, ly:7.80, lz: 2.8, yawOff:0,         pitch:-0.04,
-    desc:'Upper terrace — panoramic view over the polo field and crescent lake.' },
-];
+// VILLA_VIEWPOINTS is imported from ./villa-interior.js (line 14) — do not redeclare.
 const PAN_SPEED = 0.0014;
 let _panAnimId=null, _panActive=false, _panYaw=0;
 function _stopPan(){_panActive=false;if(_panAnimId){cancelAnimationFrame(_panAnimId);_panAnimId=null;}}
@@ -1615,7 +1599,7 @@ window.startVillaExperience = function(propKey) {
     _stopPan();ui.remove();if(typeof window.setMoveMode==='function')window.setMoveMode('ride');});
   go(VILLA_VIEWPOINTS[1]);
 };
-window.startIsolatedInterior = window.startVillaExperience;;
+window.startIsolatedInterior = window.startVillaExperience;
 
 function teleportTo(key, vp){
   try {
