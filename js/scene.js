@@ -68,7 +68,9 @@ const VILLA_SCALE = 12.56;
 // Both are instanced — loaded once, cloned per villa position.
 let _postLampScene  = null, _sconceScene = null;
 const POST_SCALE    = 2.1008;   // raw H=1.904 → 4.00 m world
-const SCONCE_SCALE  = 0.8728;   // raw H=1.904 → 1.66 m world (fixture height)
+// Was 0.8728 -> 1.66m tall, which read as a wall panel rather than a
+// fixture. A real exterior wall sconce is a small box, roughly 0.30m tall.
+const SCONCE_SCALE  = 0.1575;   // raw H=1.904 → 0.30 m world (fixture height)
 
 // Positions are collected here as the villa ring is built, then the GLBs are
 // spawned once both assets are ready (avoids a load-order race).
@@ -104,7 +106,10 @@ function _spawnLampInstances() {
   const sconceGroup = new THREE.Group(); sconceGroup.name = 'wallSconces';
   _hedgeInstData.forEach(({ x, z, ry }) => {
     const cos = Math.cos(ry), sin = Math.sin(ry);
-    [[-3.0, 5.6], [3.0, 5.6]].forEach(([lx, lz]) => {
+    // Villa footprint is 11.4 x 9.6m (half-depth 4.8m). 5.6 sat 0.8m PAST
+    // the actual front wall — floating in open air, which is exactly what
+    // "displaced" describes. 4.7 sits just proud of the real wall surface.
+    [[-3.0, 4.7], [3.0, 4.7]].forEach(([lx, lz]) => {
       const wx = x + lx*cos - lz*sin;
       const wz = z + lx*sin + lz*cos;
       const clone = _sconceScene.clone(true);
@@ -173,7 +178,11 @@ function loadLampMeshes() {
       // something this visible.
       if (m && /_lens$/.test(m.name || '')) {
         m.emissiveIntensity = 0;   // driven by updateNightLights
-        m.userData.isLampGlobe = true;
+        // FLAG ON THE MESH, not the material — updateNightLights traverses
+        // scene objects and reads o.userData, so a flag left only on
+        // material.userData was never seen by that check, and the lens
+        // never lit at night regardless of anything else being correct.
+        o.userData.isLampGlobe = true;
       }
     });
     _spawnLampInstances();
@@ -187,7 +196,7 @@ function loadLampMeshes() {
       const m = Array.isArray(o.material) ? o.material[0] : o.material;
       if (m && /_lens$/.test(m.name || '')) {
         m.emissiveIntensity = 0;
-        m.userData.isLampGlobe = true;
+        o.userData.isLampGlobe = true;   // same fix as the post lamp above
       }
     });
     _spawnLampInstances();
@@ -550,7 +559,23 @@ let _hoovesGain = null;
 // updateSpatialAudio) onto the implementation below, which has been fully
 // built and correct since the very first upload but was never reachable —
 // app.js has always imported three names this file never exported.
-export function initAudio() { initAmbientAudio(); }
+// Master gain every sound routes through. A single mute toggle here covers
+// wind/birds/hooves/water/murmur/neigh without touching any of the
+// individual _makeX() functions that create them.
+let _masterGain = null;
+let _muted = false;
+export function setAudioMuted(muted) {
+  _muted = muted;
+  if (_masterGain) _masterGain.gain.value = muted ? 0 : 1;
+  try { localStorage.setItem('xix_audio_muted', muted ? '1' : '0'); } catch (e) {}
+}
+export function isAudioMuted() { return _muted; }
+
+export function initAudio() {
+  initAmbientAudio();
+  try { _muted = localStorage.getItem('xix_audio_muted') === '1'; } catch (e) {}
+  if (_masterGain) _masterGain.gain.value = _muted ? 0 : 1;
+}
 
 // AudioContext starts 'suspended' until resumed from within a user gesture
 // (browser autoplay policy) — enableAudio() is called from a click handler
@@ -577,7 +602,15 @@ export function initAmbientAudio() {
   if (_audioCtx) return;
   try {
     _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    
+
+    // Every sound in this file connects to _audioDest() below instead of
+    // _audioCtx.destination directly, all funnelled through this one
+    // GainNode — the mute toggle has exactly one thing to touch, and any
+    // sound added later picks up mute state for free.
+    _masterGain = _audioCtx.createGain();
+    _masterGain.gain.value = _muted ? 0 : 1;
+    _masterGain.connect(_audioCtx.destination);
+
     if (_audioCtx.listener.upX) {
       _audioCtx.listener.upX.value = 0;
       _audioCtx.listener.upY.value = 1;
@@ -632,7 +665,7 @@ function _makePositionalNoise(type, x, z) {
   source.connect(filter); 
   filter.connect(gain); 
   gain.connect(panner); 
-  panner.connect(_audioCtx.destination);
+  panner.connect(_masterGain);
   source.start();
   return panner;
 }
@@ -655,7 +688,7 @@ function _makeNoise(type, vol) {
   const gain = _audioCtx.createGain();
   gain.gain.value = vol;
 
-  source.connect(filter); filter.connect(gain); gain.connect(_audioCtx.destination);
+  source.connect(filter); filter.connect(gain); gain.connect(_masterGain);
   source.start();
   return gain;
 }
@@ -664,7 +697,7 @@ function _makeBirds() {
   if (!_audioCtx) return null;
   const gain = _audioCtx.createGain();
   gain.gain.value = 0.0;
-  gain.connect(_audioCtx.destination);
+  gain.connect(_masterGain);
   function chirp() {
     if (!_audioCtx) return;
     const osc = _audioCtx.createOscillator();
@@ -675,7 +708,7 @@ function _makeBirds() {
     g.gain.setValueAtTime(0, _audioCtx.currentTime);
     g.gain.linearRampToValueAtTime(0.02, _audioCtx.currentTime + 0.02);
     g.gain.exponentialRampToValueAtTime(0.0001, _audioCtx.currentTime + 0.12);
-    osc.connect(g); g.connect(_audioCtx.destination);
+    osc.connect(g); g.connect(_masterGain);
     osc.start(); osc.stop(_audioCtx.currentTime + 0.15);
     setTimeout(chirp, 1500 + Math.random() * 3000);
   }
@@ -691,7 +724,7 @@ function _makeBirds() {
 function _makeNeighAt(x, z) {
   if (!_audioCtx) return;
   const panner = _createPanner(x, z, 15, 90);
-  panner.connect(_audioCtx.destination);
+  panner.connect(_masterGain);
   const t0 = _audioCtx.currentTime;
 
   const osc = _audioCtx.createOscillator();
@@ -744,7 +777,7 @@ function _makeHooves() {
   
   const panner = _createPanner(0, 0, 5, 50);
   gain.connect(panner);
-  panner.connect(_audioCtx.destination);
+  panner.connect(_masterGain);
 
   function clop() {
     if (!_audioCtx || gain.gain.value < 0.001) { setTimeout(clop, 400); return; }
@@ -1542,7 +1575,7 @@ export function updateNightLights(timeName) {
   _lampTargetIntensity = isNight ? 3.2 : isSunset ? 1.4 : 0;
 
   // Drive emissive glow on every lamp globe (post + sconce)
-  const globeInt = isNight ? 2.8 : isSunset ? 1.2 : 0.0;
+  const globeInt = isNight ? 4.0 : isSunset ? 1.4 : 0.0;   // "very bright at night" — raised from 2.8
   scene.traverse(o => {
     if (o.isMesh && o.userData.isLampGlobe) {
       const m = Array.isArray(o.material) ? o.material[0] : o.material;
