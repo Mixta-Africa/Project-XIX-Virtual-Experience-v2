@@ -76,8 +76,19 @@ export const VILLA_VIEWPOINTS = [
 
 // ─── BUILD THE INTERIOR SCENE ─────────────────────────────────
 export function buildVillaInterior(scene) {
-  // Lighting and Exterior Context removed. 
-  // The villa is now physically integrated into the main world's lighting and environment.
+  //  THE INTERIOR WAS RENDERING BLACK. addLighting() below is fully built —
+  //  hemisphere fill, a directional "sun" through the windows, real point
+  //  lights per room with visible fixtures — but was never called from here.
+  //  The comment that used to sit in this spot ("physically integrated into
+  //  the main world's lighting") describes a design that isn't how this is
+  //  actually wired: openVillaInterior() in app.js builds a completely
+  //  SEPARATE THREE.Scene (villaScene) with its own renderer, sharing
+  //  nothing with the estate's sun or sky. Every wall, floor and ceiling in
+  //  here uses MeshStandardMaterial, which renders pure black with zero
+  //  light sources — matching exactly what was reported: total darkness,
+  //  and every floor button appearing to "do nothing" because it WAS moving
+  //  the camera, just through a scene with nothing lit to see.
+  addLighting(scene);
   addUndercroft(scene);
   addGroundFloor(scene);
   addFirstFloor(scene);
