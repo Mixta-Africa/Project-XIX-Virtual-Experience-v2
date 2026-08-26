@@ -319,6 +319,7 @@ export function setView(pos, newYaw = Math.PI, newPitch = 0) {
 }
 
 export function getYaw() { return currentYaw; }
+window._xixSetTargetYaw = function(yaw) { targetYaw = yaw; };
 
 export function isMobile() {
   return /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.innerWidth < 768;
