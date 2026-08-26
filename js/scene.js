@@ -1040,7 +1040,12 @@ function buildInstancedCypress(positions) {
 
 // ─── INSTANCED VILLA RENDERING WITH LOD ───────────────────────────────────────
 // Impostor material: fully transparent — if LOD kicks in at extreme distance, invisible not beige box
-const _impostorMat   = new THREE.MeshStandardMaterial({ color:0xF5E6B0, roughness:.8, transparent:true, opacity:0.0 });
+// opacity was 0.0 — confirmed never modified anywhere else in this file, so
+// this was not a fade transition mid-flight, it was a permanently invisible
+// mesh. Any villa past 400m simply vanished rather than degrading to a
+// simplified silhouette. Given a real colour and full opacity, it now reads
+// as a distant building block, not a hole in the estate.
+const _impostorMat   = new THREE.MeshStandardMaterial({ color:0xE8DCC0, roughness:.85, metalness:0 });
 const _impostorGeo   = new THREE.BoxGeometry(14, 8, 12);
 
 function placeVillaGLBWithLOD(x, z, ry, plotKey) {
@@ -1077,8 +1082,57 @@ function placeVillaGLBWithLOD(x, z, ry, plotKey) {
   if (plotKey) addPlotOverlay(x, z, ry, plotKey, lod);
 }
 
+// Sun shadow camera is normally a tight ±120m frustum centred on the polo
+// field — correct for ground-level walking, where only nearby buildings are
+// ever in view, and tight bounds buy real per-texel shadow resolution.
+// The ESTATE, per WORLD in data.js, spans roughly x:-400..310, z:-230..245 —
+// a 710 x 475m footprint. Stables, the apartment blocks, and the east
+// paddock all sit entirely outside a ±120m box, so from an aerial orbit
+// showing the whole estate at once, most of it was rendering with zero
+// real-time shadowing: flat, shadowless light on everything but the centre.
+// That flatness is a large part of what reads as "not realistic" in an
+// establishing shot — offline architectural renders never have this problem
+// because they don't need a tight frustum for real-time performance.
+let _aerialSavedFrustum = null;
+let _aerialModeActive = false;   // guards against a quality-tier change mid-orbit
+                                  // clobbering the widened frustum below
+
 export function setAerialMode(on) {
-  // Empty function - the LOD distance parameter automatically handles Aerial views now!
+  _aerialModeActive = on;
+  const sun = getSunLight ? getSunLight() : null;
+  if (on) {
+    // Force every villa to full detail — the flagship shot should never
+    // show a simplified building, and there are far fewer simultaneous
+    // draw calls to worry about during a slow orbit than during walking.
+    scene.traverse(obj => {
+      if (obj.isLOD && obj.userData.isVillaGLB && obj.levels[1]) {
+        obj.levels[1].distance = 1e6;
+      }
+    });
+    if (sun && sun.shadow) {
+      const cam = sun.shadow.camera;
+      _aerialSavedFrustum = { l: cam.left, r: cam.right, t: cam.top, b: cam.bottom, f: cam.far };
+      // 380m half-extent covers the full WORLD bounds with margin; shadow
+      // texel density drops accordingly, which is the correct trade at
+      // orbital viewing distance — coverage matters more than crispness
+      // when the whole estate is on screen at once.
+      cam.left = -380; cam.right = 380; cam.top = 380; cam.bottom = -380;
+      cam.far  = 900;
+      cam.updateProjectionMatrix();
+    }
+  } else {
+    scene.traverse(obj => {
+      if (obj.isLOD && obj.userData.isVillaGLB && obj.levels[1]) {
+        obj.levels[1].distance = 400;
+      }
+    });
+    if (sun && sun.shadow && _aerialSavedFrustum) {
+      const cam = sun.shadow.camera, f = _aerialSavedFrustum;
+      cam.left = f.l; cam.right = f.r; cam.top = f.t; cam.bottom = f.b; cam.far = f.f;
+      cam.updateProjectionMatrix();
+      _aerialSavedFrustum = null;
+    }
+  }
 }
 
 // ─── IN-WORLD SIGNAGE ─────────────────────────────────────────────────────────
@@ -1451,10 +1505,26 @@ function buildLighting() {
   if (PERF_MODE === 'fast') {
     // ── FAST: shadows OFF entirely — saves 4-8ms/frame on mobile ──────────
     sunLight.castShadow = false;
+  } else if (_aerialModeActive) {
+    // An aerial-widened frustum is active — setAerialMode() owns left/right/
+    // top/bottom/far entirely while this is true. Only mapSize and bias
+    // still need to track the quality tier; the frustum bounds themselves
+    // must not be touched here or the aerial coverage fix is undone the
+    // instant someone changes quality mid-orbit.
+    sunLight.castShadow = true;
+    sunLight.shadow.mapSize.set(perfS.shadowMapSize, perfS.shadowMapSize);
+    if (PERF_MODE === 'balanced') {
+      sunLight.shadow.bias = -0.00012; sunLight.shadow.normalBias = 0.012; sunLight.shadow.radius = 2.0;
+    } else {
+      sunLight.shadow.bias = -0.00008; sunLight.shadow.normalBias = 0.008; sunLight.shadow.radius = 1.5;
+    }
   } else {
     // ── BALANCED / RICH: tight frustum = far better shadow texel density ──
-    // Current: ±380m frustum on 2048 map = 2.7mm/texel (blurry)
-    // New: ±100m frustum on 2048 = 0.5mm/texel (crisp architectural shadows)
+    // ±380m frustum on a 2048 map = 2.7mm/texel (blurry); ±100m = 0.5mm/texel
+    // (crisp architectural shadows) — this tight bound is deliberate and
+    // correct for ground-level walking, where only nearby buildings are ever
+    // in frame. setAerialMode() is the ONLY place that should widen it, and
+    // only for as long as the aerial camera is actually active.
     const fHalf = PERF_MODE === 'rich' ? 120 : 100;
     sunLight.castShadow = true;
     sunLight.shadow.camera.left   = -fHalf;
@@ -1464,7 +1534,6 @@ function buildLighting() {
     sunLight.shadow.camera.near   = 0.5;
     sunLight.shadow.camera.far    = 600;
     sunLight.shadow.mapSize.set(perfS.shadowMapSize, perfS.shadowMapSize);
-    // Tuned per mode — eliminates acne without peter-panning
     if (PERF_MODE === 'balanced') {
       sunLight.shadow.bias       = -0.00012;
       sunLight.shadow.normalBias =  0.012;
