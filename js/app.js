@@ -515,10 +515,14 @@ function buildVillaStatusOverlays() {
       const canvas = document.createElement('canvas');
       canvas.width = 160; canvas.height = 48;
       const ctx = canvas.getContext('2d');
+      // Fill first, then stroke with the path INSET by 1px so the full
+      // stroke width sits inside the fill — eliminates the ghost outer
+      // rectangle that appeared at distance as a second crossing frame.
       ctx.fillStyle = isAvail ? 'rgba(6,18,8,0.88)' : 'rgba(28,10,10,0.88)';
       ctx.beginPath(); ctx.roundRect(2, 2, 156, 44, 10); ctx.fill();
       ctx.strokeStyle = isAvail ? '#C9A84C' : 'rgba(220,70,70,0.6)';
-      ctx.lineWidth = 2; ctx.stroke();
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.roundRect(3, 3, 154, 42, 9); ctx.stroke();
       ctx.fillStyle = isAvail ? '#C9A84C' : '#ff6666';
       ctx.font = 'bold 15px Inter, sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -580,8 +584,8 @@ function buildVillaStatusOverlays() {
     const isAvail = plot.status === 'available';
     const sprite = new THREE.Sprite(isAvail ? window._sharedBadgeMats.avail : window._sharedBadgeMats.res);
 
-    sprite.scale.set(6, 1.8, 1);
-    sprite.position.set(plot.x, 9.5, plot.z); // Hover 9.5m above ground
+    sprite.scale.set(5.5, 1.6, 1);
+    sprite.position.set(plot.x, 7.0, plot.z); // 7m — just above roofline
     sprite.userData = { isPlotBadge: true, plotKey };
     
     sc.add(sprite);
