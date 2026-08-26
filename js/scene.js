@@ -10,6 +10,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
 import { GLTFLoader }  from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/GLTFLoader.js";
 import { DRACOLoader } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/DRACOLoader.js";
 import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/objects/Water.js";
+import { SkeletonUtils } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
   buildPalmInstances, tickPalms,
@@ -255,7 +256,19 @@ export function loadHorseGLB() {
 //  but is correct; the browser's HTTP cache makes repeat fetches cheap.
 const _ambientHorses = [];
 
-function _spawnAmbientHorse(bounds, startDelay) {
+// One network fetch and one Draco decode, shared by all six ambient horses —
+// previously each called makeDracoLoader().load(...) independently, so six
+// decorative horses cost as much load time as six separate buildings. The
+// clip is a THREE.AnimationClip (immutable track data) and is safe to share
+// across every mixer directly; only the SKELETON needs a real, independent
+// copy per instance, which is what SkeletonUtils.clone provides — a plain
+// Object3D.clone() duplicates the bone NODES but leaves the SkinnedMesh
+// pointing at the ORIGINAL skeleton, so a plain clone would animate
+// identically to (and visually fight with) the source.
+let _horseTemplate = null, _horseClip = null;
+const _pendingAmbientBuilds = [];
+
+function _spawnAmbientHorse(bounds, delayMs) {
   const rec = { model: null, mixer: null, pos: new THREE.Vector3(), yaw: 0,
                 target: new THREE.Vector3(), pauseT: 0, speed: 1.0 + Math.random()*0.6, bounds };
   const pick = () => new THREE.Vector3(
@@ -264,46 +277,58 @@ function _spawnAmbientHorse(bounds, startDelay) {
   rec.pos.copy(pick()); rec.target.copy(pick());
   _ambientHorses.push(rec);
 
+  const build = () => {
+    const model = SkeletonUtils.clone(_horseTemplate);
+    const group = new THREE.Group();
+    group.add(model);
+    group.position.copy(rec.pos);
+    scene.add(group);
+    rec.model = group;
+    if (_horseClip) {
+      const mixer = new THREE.AnimationMixer(model);
+      const action = mixer.clipAction(_horseClip);
+      action.setLoop(THREE.LoopRepeat, Infinity);
+      action.timeScale = 0.55;   // grazing pace, slower than the rider's mount
+      action.play();
+      rec.mixer = mixer;
+    }
+  };
+
   setTimeout(() => {
+    if (_horseTemplate) { build(); return; }
+    if (_pendingAmbientBuilds.length) { _pendingAmbientBuilds.push(build); return; }
+    _pendingAmbientBuilds.push(build);   // in case others fire before load resolves
     makeDracoLoader().load('./assets/horse.glb', gltf => {
       const model = gltf.scene;
       model.scale.setScalar(0.022);
       applyPS4Materials(model);
       const bbox = new THREE.Box3().setFromObject(model);
       if (bbox.min.y < 0) model.position.y = -bbox.min.y;
-      const group = new THREE.Group();
-      group.add(model);
-      group.position.copy(rec.pos);
-      scene.add(group);
-      rec.model = group;
+      _horseTemplate = model;
 
-      const mixer = new THREE.AnimationMixer(model);
       const rawClip = gltf.animations.find(a => /trot|walk|run/i.test(a.name)) || gltf.animations[0];
       if (rawClip) {
         const filteredTracks = rawClip.tracks.filter(track => {
           const isRoot = /^(root|_rootjoint|rootnode|hips_01)/i.test(track.name.split('.')[0]);
           return !(isRoot && (track.name.endsWith('.position') || track.name.endsWith('.quaternion')));
         });
-        const clip = new THREE.AnimationClip(rawClip.name, rawClip.duration, filteredTracks);
-        const action = mixer.clipAction(clip);
-        action.setLoop(THREE.LoopRepeat, Infinity);
-        action.timeScale = 0.55;   // grazing pace, slower than the rider's mount
-        action.play();
+        _horseClip = new THREE.AnimationClip(rawClip.name, rawClip.duration, filteredTracks);
       }
-      rec.mixer = mixer;
-    }, undefined, err => console.warn('[XIX] ambient horse load failed:', err));
-  }, startDelay);
+      _pendingAmbientBuilds.forEach(fn => fn());
+      _pendingAmbientBuilds.length = 0;
+    }, undefined, err => console.warn('[XIX] ambient horse template load failed:', err));
+  }, delayMs);
 }
 
 export function spawnAmbientHorses() {
-  // Two per zone, staggered load starts so six simultaneous GLB fetches
-  // don't compete with the villa/loft/apartment/clubhouse/stables queue.
+  // All six share one load now — the stagger only spreads the cheap BUILD
+  // calls (clone + mixer), not network fetches, which no longer repeat.
   const POLO_N   = { xMin: -60, xMax: 60,  zMin: -88, zMax: -76 };  // north safety zone, clear of the lake
   const POLO_S   = { xMin: -60, xMax: 60,  zMin:  76, zMax:  90 };
   const TRAINING = { xMin: -335, xMax: -185, zMin: -80, zMax: 5 };  // matches the 180x110 turf patch at (-260,-40)
   const PADDOCK  = { xMin: 212, xMax: 268, zMin: -55, zMax: -5 };   // inset from the rail fence at 205-275/-60-0
   [POLO_N, POLO_S, TRAINING, TRAINING, PADDOCK, PADDOCK].forEach((b, i) =>
-    _spawnAmbientHorse(b, 2400 + i * 350));
+    _spawnAmbientHorse(b, 2400 + i * 120));
 }
 
 // Called every frame from tickScene — NOT from tickHorseAnim, which app.js
@@ -2602,11 +2627,18 @@ function addClubhouse(){
 
 // INDEPENDENT LOADERS FIX: We removed the Singleton _sharedGLTFLoader pattern 
 // so every model spawns its own Draco decoding connection. This stops the queue deadlock!
+let _sharedGLTFLoader = null;
 function makeDracoLoader() {
+  // Was `new DRACOLoader()` + `new GLTFLoader()` on every call — one
+  // instantiation per asset load, 14+ times across the estate. Each spins
+  // up its own WASM decoder and worker pool; reused once here for the
+  // lifetime of the page, exactly as the Three.js DRACOLoader docs specify.
+  if (_sharedGLTFLoader) return _sharedGLTFLoader;
   const draco = new DRACOLoader();
   draco.setDecoderPath("https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/libs/draco/");
-  const loader = new GLTFLoader(); 
-  loader.setDRACOLoader(draco); 
+  const loader = new GLTFLoader();
+  loader.setDRACOLoader(draco);
+  _sharedGLTFLoader = loader;
   return loader;
 }
 
