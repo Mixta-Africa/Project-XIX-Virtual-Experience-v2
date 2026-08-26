@@ -4,6 +4,15 @@
  */
 
 import { WORLD, VIEWPOINTS, ZONES } from "./data.js";
+// app.js imports initAudio/enableAudio/updateSpatialAudio from THIS file,
+// not from scene.js — a real system (filtered noise for wind, envelope
+// bursts for birds/hooves, a synthesized neigh, all routed through one
+// mutable master gain) already exists there. Delegating to it below
+// instead of maintaining a second, competing implementation here.
+import { initAudio as _sceneInitAudio, enableAudio as _sceneEnableAudio,
+         updateSpatialAudio as _sceneUpdateSpatialAudio,
+         setAudioMuted as _sceneSetAudioMuted,
+         isAudioMuted as _sceneIsAudioMuted } from "./scene.js";
 
 //           LOADING SCREEN                                                                                                                                                                                  
 
@@ -311,50 +320,26 @@ export function hideZonePanel() {
 }
 
 //           SPATIAL AUDIO                                                                                                                                                                                     
-
-let audioCtx;
-const audioSources = {};
-
-export function initAudio() {
-  // Lazily created on first user gesture
-}
-
-export async function enableAudio() {
-  if (audioCtx) return;
-  try {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    // Oscillators completely disabled to kill the high-pitched ringing sound
-  } catch (_) {}
-}
-
-function addAmbientLoop(baseFreq, gain, name, random = false) {
-  if (!audioCtx) return;
-  const oscillator = audioCtx.createOscillator();
-  const gainNode   = audioCtx.createGain();
-  oscillator.type = "sine";
-  oscillator.frequency.value = baseFreq;
-  gainNode.gain.value = gain;
-  oscillator.connect(gainNode);
-  gainNode.connect(audioCtx.destination);
-  oscillator.start();
-  audioSources[name] = { oscillator, gainNode };
-
-  if (random) {
-    // Randomise freq to simulate bird calls
-    setInterval(() => {
-      oscillator.frequency.setTargetAtTime(baseFreq + Math.random() * 200, audioCtx.currentTime, 0.05);
-      gainNode.gain.setTargetAtTime(Math.random() * 0.008, audioCtx.currentTime, 0.1);
-    }, 800 + Math.random() * 1200);
-  }
-}
-
-export function updateSpatialAudio(worldX, worldZ) {
-  // Oscillators disabled — no spatial audio sources to update
-  if (!audioCtx || !audioSources.wind) return;
-  const dist = Math.min(Math.abs(worldZ - WORLD.zMin), Math.abs(worldZ - WORLD.zMax));
-  const windGain = 0.015 + (1 - Math.min(dist / 100, 1)) * 0.02;
-  audioSources.wind.gainNode.gain.setTargetAtTime(windGain, audioCtx.currentTime, 0.3);
-}
+//
+//  THIS WAS THE ENTIRE REASON NOTHING PLAYED. app.js imports initAudio /
+//  enableAudio / updateSpatialAudio from THIS file, not from scene.js — a
+//  detail missed for several rounds of "fixing" the wrong file. And this
+//  copy was not merely a stub: enableAudio() created an AudioContext and
+//  then explicitly never called addAmbientLoop() for anything, per its own
+//  comment — "Oscillators completely disabled to kill the high-pitched
+//  ringing sound." That ringing came from raw, unfiltered sine oscillators
+//  held at a sustained audible pitch with no envelope — a real defect, but
+//  the fix chosen was to silence everything permanently instead of fixing
+//  the oscillator. scene.js already has the correct version of this
+//  system: filtered NOISE buffers for wind (not a tone), enveloped bursts
+//  for birds and hooves (not a sustained pitch), a synthesized neigh, and a
+//  shared mute-able master gain. Delegating to it here removes the broken
+//  duplicate instead of maintaining two competing audio systems.
+export function initAudio() { _sceneInitAudio(); }
+export async function enableAudio() { _sceneEnableAudio(); }
+export function updateSpatialAudio(worldX, worldZ) { _sceneUpdateSpatialAudio(worldX, worldZ); }
+export function setAudioMuted(muted) { _sceneSetAudioMuted(muted); }
+export function isAudioMuted() { return _sceneIsAudioMuted(); }
 
 //           HUD: CAPTION & STATUS                                                                                                                                                             
 
