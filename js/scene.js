@@ -58,6 +58,105 @@ let _palmTickCount = 0;
 let villaGLBScene = null, pendingVillas = [];
 const VILLA_SCALE = 12.56;
 
+// ── OUTDOOR LAMP MESHES ────────────────────────────────────────────────────
+// Post security lamp: 4 m tall, placed either side of every villa frontage.
+// Wall sconce:        0.35 m wide, mounted at 4 m on the field-facing facade.
+// Both are instanced — loaded once, cloned per villa position.
+let _postLampScene  = null, _sconceScene = null;
+const POST_SCALE    = 2.1008;   // raw H=1.904 → 4.00 m world
+const SCONCE_SCALE  = 0.8728;   // raw H=1.904 → 1.66 m world (fixture height)
+
+// Positions are collected here as the villa ring is built, then the GLBs are
+// spawned once both assets are ready (avoids a load-order race).
+const _postPositions   = [];   // [{x,y,z,ry}]
+const _sconcePositions = [];   // [{x,y,z,ry}]
+
+function _spawnLampInstances() {
+  if (!_postLampScene || !_sconceScene) return;   // wait until both loaded
+
+  // ── POST LAMPS ────────────────────────────────────────────────────────────
+  // One either side of the villa frontage, just proud of the hedge line.
+  // lx = ±5.5 m   lz = +5.8 m (field side)   y = 0
+  const POSTS_PER_VILLA = 2;
+  const postGroup = new THREE.Group(); postGroup.name = 'postLamps';
+  _hedgeInstData.forEach(({ x, z, ry }) => {
+    const cos = Math.cos(ry), sin = Math.sin(ry);
+    [[-5.5, 5.8], [5.5, 5.8]].forEach(([lx, lz]) => {
+      const wx = x + lx*cos - lz*sin;
+      const wz = z + lx*sin + lz*cos;
+      const clone = _postLampScene.clone(true);
+      clone.position.set(wx, 0, wz);
+      clone.rotation.y = ry;
+      clone.scale.setScalar(POST_SCALE);
+      _postPositions.push({ x: wx, y: 4.0, z: wz });   // lamp head height
+      postGroup.add(clone);
+    });
+  });
+  scene.add(postGroup);
+
+  // ── WALL SCONCES ──────────────────────────────────────────────────────────
+  // Two per villa on the field-facing facade, at first-floor slab height (4 m).
+  // lx = ±3.0 m   lz = +5.6 m (just proud of facade)   y = 4.0
+  const sconceGroup = new THREE.Group(); sconceGroup.name = 'wallSconces';
+  _hedgeInstData.forEach(({ x, z, ry }) => {
+    const cos = Math.cos(ry), sin = Math.sin(ry);
+    [[-3.0, 5.6], [3.0, 5.6]].forEach(([lx, lz]) => {
+      const wx = x + lx*cos - lz*sin;
+      const wz = z + lx*sin + lz*cos;
+      const clone = _sconceScene.clone(true);
+      clone.position.set(wx, 4.0, wz);
+      clone.rotation.y = ry;
+      clone.scale.setScalar(SCONCE_SCALE);
+      _sconcePositions.push({ x: wx, y: 4.35, z: wz });
+      sconceGroup.add(clone);
+    });
+  });
+  scene.add(sconceGroup);
+
+  // Add sconce positions into the lamp pool so they also light up at night
+  _sconcePositions.forEach(n => _lampNodes.push(n));
+  console.log('[XIX] Lamps: ' + _postPositions.length + ' post lamps, ' +
+              _sconcePositions.length + ' wall sconces spawned');
+}
+
+function loadLampMeshes() {
+  const loader = makeDracoLoader();
+  loader.load('assets/post-security-lamp-mesh.glb', gltf => {
+    _postLampScene = gltf.scene;
+    applyPS4Materials(_postLampScene);
+    // Emissive lamp head — warm amber glow visible at dusk/night
+    _postLampScene.traverse(o => {
+      if (!o.isMesh) return;
+      const m = Array.isArray(o.material) ? o.material[0] : o.material;
+      if (!m) return;
+      const lum = m.color ? (m.color.r*0.2126+m.color.g*0.7152+m.color.b*0.0722) : 1;
+      if (lum > 0.7) {   // bright parts = globe / diffuser
+        m.emissive = new THREE.Color(0xffaa44);
+        m.emissiveIntensity = 0;    // driven by updateNightLights
+        m.userData.isLampGlobe = true;
+      }
+    });
+    _spawnLampInstances();
+  }, undefined, e => console.warn('[XIX] post-security-lamp-mesh.glb failed:', e));
+
+  loader.load('assets/wall-scone-mesh.glb', gltf => {
+    _sconceScene = gltf.scene;
+    applyPS4Materials(_sconceScene);
+    _sconceScene.traverse(o => {
+      if (!o.isMesh) return;
+      const m = Array.isArray(o.material) ? o.material[0] : o.material;
+      if (!m) return;
+      const lum = m.color ? (m.color.r*0.2126+m.color.g*0.7152+m.color.b*0.0722) : 1;
+      if (lum > 0.65) {
+        m.emissive = new THREE.Color(0xffcc77);
+        m.emissiveIntensity = 0;
+        m.userData.isLampGlobe = true;
+      }
+    });
+    _spawnLampInstances();
+  }, undefined, e => console.warn('[XIX] wall-scone-mesh.glb failed:', e));
+}
+
 let aptGLBScene = null, pendingApts = [];
 const APT_SCALE = 31.18;
 
@@ -1196,6 +1295,16 @@ export function updateNightLights(timeName) {
   if (isNight || isSunset) buildNightLights();
 
   _lampTargetIntensity = isNight ? 3.2 : isSunset ? 1.4 : 0;
+
+  // Drive emissive glow on every lamp globe (post + sconce)
+  const globeInt = isNight ? 2.8 : isSunset ? 1.2 : 0.0;
+  scene.traverse(o => {
+    if (o.isMesh && o.userData.isLampGlobe) {
+      const m = Array.isArray(o.material) ? o.material[0] : o.material;
+      if (m) m.emissiveIntensity = globeInt;
+    }
+  });
+
   _nightLights.forEach(item => {
     if (item.pt && _lampTargetIntensity === 0) { item.pt.intensity = 0; item.pt.visible = false; }
     if (item.globes) {
@@ -2613,6 +2722,7 @@ function addVillaRing(){
 
   buildInstancedCypress(cypressPositions);
   buildAllVillaHedges();
+  loadLampMeshes();     // needs _hedgeInstData, so runs after hedges
 }
 
 function addLoftTerraces(){
