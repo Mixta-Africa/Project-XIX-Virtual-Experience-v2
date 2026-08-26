@@ -1738,8 +1738,10 @@ const MATS = {
   cobble:     () => PBR.stone(),
   concrete:   () => PBR.concrete(),
   railWhite:  () => new THREE.MeshStandardMaterial({color:0xfcfaf8,roughness:.5}),
-  plotAvail:  () => new THREE.MeshStandardMaterial({color:0x00ff88,transparent:true,opacity:0,depthWrite:false}),
-  plotReserved:()=> new THREE.MeshStandardMaterial({color:0xff4444,transparent:true,opacity:0,depthWrite:false}),
+  // depthTest:false so the highlight is never hidden by a taller roof above
+  // it — this is what made hover invisible from the aerial/top-down camera.
+  plotAvail:  () => new THREE.MeshStandardMaterial({color:0x00ff88,transparent:true,opacity:0,depthWrite:false,depthTest:false}),
+  plotReserved:()=> new THREE.MeshStandardMaterial({color:0xff4444,transparent:true,opacity:0,depthWrite:false,depthTest:false}),
 };
 
 function addGround() {
@@ -2742,6 +2744,7 @@ function addPlotOverlayCustom(x,z,ry,plotKey,villaClone,w,d){
   const mat=MATS.plotAvail();
   const overlay=new THREE.Mesh(new THREE.PlaneGeometry(w,d),mat);
   overlay.rotation.x=-Math.PI/2; overlay.position.set(x,.25,z);
+  overlay.renderOrder = 999;   // draw after opaque geometry regardless of depth
   overlay.userData.plotKey=plotKey; overlay.userData.isPlotOverlay=true; overlay.userData.villaClone=villaClone;
   scene.add(overlay);
 
@@ -2976,10 +2979,11 @@ function addLoftTerraces(){
       
       const hitbox = new THREE.Mesh(
         new THREE.BoxGeometry(9, 10, 16),
-        new THREE.MeshBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0, depthWrite: false })
+        new THREE.MeshBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0, depthWrite: false, depthTest: false })
       );
       hitbox.position.set(unitX, 5, unitZ); 
       hitbox.rotation.y = ry;
+      hitbox.renderOrder = 999;
       hitbox.userData = { isPlotOverlay: true, plotKey: key };
       hitbox.visible = false; // Invisible — only used for raycasting, never rendered
       scene.add(hitbox);
@@ -2998,7 +3002,7 @@ function addLoftTerraces(){
   [-75, -45, -15].forEach(z => { placeLoftBlock(-200, z, 0); });
   [15, 45, 75, 105].forEach(z => { placeLoftBlock(-200, z, 0); });
 
-  [-45, -15, 15, 45, 75].forEach(z => { placeLoftBlock(260, z, Math.PI); });
+  [-45, -15, 15, 45, 75].forEach(z => { placeLoftBlock(305, z, Math.PI); });
 }
 
 function addWestCompound() {
