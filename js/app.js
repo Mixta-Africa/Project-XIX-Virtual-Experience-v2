@@ -742,6 +742,7 @@ function showPlotPanel(plotKey) {
   if (document.pointerLockElement) document.exitPointerLock();
   document.getElementById('xix-plot-panel')?.remove();
   const plot = typeof plotRegistry !== 'undefined' ? plotRegistry.get(plotKey) : null;
+  const _ptData = getPlotTypeData(plot?.type);   // moved after `plot` — was a TDZ error
   const isReserved = plot?.status === "reserved";
 
   const panel = document.createElement('div');
@@ -758,11 +759,11 @@ function showPlotPanel(plotKey) {
   panel.innerHTML = `
     <div style="display:flex; flex-direction:column; padding:24px; border-bottom:1px solid rgba(201,168,76,0.15); position:relative;">
       <button id="plot-close-btn" style="position:absolute; top:16px; right:16px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:50%; width:32px; height:32px; color:#fff; cursor:pointer;">✕</button>
-      <div style="font-size:10px; color:rgba(201,168,76,0.8); letter-spacing:.15em; text-transform:uppercase;">PROJECT XIX — PREMIUM VILLA PLOT</div>
+      <div style="font-size:10px; color:rgba(201,168,76,0.8); letter-spacing:.15em; text-transform:uppercase;">${_ptData.header}</div>
       <h2 style="font-size:1.8rem; font-weight:300; color:#f0ece0; font-family:'Cormorant Garamond',serif; margin:6px 0 16px 0;">Plot ${plotKey}</h2>
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; font-size:12px; color:#f0ece0;">
-        <div><span style="color:rgba(240,236,224,0.5); display:block; font-size:9px;">TYPE</span>3-Bedroom Premium Villa</div>
-        <div><span style="color:rgba(240,236,224,0.5); display:block; font-size:9px;">AREA</span>330 m²</div>
+        <div><span style="color:rgba(240,236,224,0.5); display:block; font-size:9px;">TYPE</span>${_ptData.title}</div>
+        <div><span style="color:rgba(240,236,224,0.5); display:block; font-size:9px;">AREA</span>${_ptData.area}</div>
       </div>
     </div>
 
@@ -770,17 +771,18 @@ function showPlotPanel(plotKey) {
       <div style="margin-bottom:20px;">
         <h4 style="font-size:10px; color:rgba(201,168,76,0.8); text-transform:uppercase; border-bottom:1px solid rgba(201,168,76,0.2); padding-bottom:6px; margin:0 0 12px 0;">Architectural Plans & Gallery</h4>
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
-          <button onclick="window.openGallery('floorplans')" style="background:rgba(201,168,76,0.1); border:1px solid rgba(201,168,76,0.3); border-radius:4px; padding:10px; color:#e4c878; cursor:pointer; font-size:11px; text-transform:uppercase;">View Floorplans</button>
-          <button onclick="window.openGallery('renders')" style="background:rgba(201,168,76,0.1); border:1px solid rgba(201,168,76,0.3); border-radius:4px; padding:10px; color:#e4c878; cursor:pointer; font-size:11px; text-transform:uppercase;">View 3D Renders</button>
+          <button onclick="window.openGallery('floorplans','${plotKey}')" style="background:rgba(201,168,76,0.1); border:1px solid rgba(201,168,76,0.3); border-radius:4px; padding:10px; color:#e4c878; cursor:pointer; font-size:11px; text-transform:uppercase;">View Floorplans</button>
+          <button onclick="window.openGallery('renders','${plotKey}')" style="background:rgba(201,168,76,0.1); border:1px solid rgba(201,168,76,0.3); border-radius:4px; padding:10px; color:#e4c878; cursor:pointer; font-size:11px; text-transform:uppercase;">View 3D Renders</button>
         </div>
       </div>
 
+      ${_ptData.hasInterior ? `
       <div style="margin-bottom:24px;">
         <h4 style="font-size:10px; color:rgba(201,168,76,0.8); text-transform:uppercase; border-bottom:1px solid rgba(201,168,76,0.2); padding-bottom:6px; margin:0 0 12px 0;">1st-Person Walkthrough</h4>
         <button onclick="window.openVillaInterior()" style="width:100%; background:rgba(201,168,76,0.15); border:1px solid rgba(201,168,76,0.4); border-radius:4px; padding:14px; color:#e4c878; cursor:pointer; font-size:13px; font-weight:600; letter-spacing:.04em;">
-          Step Inside — 3-Bedroom Villa
+          ${_ptData.interiorLabel}
         </button>
-      </div>
+      </div>` : ''}
     </div>
 
     <div style="padding:20px 24px; border-top:1px solid rgba(201,168,76,0.15); background:rgba(6,18,8,0.95);">
@@ -1116,6 +1118,9 @@ async function openWorldAt(viewKey) {
   }
   
   enableAudio();
+  // Sync the topbar button icon to whatever mute state was restored from
+  // localStorage in initAudio(), so the button never opens in the wrong state.
+  if (typeof isAudioMuted === 'function') _syncSoundBtn(isAudioMuted());
   startRenderLoop();
 }
 
@@ -1301,6 +1306,23 @@ function aerialTouchMove(e){
   aerialLastX=t.clientX; aerialLastY=t.clientY;
 }
 window.toggleAerial=toggleAerial;
+
+// ─── SOUND TOGGLE ───────────────────────────────────────────────────────────
+function _syncSoundBtn(muted) {
+  const btn = document.getElementById('btn-sound');
+  if (!btn) return;
+  btn.classList.toggle('active', !muted);
+  btn.setAttribute('aria-label', muted ? 'Unmute sound' : 'Mute sound');
+  const icon = btn.querySelector('.sound-icon');
+  if (icon) icon.innerHTML = muted
+    ? '<path d="M11 5 6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>'
+    : '<path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/>';
+}
+window.toggleSound = function() {
+  const nowMuted = !(typeof isAudioMuted === 'function' ? isAudioMuted() : false);
+  if (typeof setAudioMuted === 'function') setAudioMuted(nowMuted);
+  _syncSoundBtn(nowMuted);
+};
 
 // Property detail panel — opens over the 3D world for any viewpoint with a productKey
 // Contains: zone description, interior viewpoints, reservation option
@@ -1519,17 +1541,77 @@ function _showPropertyPanel(data, propKey) {
   });
 }
 
+// ─── PER-PROPERTY-TYPE CATALOG ───────────────────────────────────────────────
+//  Keyed by the exact plot.type string stored in plotRegistry (see
+//  registerVillaFootprint / placeLoftGLB / the APT-BLOCK-1/2 seed in
+//  scene.js). One place owns title, area, gallery images and whether the
+//  interior walkthrough applies, so showPlotPanel and openGallery can never
+//  drift out of sync the way villa text was hardcoded into both
+//  independently before.
+const PLOT_TYPE_DATA = {
+  '3 BED VILLA': {
+    header: 'PROJECT XIX — PREMIUM VILLA PLOT',
+    title: '3-Bedroom Premium Villa',
+    area: '330 m²',
+    hasInterior: true,
+    interiorLabel: 'Step Inside — 3-Bedroom Villa',
+    floorplans: [
+      { src: 'assets/plans/villa-plan-level2.png', title: 'Ground Floor - Living, Dining & Kitchen (42m²)' },
+      { src: 'assets/plans/villa-plan-level3.png', title: 'First Floor - Master Bedroom & Family Lounge (27m²)' },
+      { src: 'assets/plans/villa-plan-level0.png', title: 'Undercroft Level - Parking & Staff Quarters' },
+      { src: 'assets/plans/villa-section.png', title: 'Architectural Section & Level Heights' },
+    ],
+    renders: [
+      { src: 'assets/plans/villa-render-front.png', title: '3D Perspective - Front Exterior Elevation' },
+      { src: 'assets/plans/villa-render-back.png', title: '3D Perspective - Rear Garden & Terrace' },
+    ],
+  },
+  '2 BED LOFT TERRACE': {
+    header: 'PROJECT XIX — LOFT TERRACE PLOT',
+    title: '2-Bedroom Loft Terrace',
+    area: '125 m²',
+    hasInterior: false,
+    floorplans: [
+      { src: 'assets/plans/loft-plan-ground.png', title: 'Ground Floor Plan' },
+      { src: 'assets/plans/loft-plan-first.png', title: 'First Floor Plan' },
+    ],
+    renders: [
+      { src: 'assets/plans/loft-render-front.png', title: '3D Perspective - Exterior' },
+    ],
+  },
+  '2 Bed Flat Block (24 units)': {
+    header: 'PROJECT XIX — BLOCK OF FLATS',
+    title: '2-Bedroom Flat',
+    area: '204 m² · 24 units per block',
+    hasInterior: false,
+    floorplans: [
+      { src: 'assets/plans/flats-site-layout.png', title: 'Site Layout - Parking & Access' },
+      { src: 'assets/plans/flats-plan-ground.png', title: 'Ground Floor Plan' },
+      { src: 'assets/plans/flats-plan-second.png', title: 'Second Floor Plan (Typical)' },
+      { src: 'assets/plans/flats-elevation.png', title: 'Front Elevation' },
+    ],
+    renders: [
+      { src: 'assets/plans/flats-render-front.png', title: '3D Perspective - Front Exterior' },
+      { src: 'assets/plans/flats-render-angle.png', title: '3D Perspective - Angled View' },
+    ],
+  },
+};
+// Fallback for any plot.type not yet catalogued above, so an unmapped type
+// shows an honest placeholder rather than someone else's building.
+const PLOT_TYPE_FALLBACK = {
+  header: 'PROJECT XIX', title: 'Residential Plot', area: '',
+  hasInterior: false, floorplans: [], renders: [],
+};
+function getPlotTypeData(type) { return PLOT_TYPE_DATA[type] || PLOT_TYPE_FALLBACK; }
+
 // ─── FULL-SCREEN IMAGE LIGHTBOX VIEWER ───────────────────────────────────────
-window.openGallery = function(type) {
-  const images = type === 'floorplans' ? [
-    { src: 'assets/plans/villa-plan-level2.png', title: 'Ground Floor - Living, Dining & Kitchen (42m²)' },
-    { src: 'assets/plans/villa-plan-level3.png', title: 'First Floor - Master Bedroom & Family Lounge (27m²)' },
-    { src: 'assets/plans/villa-plan-level0.png', title: 'Undercroft Level - Parking & Staff Quarters' },
-    { src: 'assets/plans/villa-section.png', title: 'Architectural Section & Level Heights' }
-  ] : [
-    { src: 'assets/plans/villa-render-front.png', title: '3D Perspective - Front Exterior Elevation' },
-    { src: 'assets/plans/villa-render-back.png', title: '3D Perspective - Rear Garden & Terrace' }
-  ];
+//  Now takes the SAME plotKey shown in the panel, looks up its real type,
+//  and opens THAT property's images — previously this always opened the
+//  villa set regardless of what was clicked.
+window.openGallery = function(kind, plotKey) {
+  const plot = (plotKey && typeof plotRegistry !== 'undefined') ? plotRegistry.get(plotKey) : null;
+  const data = getPlotTypeData(plot?.type);
+  const images = kind === 'floorplans' ? data.floorplans : data.renders;
 
   const existing = document.getElementById('xix-lightbox');
   if (existing) existing.remove();
