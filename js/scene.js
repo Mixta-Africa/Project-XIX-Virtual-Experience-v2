@@ -282,7 +282,7 @@ const _pendingAmbientBuilds = [];
 
 function _spawnAmbientHorse(bounds, delayMs) {
   const rec = { model: null, mixer: null, pos: new THREE.Vector3(), yaw: 0,
-                target: new THREE.Vector3(), pauseT: 0, speed: 1.0 + Math.random()*0.6, bounds };
+                target: new THREE.Vector3(), pauseT: 0, speed: 1.8 + Math.random()*0.8, bounds };
   const pick = () => new THREE.Vector3(
     bounds.xMin + Math.random()*(bounds.xMax-bounds.xMin), 0,
     bounds.zMin + Math.random()*(bounds.zMax-bounds.zMin));
@@ -300,7 +300,9 @@ function _spawnAmbientHorse(bounds, delayMs) {
       const mixer = new THREE.AnimationMixer(model);
       const action = mixer.clipAction(_horseClip);
       action.setLoop(THREE.LoopRepeat, Infinity);
-      action.timeScale = 0.55;   // grazing pace, slower than the rider's mount
+      action.timeScale = 1.0;   // natural walk-cycle speed; per-instance
+      // variety and the grazing freeze are handled every frame in
+      // tickAmbientHorses, not baked in here.
       action.play();
       rec.mixer = mixer;
     }
@@ -352,17 +354,22 @@ export function tickAmbientHorses(delta) {
   _ambientHorses.forEach(h => {
     if (h.mixer) h.mixer.update(delta);
     if (!h.model) return;   // still loading
-    if (h.pauseT > 0) { h.pauseT -= delta; return; }   // grazing pause
+    if (h.pauseT > 0) {
+      h.pauseT -= delta;
+      if (h.mixer) h.mixer.timeScale = 0;   // FREEZE the pose while stationary —
+      return;                               // was 0.55, which kept the legs
+    }                                        // slowly cycling under a horse
+                                              // that wasn't moving: foot-sliding.
 
     const dx = h.target.x - h.pos.x, dz = h.target.z - h.pos.z;
     const dist = Math.hypot(dx, dz);
     if (dist < REACH) {
-      h.pauseT = 3 + Math.random() * 5;
+      h.pauseT = 1.5 + Math.random() * 2.0;   // shorter pause — was 3-8s,
+      // which combined with slow movement made the whole system feel stuck
       h.target.set(
         h.bounds.xMin + Math.random() * (h.bounds.xMax - h.bounds.xMin), 0,
         h.bounds.zMin + Math.random() * (h.bounds.zMax - h.bounds.zMin));
-      if (h.mixer) h.mixer.timeScale = 0.55;   // idle/grazing pace
-      return;
+      return;   // mixer freeze on pause is handled above, before this check
     }
     const step = Math.min(h.speed * delta, dist);
     h.pos.x += (dx / dist) * step;
@@ -374,7 +381,9 @@ export function tickAmbientHorses(delta) {
     h.yaw += yawDiff * Math.min(delta * 3, 1);
     h.model.position.set(h.pos.x, 0, h.pos.z);
     h.model.rotation.y = h.yaw;
-    if (h.mixer) h.mixer.timeScale = 0.9;   // walking pace
+    if (h.mixer) h.mixer.timeScale = 1.0 + (h.speed - 1.8) * 0.15;   // natural
+    // pace, with faster-walking horses given a very slightly faster cycle
+    // so leg speed and ground speed stay visually consistent per instance
   });
 }
 
@@ -3070,7 +3079,9 @@ function addLoftTerraces(){
   [-75, -45, -15].forEach(z => { placeLoftBlock(-200, z, 0); });
   [15, 45, 75, 105].forEach(z => { placeLoftBlock(-200, z, 0); });
 
-  [-45, -15, 15, 45, 75].forEach(z => { placeLoftBlock(305, z, Math.PI); });
+  // Fills the gap between the north row's east end (~z=-175) and the
+  // paddock's north edge (z=-60) — "east-central," not further east.
+  [-155, -135, -115, -95, -75].forEach(z => { placeLoftBlock(165, z, 0); });
 }
 
 function addWestCompound() {
