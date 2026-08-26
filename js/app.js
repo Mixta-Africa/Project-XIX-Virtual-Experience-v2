@@ -1209,7 +1209,7 @@ function toggleAerial(btn){
     activate();
     const cam = getCamera();
     // Restore normal FOV + far plane
-    cam.fov = 65; cam.far = 1200; cam.updateProjectionMatrix();
+    cam.fov = 50; cam.far = 1200; cam.updateProjectionMatrix();
     // Restore fog to current time/weather density (respects fog toggle)
     const _scR = getScene();
     if (_scR && _scR.fog) _scR.fog.density = _fogEnabled ? _currentFogD : 0.000001;
