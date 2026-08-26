@@ -1520,13 +1520,13 @@ function _showPropertyPanel(data, propKey) {
 // ─── FULL-SCREEN IMAGE LIGHTBOX VIEWER ───────────────────────────────────────
 window.openGallery = function(type) {
   const images = type === 'floorplans' ? [
-    { src: 'assets/plans/villa-plan-level2.jpg', title: 'Ground Floor - Living, Dining & Kitchen (42m²)' },
-    { src: 'assets/plans/villa-plan-level3.jpg', title: 'First Floor - Master Bedroom & Family Lounge (27m²)' },
-    { src: 'assets/plans/villa-plan-level0.jpg', title: 'Undercroft Level - Parking & Staff Quarters' },
-    { src: 'assets/plans/villa-section.jpg', title: 'Architectural Section & Level Heights' }
+    { src: 'assets/plans/villa-plan-level2.png', title: 'Ground Floor - Living, Dining & Kitchen (42m²)' },
+    { src: 'assets/plans/villa-plan-level3.png', title: 'First Floor - Master Bedroom & Family Lounge (27m²)' },
+    { src: 'assets/plans/villa-plan-level0.png', title: 'Undercroft Level - Parking & Staff Quarters' },
+    { src: 'assets/plans/villa-section.png', title: 'Architectural Section & Level Heights' }
   ] : [
-    { src: 'assets/plans/villa-render-front.jpg', title: '3D Perspective - Front Exterior Elevation' },
-    { src: 'assets/plans/villa-render-back.jpg', title: '3D Perspective - Rear Garden & Terrace' }
+    { src: 'assets/plans/villa-render-front.png', title: '3D Perspective - Front Exterior Elevation' },
+    { src: 'assets/plans/villa-render-back.png', title: '3D Perspective - Rear Garden & Terrace' }
   ];
 
   const existing = document.getElementById('xix-lightbox');
