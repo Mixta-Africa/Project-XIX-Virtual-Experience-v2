@@ -839,95 +839,44 @@ function collectVillaHedge(x, z, ry) {
   _hedgeInstData.push({ x, z, ry });
 }
 
-// A hedge is not a box. Six stretched cubes per villa is what produced the
-// flat green slabs: no silhouette, no gaps, and a dead-straight top line that
-// nothing living has. Real clipped hedging is a RUN OF CLUMPS whose crowns
-// overlap into one mass but whose top edge undulates and whose ends round off,
-// so each run is walked at a fixed pitch dropping one bush per step.
-function _hedgeClumpGeometry() {
-  // Icosahedron, not a UV sphere: even triangles, no pole pinching, 80 tris.
-  const g = new THREE.IcosahedronGeometry(0.5, 1);
-  const p = g.attributes.position, v = new THREE.Vector3();
-  for (let i = 0; i < p.count; i++) {
-    v.fromBufferAttribute(p, i);
-    v.multiplyScalar(1.0 + Math.sin(v.x*9.1)*Math.cos(v.y*7.3)*Math.sin(v.z*8.7)*0.26);
-    v.y *= 0.86;                       // clipped flatter than it is wide
-    p.setXYZ(i, v.x, v.y, v.z);
-  }
-  g.computeVertexNormals();
-  return g;
-}
-
 function buildAllVillaHedges() {
   if (_hedgeInstData.length === 0) return;
-  const geo = _hedgeClumpGeometry();
+  const geo = new THREE.BoxGeometry(1, 1.4, 1);
   const mat = new THREE.MeshStandardMaterial({
-    color: 0xffffff,                   // per-instance colour does the work
-    roughness: 0.94, metalness: 0, envMapIntensity: 0.25,
+    color: 0x2d5a1e, roughness: 0.95, metalness: 0, envMapIntensity: 0.2,
   });
-  // Pitch tighter than clump radius so crowns overlap with no see-through.
-  const PITCH = PERF_MODE === 'fast' ? 1.15 : PERF_MODE === 'balanced' ? 0.85 : 0.68;
+  const SEGS_PER_VILLA = 6;
+  const total = _hedgeInstData.length * SEGS_PER_VILLA;
+  const mesh = new THREE.InstancedMesh(geo, mat, total);
+  mesh.castShadow = true; mesh.receiveShadow = true; mesh.frustumCulled = false;
   const dummy = new THREE.Object3D();
-  const col = new THREE.Color();
-  const runs = [];
   let idx = 0;
 
   _hedgeInstData.forEach(({ x, z, ry }) => {
-    const W = 10.5, D = 8.5, T = 0.55;
-    [ { lx: 0,          lz: -(D+T), sx: W*2, sz: T },
+    const W = 10.5, D = 8.5, H = 0.7, T = 0.55;
+    const segments = [
+      { lx: 0,          lz: -(D+T),  sx: W*2, sz: T },
       { lx: -(W*0.5+1), lz:  D+T,   sx: W-2, sz: T },
       { lx:  (W*0.5+1), lz:  D+T,   sx: W-2, sz: T },
-      { lx: -(W+T),     lz:  0,     sx: T,   sz: D*2 },
-      { lx:  (W+T),     lz: -D*0.3, sx: T,   sz: D*1.4 },
-      { lx:  (W+T),     lz:  D*0.7, sx: T,   sz: D*0.6 },
-    ].forEach(seg => runs.push({ x, z, ry, seg }));
-  });
-
-  let total = 0;
-  runs.forEach(({ seg }) => {
-    total += Math.max(2, Math.ceil(Math.max(seg.sx, seg.sz) / PITCH) + 1);
-  });
-
-  const mesh = new THREE.InstancedMesh(geo, mat, total);
-  mesh.castShadow = mesh.receiveShadow = true;
-  mesh.frustumCulled = false;
-
-  // Deterministic — a hedge that reshuffles on reload reads as a bug, and the
-  // estate has to look identical across two side-by-side sessions.
-  let seed = 1907;
-  const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
-
-  runs.forEach(({ x, z, ry, seg }) => {
-    const alongZ = seg.sz > seg.sx;
-    const len = alongZ ? seg.sz : seg.sx, thick = alongZ ? seg.sx : seg.sz;
-    const n = Math.max(2, Math.ceil(len / PITCH) + 1);
+      { lx: -(W+T),     lz:  0,      sx: T,   sz: D*2 },
+      { lx:  (W+T),     lz: -D*0.3,  sx: T,   sz: D*1.4 },
+      { lx:  (W+T),     lz:  D*0.7,  sx: T,   sz: D*0.6 },
+    ];
     const cosR = Math.cos(ry), sinR = Math.sin(ry);
-    for (let i = 0; i < n; i++) {
-      const t  = i / (n - 1);
-      const oa = (t - 0.5) * len, ob = (rnd() - 0.5) * thick * 0.45;
-      const lx = alongZ ? seg.lx + ob : seg.lx + oa;
-      const lz = alongZ ? seg.lz + oa : seg.lz + ob;
-      // Ends taper so the run rounds off instead of stopping dead.
-      const fade = Math.min(1, Math.sin(Math.PI * Math.min(t, 1 - t) * 2 + 0.55));
-      const rad = (1.30 + rnd()*0.30) * (0.72 + 0.28*fade);
-      const hgt = (1.34 + rnd()*0.34) * (0.70 + 0.30*fade);
-      dummy.position.set(x + lx*cosR - lz*sinR, hgt*0.44 + rnd()*0.05, z + lx*sinR + lz*cosR);
-      dummy.rotation.set((rnd()-0.5)*0.20, rnd()*Math.PI*2, (rnd()-0.5)*0.20);
-      dummy.scale.set(rad, hgt, rad * (0.86 + rnd()*0.24));
+    segments.forEach(seg => {
+      const wx = x + seg.lx * cosR - seg.lz * sinR;
+      const wz = z + seg.lx * sinR + seg.lz * cosR;
+      dummy.position.set(wx, H, wz);
+      dummy.rotation.set(0, ry, 0);
+      dummy.scale.set(seg.sx, 1, seg.sz);
       dummy.updateMatrix();
-      mesh.setMatrixAt(idx, dummy.matrix);
-      const lift = 0.80 + rnd()*0.34;
-      col.setHSL(0.263 + (rnd()-0.5)*0.030, 0.44 + rnd()*0.14, 0.155*lift + 0.045);
-      mesh.setColorAt(idx, col);
-      idx++;
-    }
+      mesh.setMatrixAt(idx++, dummy.matrix);
+    });
   });
 
   mesh.count = idx;
   mesh.instanceMatrix.needsUpdate = true;
-  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
   scene.add(mesh);
-  console.log(`[XIX] Hedges: ${idx.toLocaleString()} clumps across ${runs.length} runs`);
 }
 
 // ─── AO CONTACT SHADOWS ───────────────────────────────────────────────────────
@@ -987,7 +936,7 @@ export function initScene(canvas) {
   scene  = new THREE.Scene();
   scene.fog = new THREE.FogExp2(0x8ab8cc, perfS.fogDensity);
 
-  camera = new THREE.PerspectiveCamera(65, 1, 0.5, 1200);
+  camera = new THREE.PerspectiveCamera(50, 1, 0.5, 1200);
 
   buildLighting();
 
