@@ -11,7 +11,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  */
 
 import { VIEWPOINTS, ZONES, WORLD } from "./data.js";
-import { buildVillaInterior, VILLA_VIEWPOINTS } from "./villa-interior.js";
+// villa-interior.js removed — dead file, superseded by interior.js
 import {
   initScene, getRenderer, getScene, getCamera, getClock,
   tickScene, updateSky, updateSkyForTime, plotRegistry, reservePlot, getPlotAtRay,
@@ -49,7 +49,6 @@ function setCaption(text) {
 
 //           STATE
 let sceneReady      = false;
-let villaScene      = null, villaRenderer = null;
 let introPlaying    = false;
 window.currentViewKey = 'field_centre'; // Exposed globally
 let animFrameId     = null;
@@ -743,6 +742,13 @@ function showPlotPanel(plotKey) {
   document.getElementById('xix-plot-panel')?.remove();
   const plot = typeof plotRegistry !== 'undefined' ? plotRegistry.get(plotKey) : null;
   const _ptData = getPlotTypeData(plot?.type);   // moved after `plot` — was a TDZ error
+  // Maps plot.type -> the exact key interior.js's INTERIORS object uses.
+  // Confirmed against interior.js directly: INTERIORS has villa/loft/apartment.
+  const _INTERIOR_TYPE = {
+    '3 BED VILLA': 'villa',
+    '2 BED LOFT TERRACE': 'loft',
+    '2 Bed Flat Block (24 units)': 'apartment',
+  }[plot?.type] || null;
   const isReserved = plot?.status === "reserved";
 
   const panel = document.createElement('div');
@@ -776,11 +782,11 @@ function showPlotPanel(plotKey) {
         </div>
       </div>
 
-      ${_ptData.hasInterior ? `
+      ${_INTERIOR_TYPE ? `
       <div style="margin-bottom:24px;">
         <h4 style="font-size:10px; color:rgba(201,168,76,0.8); text-transform:uppercase; border-bottom:1px solid rgba(201,168,76,0.2); padding-bottom:6px; margin:0 0 12px 0;">1st-Person Walkthrough</h4>
-        <button onclick="window.openVillaInterior()" style="width:100%; background:rgba(201,168,76,0.15); border:1px solid rgba(201,168,76,0.4); border-radius:4px; padding:14px; color:#e4c878; cursor:pointer; font-size:13px; font-weight:600; letter-spacing:.04em;">
-          ${_ptData.interiorLabel}
+        <button onclick="window.openInteriorView('${_INTERIOR_TYPE}', null)" style="width:100%; background:rgba(201,168,76,0.15); border:1px solid rgba(201,168,76,0.4); border-radius:4px; padding:14px; color:#e4c878; cursor:pointer; font-size:13px; font-weight:600; letter-spacing:.04em;">
+          Step Inside — ${_ptData.title}
         </button>
       </div>` : ''}
     </div>
@@ -1327,6 +1333,10 @@ window.toggleSound = function() {
 // Property detail panel — opens over the 3D world for any viewpoint with a productKey
 // Contains: zone description, interior viewpoints, reservation option
 function openPropertyPanel(key) {
+  // Same mapping as showPlotPanel above, keyed by the zone/toolbar key
+  // instead of plot.type. Only villas and lofts have an interior.js entry
+  // reachable through this particular panel today.
+  const _INTERIOR_TYPE = { villas: 'villa', lofts: 'loft' }[key] || null;
   const PROPERTY_DATA = {
     villas: {
       title: 'Premium Villa — 3 Bedroom',
@@ -1502,15 +1512,16 @@ function _showPropertyPanel(data, propKey) {
         </div>
       </div>
 
+      ${_INTERIOR_TYPE ? `
       <div>
         <h4 style="font-size:10px; color:rgba(201,168,76,0.8); text-transform:uppercase; letter-spacing:.1em; border-bottom:1px solid rgba(201,168,76,0.2); padding-bottom:6px; margin:0 0 12px 0;">Interactive Walkthrough</h4>
         <div style="font-size:12px;color:rgba(240,236,224,0.6);margin-bottom:10px;">Experience the space in 1st-person 3D.</div>
         <div style="display:flex; flex-direction:column; gap:8px;">
-          <button onclick="window.openVillaInterior()" style="background:rgba(201,168,76,0.9); border:none; border-radius:4px; padding:14px; color:#061208; cursor:pointer; font-size:13px; font-weight:700; font-family:Inter,sans-serif; text-align:center; transition:all 0.2s; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
-            Step Inside the Villa
+          <button onclick="window.openInteriorView('${_INTERIOR_TYPE}', null)" style="background:rgba(201,168,76,0.9); border:none; border-radius:4px; padding:14px; color:#061208; cursor:pointer; font-size:13px; font-weight:700; font-family:Inter,sans-serif; text-align:center; transition:all 0.2s; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
+            Step Inside — ${data.title}
           </button>
         </div>
-      </div>` : ''}
+      </div>` : ''}` : ''}
     </div>
 
     ${data.canReserve ? `
@@ -1659,7 +1670,7 @@ window.openGallery = function(kind, plotKey) {
 
 // ─── SPAWN-ON-DEMAND INTERIOR TRIGGER ────────────────────────────────────────
 // ─── VILLA EXPERIENCE (replaces the fake interior shell) ─────────────────────
-// Interior walkthrough uses openVillaInterior() (defined below) directly.
+// Interior walkthrough uses window.openInteriorView() (interior.js), not this file.
 
 function teleportTo(key, vp){
   try {
@@ -1933,13 +1944,25 @@ function bindSectionScrollAnim(){
 }
 
 //           VILLA INTERIOR
+// Matches the residence-card-type text on the marketing page exactly as it
+// appears in index.html ("3 Bed Villa", "2 Bed Loft", "2 Bed Flat") to the
+// key interior.js's INTERIORS object actually uses.
+const RESIDENCE_CARD_INTERIOR = { '3 Bed Villa': 'villa', '2 Bed Loft': 'loft', '2 Bed Flat': 'apartment' };
+
 function bindVillaInteriorBtn(){
   document.addEventListener("click",e=>{
     const enterBtn=e.target.closest(".residence-card-btn");
     const card=enterBtn?.closest(".residence-card");
-    if(enterBtn&&card?.querySelector(".residence-card-type")?.textContent?.includes("3 Bed")){
-      openVillaInterior(); return;
+    const cardType=card?.querySelector(".residence-card-type")?.textContent?.trim();
+    const interiorType=cardType && RESIDENCE_CARD_INTERIOR[cardType];
+    if(enterBtn&&interiorType){
+      if(window.openInteriorView) window.openInteriorView(interiorType, null);
+      return;
     }
+    // .plan-tab / .plan-room: the static Floor Plans panel already present
+    // in villa-overlay markup. data-key values match interior.js's own room
+    // keys exactly (confirmed: "undercroft", "approach", etc.), so route
+    // straight into the real system rather than the tab switching alone.
     const tab=e.target.closest(".plan-tab");
     if(tab){
       document.querySelectorAll(".plan-tab").forEach(t=>t.classList.remove("active"));
@@ -1950,88 +1973,14 @@ function bindVillaInteriorBtn(){
     }
     const room=e.target.closest(".plan-room");
     if(room?.dataset.key){
-      teleportVillaTo(room.dataset.key);
       document.querySelectorAll(".plan-room").forEach(r=>r.classList.remove("active"));
       room.classList.add("active");
+      if(window.openInteriorView) window.openInteriorView('villa', room.dataset.key);
     }
   });
-  document.getElementById("btn-close-villa")?.addEventListener("click",closeVillaInterior,{capture:true});
 }
 
-window.openVillaInterior = openVillaInterior;   // reachable from onclick= handlers in generated HTML
-function openVillaInterior(){
-  const overlay=document.getElementById("villa-overlay");
-  if(!overlay) return;
-  overlay.classList.add("open");
-  document.body.style.overflow="hidden";
-  if(!villaScene){
-    const canvas=document.getElementById("villa-canvas");
-    if(!canvas) return;
-    villaRenderer=new THREE.WebGLRenderer({canvas,antialias:false,powerPreference:"high-performance"});
-    villaRenderer.setPixelRatio(Math.min(window.devicePixelRatio||1,1.5));
-    villaRenderer.shadowMap.enabled=true;
-    villaRenderer.shadowMap.type=THREE.PCFSoftShadowMap;
-    villaRenderer.toneMapping=THREE.ACESFilmicToneMapping;
-    villaRenderer.toneMappingExposure=1.1;
-    villaRenderer.outputColorSpace=THREE.SRGBColorSpace;
-    villaScene=new THREE.Scene();
-    villaScene.background=new THREE.Color(0x7ab4d4);
-    villaScene.fog=new THREE.FogExp2(0x9ac5d4,0.006);
-    buildVillaInterior(villaScene);
-  }
-  teleportVillaTo("approach");
-  activate(); resizeVilla();
-  window.addEventListener("resize",resizeVilla);
-  startVillaLoop(); buildVillaStrip();
-}
-
-function closeVillaInterior(){
-  document.getElementById("villa-overlay")?.classList.remove("open");
-  document.body.style.overflow="";
-  deactivate();
-  window.removeEventListener("resize",resizeVilla);
-  if(villaAnimId){cancelAnimationFrame(villaAnimId);villaAnimId=null;}
-}
-
-let villaAnimId=null;
-
-function startVillaLoop(){
-  if(villaAnimId) cancelAnimationFrame(villaAnimId);
-  const cam=getCamera();
-  function frame(){
-    villaAnimId=requestAnimationFrame(frame);
-    const delta=Math.min(getClock().getDelta(),0.033);
-    updateControls(delta);
-    if(villaRenderer&&villaScene) villaRenderer.render(villaScene,cam);
-  }
-  frame();
-}
-
-function resizeVilla(){
-  const canvas=document.getElementById("villa-canvas");
-  if(!canvas||!villaRenderer) return;
-  const w=canvas.parentElement.clientWidth, h=canvas.parentElement.clientHeight;
-  villaRenderer.setSize(w,h);
-  const cam=getCamera(); cam.aspect=w/h; cam.updateProjectionMatrix();
-}
-
-function teleportVillaTo(key){
-  const vp=VILLA_VIEWPOINTS.find(v=>v.key===key); if(!vp) return;
-  setView(vp.pos,vp.yaw,0); setCaption(vp.caption||vp.label);
-  document.querySelectorAll(".vp-floor-btn").forEach(b=>b.classList.toggle("active",b.dataset.key===key));
-}
-
-function buildVillaStrip(){
-  const strip=document.getElementById("villa-vp-strip"); if(!strip) return;
-  strip.innerHTML="";
-  VILLA_VIEWPOINTS.forEach(vp=>{
-    const btn=document.createElement("button");
-    btn.className="vp-btn vp-floor-btn"; btn.dataset.key=vp.key;
-    btn.innerHTML=`<span class="vp-label">${vp.label}</span>`;
-    btn.addEventListener("click",()=>teleportVillaTo(vp.key));
-    strip.appendChild(btn);
-  });
-}
+// Interior walkthrough is entirely owned by window.openInteriorView (interior.js), called directly above.
 
 // ─── SEARCHABLE PROPERTY DIRECTORY (AERIAL MODE) ──────────────────────────
 function injectPropertyDirectory() {
