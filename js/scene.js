@@ -113,9 +113,41 @@ function _spawnLampInstances() {
   });
   scene.add(sconceGroup);
 
-  // Add sconce positions into the lamp pool so they also light up at night
+  // ── CLUBHOUSE FORECOURT LAMPS ─────────────────────────────────────────────
+  // Clubhouse sits at world (0,0,108), rotation.y=Math.PI (front toward the
+  // field, -Z). Six posts along the forecourt plus two flanking the rear
+  // corners, all reusing the same post lamp instance already loaded for
+  // the villas — this is the "clubhouse lamps not lit" gap: the asset was
+  // wired for villas only and never placed here at all.
+  const clubGroup = new THREE.Group(); clubGroup.name = 'clubhouseLamps';
+  const CLUB_X = 0, CLUB_Z = 108, CLUB_HALF_W = 22, FRONT_OFFSET = 13;
+  const clubFrontXs = [-CLUB_HALF_W*0.8, -CLUB_HALF_W*0.45, -CLUB_HALF_W*0.15,
+                        CLUB_HALF_W*0.15,  CLUB_HALF_W*0.45,  CLUB_HALF_W*0.8];
+  clubFrontXs.forEach(x => {
+    const wx = CLUB_X + x, wz = CLUB_Z - FRONT_OFFSET;   // toward the field
+    const clone = _postLampScene.clone(true);
+    clone.position.set(wx, 0, wz);
+    clone.rotation.y = 0;               // faces the same way as the villas' -Z row
+    clone.scale.setScalar(POST_SCALE);
+    _postPositions.push({ x: wx, y: 4.0, z: wz });
+    clubGroup.add(clone);
+  });
+  [[-CLUB_HALF_W*0.95, 10], [CLUB_HALF_W*0.95, 10]].forEach(([x, z]) => {
+    const wx = CLUB_X + x, wz = CLUB_Z + z;
+    const clone = _postLampScene.clone(true);
+    clone.position.set(wx, 0, wz);
+    clone.rotation.y = Math.PI;
+    clone.scale.setScalar(POST_SCALE);
+    _postPositions.push({ x: wx, y: 4.0, z: wz });
+    clubGroup.add(clone);
+  });
+  scene.add(clubGroup);
+
+  // Add sconce + clubhouse post positions into the lamp pool so everything
+  // participates in the pooled point-light system at night.
   _sconcePositions.forEach(n => _lampNodes.push(n));
-  console.log('[XIX] Lamps: ' + _postPositions.length + ' post lamps, ' +
+  _postPositions.forEach(n => _lampNodes.push(n));
+  console.log('[XIX] Lamps: ' + _postPositions.length + ' post lamps (incl. clubhouse), ' +
               _sconcePositions.length + ' wall sconces spawned');
 }
 
@@ -124,15 +156,19 @@ function loadLampMeshes() {
   loader.load('assets/post-security-lamp-mesh.glb', gltf => {
     _postLampScene = gltf.scene;
     applyPS4Materials(_postLampScene);
-    // Emissive lamp head — warm amber glow visible at dusk/night
+    // Lens/globe is now a SEPARATE primitive in the GLB itself (material
+    // extras.isLampLens = true), classified once offline by sampling the
+    // actual base-colour atlas rather than the flat material tint. Just
+    // read the flag the asset already carries.
     _postLampScene.traverse(o => {
       if (!o.isMesh) return;
       const m = Array.isArray(o.material) ? o.material[0] : o.material;
-      if (!m) return;
-      const lum = m.color ? (m.color.r*0.2126+m.color.g*0.7152+m.color.b*0.0722) : 1;
-      if (lum > 0.7) {   // bright parts = globe / diffuser
-        m.emissive = new THREE.Color(0xffaa44);
-        m.emissiveIntensity = 0;    // driven by updateNightLights
+      // material.name ('post_lens') is a plain glTF property GLTFLoader
+      // always copies verbatim — unlike material extras, whose propagation
+      // to userData is loader-version dependent and not worth trusting for
+      // something this visible.
+      if (m && /_lens$/.test(m.name || '')) {
+        m.emissiveIntensity = 0;   // driven by updateNightLights
         m.userData.isLampGlobe = true;
       }
     });
@@ -145,10 +181,7 @@ function loadLampMeshes() {
     _sconceScene.traverse(o => {
       if (!o.isMesh) return;
       const m = Array.isArray(o.material) ? o.material[0] : o.material;
-      if (!m) return;
-      const lum = m.color ? (m.color.r*0.2126+m.color.g*0.7152+m.color.b*0.0722) : 1;
-      if (lum > 0.65) {
-        m.emissive = new THREE.Color(0xffcc77);
+      if (m && /_lens$/.test(m.name || '')) {
         m.emissiveIntensity = 0;
         m.userData.isLampGlobe = true;
       }
@@ -2403,7 +2436,10 @@ function loadOneGLB(path,scale,yOff,onDone,onFail){
 }
 
 function loadClubhouseGLB(){
-  loadOneGLB("assets/clubhouse-mesh.glb",60.975,0,tmpl=>{
+  // Scale derived from GFA: 3,419 m² ÷ 3 floors = 1,140 m² footprint
+  // Mesh W=1.9017 raw → 48.8 m world at aspect 2.09:1
+  // Old scale 60.975 produced W=116m (6,437 m² footprint — 5.6× too large)
+  loadOneGLB("assets/clubhouse-mesh.glb",25.657,0,tmpl=>{
     const g=new THREE.Group(); g.position.set(0,0,108); g.rotation.y=Math.PI;
     g.add(tmpl.clone(true)); scene.add(g);
     const bbox=new THREE.Box3().setFromObject(g); if(bbox.min.y<-0.5) g.position.y-=bbox.min.y;
@@ -2695,9 +2731,15 @@ function addVillaRing(){
   [19, 47, 75].forEach(z => placeV(162, z, -Math.PI / 2));
   placeV(155.5, 93, -3 * Math.PI / 4);
 
+  //  ORIENTATION BUG: these villas sit south of the field (z=+105) and used
+  //  ry=0, which points the front toward +Z — further south, away from the
+  //  field, toward the clubhouse. The mirror-image north row at z=-120 uses
+  //  ry=0 correctly because +Z from there points INTO the field. South-side
+  //  villas need the opposite heading, ry=Math.PI, so their front (+Z at
+  //  ry=0) is rotated 180 degrees to point -Z: north, into the field.
   for(const side of [-1, 1]) {
     [65, 93, 121, 149].forEach(xa => {
-      placeV(side * xa, 105 + xa * 0.04, 0);
+      placeV(side * xa, 105 + xa * 0.04, Math.PI);
     });
   }
 
