@@ -618,49 +618,77 @@ function bindPlotSystem() {
     _dragStartY = e.clientY; 
   });
 
-  // 1. Hover State (Disabled safely during drag/swipe)
+  // 1. Hover State — FREE MOUSE only. Locked/walk-mode hover is driven from
+  //    the render loop (see _tickCrosshairHover, wired near tickScene), not
+  //    from input events, because the old "if(pointerLockElement)return"
+  //    guard here disabled hover completely the instant the user clicked to
+  //    look around. Input events are also the wrong trigger for a crosshair:
+  //    controls.js EASES the camera toward the mouse's target rotation over
+  //    several frames, so the view keeps turning after the mouse itself goes
+  //    still. An event-driven raycast misses that tail entirely, which is
+  //    why the highlight lagged or stuck on the wrong building while panning.
   canvas.addEventListener("pointermove", e => {
-    // If finger moves more than 6px, lock into camera pan mode
     if (Math.abs(e.clientX - _dragStartX) > 6 || Math.abs(e.clientY - _dragStartY) > 6) {
       _isDragging = true;
     }
+    if (document.pointerLockElement) return;   // frame loop owns this case
 
-    // Throttle raycasting, and NEVER run it while dragging
     const now = performance.now();
     if (!_isDragging && (now - _lastHoverTime > 50)) {
       _lastHoverTime = now;
-      
       if (!document.getElementById("world-overlay")?.classList.contains("open")) return;
-      if (document.pointerLockElement) return;
 
       const rect = canvas.getBoundingClientRect();
       const mouse = new THREE.Vector2(
         ((e.clientX - rect.left) / rect.width) * 2 - 1,
        -((e.clientY - rect.top) / rect.height) * 2 + 1
       );
-      
       const raycaster = new THREE.Raycaster();
       const cam = typeof getCamera === 'function' ? getCamera() : null;
       if (!cam) return;
       raycaster.setFromCamera(mouse, cam);
-
       const sc = typeof getScene === 'function' ? getScene() : null;
       if (!sc) return;
 
       const badgeHits = raycaster.intersectObjects(sc.children, false).filter(h => h.object.userData?.isPlotBadge);
       let plotKey = null;
-      
       if (badgeHits.length > 0) {
         plotKey = badgeHits[0].object.userData.plotKey;
       } else if (typeof getPlotAtRay === 'function') {
         plotKey = getPlotAtRay(raycaster);
       }
-
-      if (typeof window.setHoveredPlot === 'function') {
-        window.setHoveredPlot(plotKey);
-      }
+      if (typeof window.setHoveredPlot === 'function') window.setHoveredPlot(plotKey);
     }
   });
+
+  // Locked-mode hover: same raycast, driven every frame from _tickCrosshairHover
+  // (called from the main animation loop) using screen centre as the pick
+  // ray — the crosshair position. Exposed on window so the frame loop, which
+  // lives further down this file, can reach it without a module import cycle.
+  let _lastCrosshairHover = 0;
+  window._tickCrosshairHover = function() {
+    if (!document.pointerLockElement) return;
+    if (!document.getElementById("world-overlay")?.classList.contains("open")) return;
+    const now = performance.now();
+    if (now - _lastCrosshairHover < 50) return;   // match the old 20/sec cadence
+    _lastCrosshairHover = now;
+
+    const cam = typeof getCamera === 'function' ? getCamera() : null;
+    const sc  = typeof getScene  === 'function' ? getScene()  : null;
+    if (!cam || !sc) return;
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(new THREE.Vector2(0, 0), cam);   // screen centre
+
+    const badgeHits = raycaster.intersectObjects(sc.children, false)
+      .filter(h => h.object.userData?.isPlotBadge);
+    let plotKey = null;
+    if (badgeHits.length > 0) {
+      plotKey = badgeHits[0].object.userData.plotKey;
+    } else if (typeof getPlotAtRay === 'function') {
+      plotKey = getPlotAtRay(raycaster);
+    }
+    if (typeof window.setHoveredPlot === 'function') window.setHoveredPlot(plotKey);
+  };
 
   // 2. Click to Select (Only fires on clean taps)
   canvas.addEventListener("pointerup", e => {
@@ -706,6 +734,10 @@ function bindPlotSystem() {
 }
 
 function showPlotPanel(plotKey) {
+  // Guaranteed here regardless of caller — non-tech and tablet users have no
+  // way to know Esc releases the cursor, so the panel must never appear
+  // while the pointer is still captured.
+  if (document.pointerLockElement) document.exitPointerLock();
   document.getElementById('xix-plot-panel')?.remove();
   const plot = typeof plotRegistry !== 'undefined' ? plotRegistry.get(plotKey) : null;
   const isReserved = plot?.status === "reserved";
@@ -743,8 +775,8 @@ function showPlotPanel(plotKey) {
 
       <div style="margin-bottom:24px;">
         <h4 style="font-size:10px; color:rgba(201,168,76,0.8); text-transform:uppercase; border-bottom:1px solid rgba(201,168,76,0.2); padding-bottom:6px; margin:0 0 12px 0;">1st-Person Walkthrough</h4>
-        <button onclick="window.startIsolatedInterior('${plotKey}')" style="width:100%; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.2); border-radius:4px; padding:14px; color:#fff; cursor:pointer; font-size:13px; font-weight:600;">
-          Step Inside Plot ${plotKey}
+        <button onclick="window.openVillaInterior()" style="width:100%; background:rgba(201,168,76,0.15); border:1px solid rgba(201,168,76,0.4); border-radius:4px; padding:14px; color:#e4c878; cursor:pointer; font-size:13px; font-weight:600; letter-spacing:.04em;">
+          Step Inside — 3-Bedroom Villa
         </button>
       </div>
     </div>
@@ -1450,7 +1482,7 @@ function _showPropertyPanel(data, propKey) {
         <h4 style="font-size:10px; color:rgba(201,168,76,0.8); text-transform:uppercase; letter-spacing:.1em; border-bottom:1px solid rgba(201,168,76,0.2); padding-bottom:6px; margin:0 0 12px 0;">Interactive Walkthrough</h4>
         <div style="font-size:12px;color:rgba(240,236,224,0.6);margin-bottom:10px;">Experience the space in 1st-person 3D.</div>
         <div style="display:flex; flex-direction:column; gap:8px;">
-          <button onclick="window.startIsolatedInterior('${propKey}')" style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.2); border-radius:4px; padding:14px; color:#fff; cursor:pointer; font-size:13px; font-weight:600; font-family:Inter,sans-serif; text-align:center; transition:all 0.2s; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
+          <button onclick="window.openVillaInterior()" style="background:rgba(201,168,76,0.9); border:none; border-radius:4px; padding:14px; color:#061208; cursor:pointer; font-size:13px; font-weight:700; font-family:Inter,sans-serif; text-align:center; transition:all 0.2s; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
             Step Inside the Villa
           </button>
         </div>
@@ -1543,63 +1575,7 @@ window.openGallery = function(type) {
 
 // ─── SPAWN-ON-DEMAND INTERIOR TRIGGER ────────────────────────────────────────
 // ─── VILLA EXPERIENCE (replaces the fake interior shell) ─────────────────────
-// VILLA_VIEWPOINTS is imported from ./villa-interior.js (line 14) — do not redeclare.
-const PAN_SPEED = 0.0014;
-let _panAnimId=null, _panActive=false, _panYaw=0;
-function _stopPan(){_panActive=false;if(_panAnimId){cancelAnimationFrame(_panAnimId);_panAnimId=null;}}
-function _startPan(baseYaw){
-  _stopPan();_panYaw=baseYaw;_panActive=true;let last=performance.now();
-  const tick=(now)=>{if(!_panActive)return;const dt=Math.min((now-last)/1000,0.05);last=now;
-    _panYaw+=PAN_SPEED*dt*60;if(typeof window._xixSetTargetYaw==='function')window._xixSetTargetYaw(_panYaw);
-    _panAnimId=requestAnimationFrame(tick);};_panAnimId=requestAnimationFrame(tick);}
-
-window.startVillaExperience = function(propKey) {
-  const plot=typeof plotRegistry!=='undefined'?plotRegistry.get(propKey):null; if(!plot)return;
-  const panel=document.getElementById('xix-plot-panel');
-  if(panel){panel.style.transform='translateX(-100%)';setTimeout(()=>panel.remove(),400);}
-  if(document.pointerLockElement)document.exitPointerLock();
-  if(typeof window.setMoveMode==='function')window.setMoveMode('walk');
-  const ui=document.createElement('div');
-  ui.id='villa-experience-ui';
-  ui.style.cssText='position:fixed;inset:0;pointer-events:none;z-index:90;font-family:Inter,sans-serif;';
-  const top=document.createElement('div');
-  top.style.cssText='position:absolute;top:0;left:0;right:0;background:linear-gradient(180deg,rgba(6,14,8,0.92) 0%,transparent 100%);padding:18px 24px 32px;display:flex;align-items:center;gap:16px;pointer-events:auto;';
-  top.innerHTML=`<span style="color:rgba(201,168,76,0.8);font-size:10px;letter-spacing:.15em;text-transform:uppercase;">PLOT ${propKey} — INTERIOR EXPERIENCE</span><span id="vx-room-desc" style="color:rgba(240,236,224,0.7);font-size:12px;flex:1;text-align:center;"></span><button id="vx-exit" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.2);border-radius:6px;padding:8px 14px;color:#fff;cursor:pointer;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;min-height:44px;pointer-events:auto;">✕ Exit</button>`;
-  ui.appendChild(top);
-  const rail=document.createElement('div');
-  rail.style.cssText='position:absolute;right:16px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:10px;pointer-events:auto;padding-right:env(safe-area-inset-right,0px);';
-  const btns=[];let _activeId=null;
-  const go=(vp)=>{
-    _stopPan();
-    const cos=Math.cos(plot.ry),sin=Math.sin(plot.ry);
-    const wx=plot.x+vp.lx*cos-vp.lz*sin;
-    const wz=plot.z+vp.lx*sin+vp.lz*cos;
-    const yaw=plot.ry+vp.yawOff;
-    if(typeof setView==='function')setView([wx,vp.ly,wz],yaw,vp.pitch);
-    const desc=document.getElementById('vx-room-desc');if(desc)desc.textContent=vp.desc;
-    setTimeout(()=>{if(_activeId===vp.id)_startPan(yaw);},1200);
-    _activeId=vp.id;
-    btns.forEach(b=>{const on=b.dataset.vpid===vp.id;
-      b.style.background=on?'#c9a84c':'rgba(6,14,8,0.86)';
-      b.style.color=on?'#061208':'#c9a84c';
-      b.style.borderColor=on?'#c9a84c':'rgba(201,168,76,0.35)';
-      b.style.fontWeight=on?'700':'600';});};
-  VILLA_VIEWPOINTS.forEach(vp=>{
-    const b=document.createElement('button');b.type='button';b.dataset.vpid=vp.id;
-    b.style.cssText='display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:8px;cursor:pointer;border:1px solid rgba(201,168,76,0.35);white-space:nowrap;background:rgba(6,14,8,0.86);color:#c9a84c;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);font:600 11px/1 Inter,sans-serif;letter-spacing:.04em;min-height:44px;min-width:200px;text-align:left;';
-    b.innerHTML=`<span style="font-size:15px">${vp.icon}</span><span>${vp.label}</span>`;
-    b.addEventListener('click',()=>go(vp));btns.push(b);rail.appendChild(b);});
-  ui.appendChild(rail);
-  const hint=document.createElement('div');
-  hint.style.cssText='position:absolute;bottom:90px;left:50%;transform:translateX(-50%);background:rgba(6,14,8,0.78);border:1px solid rgba(201,168,76,0.2);border-radius:20px;padding:8px 18px;color:rgba(240,236,224,0.6);font-size:11px;letter-spacing:.04em;pointer-events:none;backdrop-filter:blur(6px);';
-  hint.textContent='Drag to look around  ·  Tap a room to teleport';
-  ui.appendChild(hint);
-  document.getElementById('world-overlay')?.appendChild(ui);
-  document.getElementById('vx-exit')?.addEventListener('click',()=>{
-    _stopPan();ui.remove();if(typeof window.setMoveMode==='function')window.setMoveMode('ride');});
-  go(VILLA_VIEWPOINTS[1]);
-};
-window.startIsolatedInterior = window.startVillaExperience;
+// Interior walkthrough uses openVillaInterior() (defined below) directly.
 
 function teleportTo(key, vp){
   try {
@@ -1828,6 +1804,7 @@ function startRenderLoop(){
     }
 
     tickScene(elapsed,camera);
+    if (typeof window._tickCrosshairHover === 'function') window._tickCrosshairHover();
     tickDayCycle(elapsed);  // Auto day/night cycle
     updateMinimap(camera.position.x,camera.position.z,getYaw());
     updateSpatialAudio(camera.position.x,camera.position.z);
@@ -1897,6 +1874,7 @@ function bindVillaInteriorBtn(){
   document.getElementById("btn-close-villa")?.addEventListener("click",closeVillaInterior,{capture:true});
 }
 
+window.openVillaInterior = openVillaInterior;   // reachable from onclick= handlers in generated HTML
 function openVillaInterior(){
   const overlay=document.getElementById("villa-overlay");
   if(!overlay) return;
