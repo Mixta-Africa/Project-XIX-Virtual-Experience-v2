@@ -83,9 +83,7 @@ window.addEventListener('keydown', e => {
 export function loadHorseGLB() {
   makeDracoLoader().load("./assets/horse.glb", gltf => {
     const model = gltf.scene;
-    // NEW MESH is in metres not millimetres — scale derived from GFA:
-    // 330 m² ÷ 3 floors = 110 m² footprint, W=2.000 raw → 11.4 m world
-    model.scale.setScalar(5.71853);
+    model.scale.setScalar(0.022);   // horse.glb — millimetre mesh, unchanged
     applyPS4Materials(model);
     const bbox = new THREE.Box3().setFromObject(model);
     if (bbox.min.y < 0) model.position.y = -bbox.min.y;
@@ -155,8 +153,7 @@ const NPC_PATHS = [
 function spawnNPCHorse(pathIndex) {
   makeDracoLoader().load("./assets/horse.glb", gltf => {
     const model = gltf.scene;
-    // NEW MESH in metres: 125 m² ÷ 2 floors = 62 m² footprint, W=1.902 raw → 9.1 m world
-    model.scale.setScalar(4.79208);
+    model.scale.setScalar(0.020);   // NPC horse.glb — millimetre mesh, unchanged
     applyPS4Materials(model);
     const bbox = new THREE.Box3().setFromObject(model);
     if (bbox.min.y < 0) model.position.y = -bbox.min.y;
