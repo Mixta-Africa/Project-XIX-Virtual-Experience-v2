@@ -1542,109 +1542,80 @@ window.openGallery = function(type) {
 };
 
 // ─── SPAWN-ON-DEMAND INTERIOR TRIGGER ────────────────────────────────────────
-window.startIsolatedInterior = function(propKey) {
-  // 1. Cleanly close the property panel
-  const panel = document.getElementById('xix-prop-panel');
-  if (panel) {
-    panel.style.transform = 'translateX(100%)';
-    setTimeout(() => panel.remove(), 400);
-  }
-  
-  // 2. Trigger the 3D builder in scene.js
-  if (typeof window.triggerInteriorBuild === 'function') {
-    window.triggerInteriorBuild(propKey);
-  } else {
-    console.warn("Interior 3D Builder missing in scene.js!");
-    return;
-  }
+// ─── VILLA EXPERIENCE (replaces the fake interior shell) ─────────────────────
+const VILLA_VIEWPOINTS = [
+  { id:'undercroft', label:'Undercroft & Entry',     icon:'🚗',
+    lx:-1.5, ly:1.35, lz: 0.5, yawOff:0,         pitch:-0.06,
+    desc:'Standing in the two-car undercroft, looking toward the entry ramp.' },
+  { id:'living',     label:'Living & Dining',         icon:'🛋',
+    lx: 1.2, ly:4.50, lz: 3.2, yawOff:0,         pitch: 0.00,
+    desc:'Ground floor — full-height glazing, direct polo field view.' },
+  { id:'kitchen',    label:'Kitchen & North Terrace', icon:'🍽',
+    lx:-1.0, ly:4.50, lz:-1.5, yawOff:Math.PI,   pitch: 0.00,
+    desc:'Kitchen terrace — looking north toward the crescent lake.' },
+  { id:'master',     label:'Master Bedroom',          icon:'🛏',
+    lx:-2.0, ly:7.80, lz:-1.0, yawOff:0,         pitch: 0.00,
+    desc:'First floor master suite — elevated view over the polo field.' },
+  { id:'lounge',     label:'Family Lounge & Terrace', icon:'🌅',
+    lx: 2.0, ly:7.80, lz: 2.8, yawOff:0,         pitch:-0.04,
+    desc:'Upper terrace — panoramic view over the polo field and crescent lake.' },
+];
+const PAN_SPEED = 0.0014;
+let _panAnimId=null, _panActive=false, _panYaw=0;
+function _stopPan(){_panActive=false;if(_panAnimId){cancelAnimationFrame(_panAnimId);_panAnimId=null;}}
+function _startPan(baseYaw){
+  _stopPan();_panYaw=baseYaw;_panActive=true;let last=performance.now();
+  const tick=(now)=>{if(!_panActive)return;const dt=Math.min((now-last)/1000,0.05);last=now;
+    _panYaw+=PAN_SPEED*dt*60;if(typeof window._xixSetTargetYaw==='function')window._xixSetTargetYaw(_panYaw);
+    _panAnimId=requestAnimationFrame(tick);};_panAnimId=requestAnimationFrame(tick);}
 
-  // --- NEW: INTERIOR UI ELEMENTS ---
-  const uiContainer = document.createElement('div');
-  uiContainer.id = 'interior-walkthrough-ui';
-  
-  // ── 3. FLOOR NAVIGATION ──────────────────────────────────────────────────
-  //  These "buttons" were never buttons. The template literal below held the
-  //  two labels as BARE TEXT with no <button> elements, so
-  //  getElementById('btn-floor-3') returned null and .addEventListener threw a
-  //  TypeError on the very next line. Three symptoms, one bug: the labels
-  //  appeared as unstyled text across the bottom of the screen, floors could
-  //  not be switched, and the Exit Walkthrough button further down never got
-  //  created because the exception aborted the rest of this function.
-  //
-  //  Eye heights are no longer inlined here — scene.js owns them through
-  //  setInteriorLevel(), so geometry and camera cannot drift apart.
-  const levels = (window._xixInteriorAnchor && window._xixInteriorAnchor.levels) || [
-    { n:1, label:'Undercroft & Entry' }, { n:2, label:'Living & Dining' }, { n:3, label:'Master Bedroom' },
-  ];
-
-  uiContainer.style.cssText = [
-    'position:fixed','right:12px','top:50%','transform:translateY(-50%)',
-    'display:flex','flex-direction:column','gap:8px','z-index:60','pointer-events:auto',
-    'padding-right:env(safe-area-inset-right,0px)',
-  ].join(';');
-
-  let paint;
-  const btns = levels.map(lv => {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.dataset.level = String(lv.n);
-    b.textContent = `Level ${lv.n} · ${lv.label}`;
-    b.style.cssText = [
-      'font:600 12px/1 Inter,sans-serif','letter-spacing:.04em','padding:11px 14px',
-      'border-radius:8px','cursor:pointer','white-space:nowrap','min-height:44px',
-      'border:1px solid rgba(201,168,76,0.42)','background:rgba(6,18,8,0.86)','color:#c9a84c',
-      'backdrop-filter:blur(6px)','-webkit-backdrop-filter:blur(6px)',
-    ].join(';');
-    b.addEventListener('click', () => {
-      if (typeof window.setInteriorLevel === 'function') window.setInteriorLevel(lv.n);
-      paint(lv.n);
-    });
-    return b;
-  });
-
-  paint = (active) => btns.forEach(b => {
-    const on = Number(b.dataset.level) === active;
-    b.style.background = on ? '#c9a84c' : 'rgba(6,18,8,0.86)';
-    b.style.color      = on ? '#061208' : '#c9a84c';
-    b.style.fontWeight = on ? '700' : '600';
-  });
-
-  btns.forEach(b => uiContainer.appendChild(b));
-  paint(window._xixInteriorLevel || 2);
-  document.getElementById('world-overlay')?.appendChild(uiContainer);
-
-  // 4. Create the "Exit Walkthrough" button
-  const exitBtn = document.createElement('button');
-  exitBtn.innerHTML = `Exit Walkthrough`;
-  exitBtn.style.cssText = `
-    position:fixed; bottom:120px; left:50%; transform:translateX(-50%);
-    background:rgba(201,168,76,0.95); color:#061208; border:none; padding:14px 28px;
-    border-radius:30px; font-size:14px; font-weight:600; font-family:Inter,sans-serif;
-    cursor:pointer; z-index:2500; box-shadow:0 8px 24px rgba(0,0,0,0.5);
-    transition: transform 0.2s;
-  `;
-  exitBtn.addEventListener('mouseenter', () => exitBtn.style.transform = 'translateX(-50%) scale(1.05)');
-  exitBtn.addEventListener('mouseleave', () => exitBtn.style.transform = 'translateX(-50%) scale(1)');
-  
-  document.getElementById('world-overlay')?.appendChild(exitBtn);
-
-  // 5. Handle Exiting the Walkthrough
-  exitBtn.addEventListener('click', () => {
-    exitBtn.remove();
-    if (uiContainer) uiContainer.remove(); // Clean up the floor buttons
-    
-    // Destroy the interior 3D model and restore the exterior shell
-    if (typeof window.destroyInteriorBuild === 'function') {
-      window.destroyInteriorBuild();
-    }
-    
-    // Return camera to a safe aerial view to re-orient the user
-    const aerialBtn = document.getElementById('btn-aerial');
-    if (typeof toggleAerial === 'function' && aerialBtn) {
-       if (!window.aerialOrbit) toggleAerial(aerialBtn);
-    }
-  });
+window.startVillaExperience = function(propKey) {
+  const plot=typeof plotRegistry!=='undefined'?plotRegistry.get(propKey):null; if(!plot)return;
+  const panel=document.getElementById('xix-plot-panel');
+  if(panel){panel.style.transform='translateX(-100%)';setTimeout(()=>panel.remove(),400);}
+  if(document.pointerLockElement)document.exitPointerLock();
+  if(typeof window.setMoveMode==='function')window.setMoveMode('walk');
+  const ui=document.createElement('div');
+  ui.id='villa-experience-ui';
+  ui.style.cssText='position:fixed;inset:0;pointer-events:none;z-index:90;font-family:Inter,sans-serif;';
+  const top=document.createElement('div');
+  top.style.cssText='position:absolute;top:0;left:0;right:0;background:linear-gradient(180deg,rgba(6,14,8,0.92) 0%,transparent 100%);padding:18px 24px 32px;display:flex;align-items:center;gap:16px;pointer-events:auto;';
+  top.innerHTML=`<span style="color:rgba(201,168,76,0.8);font-size:10px;letter-spacing:.15em;text-transform:uppercase;">PLOT ${propKey} — INTERIOR EXPERIENCE</span><span id="vx-room-desc" style="color:rgba(240,236,224,0.7);font-size:12px;flex:1;text-align:center;"></span><button id="vx-exit" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.2);border-radius:6px;padding:8px 14px;color:#fff;cursor:pointer;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;min-height:44px;pointer-events:auto;">✕ Exit</button>`;
+  ui.appendChild(top);
+  const rail=document.createElement('div');
+  rail.style.cssText='position:absolute;right:16px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:10px;pointer-events:auto;padding-right:env(safe-area-inset-right,0px);';
+  const btns=[];let _activeId=null;
+  const go=(vp)=>{
+    _stopPan();
+    const cos=Math.cos(plot.ry),sin=Math.sin(plot.ry);
+    const wx=plot.x+vp.lx*cos-vp.lz*sin;
+    const wz=plot.z+vp.lx*sin+vp.lz*cos;
+    const yaw=plot.ry+vp.yawOff;
+    if(typeof setView==='function')setView([wx,vp.ly,wz],yaw,vp.pitch);
+    const desc=document.getElementById('vx-room-desc');if(desc)desc.textContent=vp.desc;
+    setTimeout(()=>{if(_activeId===vp.id)_startPan(yaw);},1200);
+    _activeId=vp.id;
+    btns.forEach(b=>{const on=b.dataset.vpid===vp.id;
+      b.style.background=on?'#c9a84c':'rgba(6,14,8,0.86)';
+      b.style.color=on?'#061208':'#c9a84c';
+      b.style.borderColor=on?'#c9a84c':'rgba(201,168,76,0.35)';
+      b.style.fontWeight=on?'700':'600';});};
+  VILLA_VIEWPOINTS.forEach(vp=>{
+    const b=document.createElement('button');b.type='button';b.dataset.vpid=vp.id;
+    b.style.cssText='display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:8px;cursor:pointer;border:1px solid rgba(201,168,76,0.35);white-space:nowrap;background:rgba(6,14,8,0.86);color:#c9a84c;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);font:600 11px/1 Inter,sans-serif;letter-spacing:.04em;min-height:44px;min-width:200px;text-align:left;';
+    b.innerHTML=`<span style="font-size:15px">${vp.icon}</span><span>${vp.label}</span>`;
+    b.addEventListener('click',()=>go(vp));btns.push(b);rail.appendChild(b);});
+  ui.appendChild(rail);
+  const hint=document.createElement('div');
+  hint.style.cssText='position:absolute;bottom:90px;left:50%;transform:translateX(-50%);background:rgba(6,14,8,0.78);border:1px solid rgba(201,168,76,0.2);border-radius:20px;padding:8px 18px;color:rgba(240,236,224,0.6);font-size:11px;letter-spacing:.04em;pointer-events:none;backdrop-filter:blur(6px);';
+  hint.textContent='Drag to look around  ·  Tap a room to teleport';
+  ui.appendChild(hint);
+  document.getElementById('world-overlay')?.appendChild(ui);
+  document.getElementById('vx-exit')?.addEventListener('click',()=>{
+    _stopPan();ui.remove();if(typeof window.setMoveMode==='function')window.setMoveMode('ride');});
+  go(VILLA_VIEWPOINTS[1]);
 };
+window.startIsolatedInterior = window.startVillaExperience;;
 
 function teleportTo(key, vp){
   try {
