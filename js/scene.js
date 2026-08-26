@@ -3482,11 +3482,27 @@ const PLOT_TYPE_TO_INTERIOR = {
   '2 Bed Flat Block (24 units)': 'apartment',
 };
 
+// THE BLACK SCREEN BUG. The room GROUP is rotated with a native Three.js
+// group.rotation.y = ry — the scene graph handles that transform correctly
+// on its own. But the CAMERA is not a child of that group; its world
+// position has to be computed by hand here, and that hand computation must
+// match the EXACT matrix Three.js's rotation.y actually applies:
+//     worldX =  lx*cos(ry) + lz*sin(ry)
+//     worldZ = -lx*sin(ry) + lz*cos(ry)
+// (Matrix4.makeRotationY — verified directly against Three's source, not
+// assumed.) The shipped version used (lx*c - lz*s, lx*s + lz*c) instead —
+// the OTHER codebase convention, used elsewhere for manually placing
+// independent objects like lamps that are never a rotated group's child. It
+// is a real, different, self-consistent formula, just the wrong one here.
+// For any villa with ry != 0 (every villa except a lucky few near zero
+// rotation) this placed the camera somewhere with no relation at all to
+// where the actual room geometry had been rotated to — floating in open
+// world, looking at nothing, which is exactly a solid-black frame.
 function _villaRoomWorldView(room, x, z, ry) {
   const [lx, ly, lz] = room.pos;
   const c = Math.cos(ry), s = Math.sin(ry);
   return {
-    pos: [x + lx * c - lz * s, ly, z + lx * s + lz * c],
+    pos: [x + lx * c + lz * s, ly, z - lx * s + lz * c],
     yaw: room.yaw + ry,
     pitch: room.pitch || 0,
   };
