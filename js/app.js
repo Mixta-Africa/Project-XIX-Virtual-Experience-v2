@@ -785,7 +785,7 @@ function showPlotPanel(plotKey) {
       ${_INTERIOR_TYPE ? `
       <div style="margin-bottom:24px;">
         <h4 style="font-size:10px; color:rgba(201,168,76,0.8); text-transform:uppercase; border-bottom:1px solid rgba(201,168,76,0.2); padding-bottom:6px; margin:0 0 12px 0;">1st-Person Walkthrough</h4>
-        <button onclick="window.openInteriorView('${_INTERIOR_TYPE}', null)" style="width:100%; background:rgba(201,168,76,0.15); border:1px solid rgba(201,168,76,0.4); border-radius:4px; padding:14px; color:#e4c878; cursor:pointer; font-size:13px; font-weight:600; letter-spacing:.04em;">
+        <button onclick="document.getElementById('xix-plot-panel')?.remove(); window.openInteriorView('${_INTERIOR_TYPE}', null)" style="width:100%; background:rgba(201,168,76,0.15); border:1px solid rgba(201,168,76,0.4); border-radius:4px; padding:14px; color:#e4c878; cursor:pointer; font-size:13px; font-weight:600; letter-spacing:.04em;">
           Step Inside — ${_ptData.title}
         </button>
       </div>` : ''}
@@ -1517,7 +1517,7 @@ function _showPropertyPanel(data, propKey) {
         <h4 style="font-size:10px; color:rgba(201,168,76,0.8); text-transform:uppercase; letter-spacing:.1em; border-bottom:1px solid rgba(201,168,76,0.2); padding-bottom:6px; margin:0 0 12px 0;">Interactive Walkthrough</h4>
         <div style="font-size:12px;color:rgba(240,236,224,0.6);margin-bottom:10px;">Experience the space in 1st-person 3D.</div>
         <div style="display:flex; flex-direction:column; gap:8px;">
-          <button onclick="window.openInteriorView('${_INTERIOR_TYPE}', null)" style="background:rgba(201,168,76,0.9); border:none; border-radius:4px; padding:14px; color:#061208; cursor:pointer; font-size:13px; font-weight:700; font-family:Inter,sans-serif; text-align:center; transition:all 0.2s; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
+          <button onclick="document.getElementById('xix-prop-panel')?.remove(); window.openInteriorView('${_INTERIOR_TYPE}', null)" style="background:rgba(201,168,76,0.9); border:none; border-radius:4px; padding:14px; color:#061208; cursor:pointer; font-size:13px; font-weight:700; font-family:Inter,sans-serif; text-align:center; transition:all 0.2s; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
             Step Inside — ${data.title}
           </button>
         </div>
