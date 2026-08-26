@@ -14,6 +14,7 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
   buildPalmInstances, tickPalms,
@@ -3448,116 +3449,98 @@ window.setHoveredPlot = function(plotKey) {
 window._xixInteriorGroup = null;
 window._xixInteriorPlotKey = null;
 
-window.triggerInteriorBuild = function(plotKey) {
-  console.info('[XIX] triggerInteriorBuild suppressed');
-  return;
-  const plot = plotRegistry.get(plotKey);
-  if (!plot) return;
+// ═══════════════════════════════════════════════════════════════════════════
+//  VILLA INTERIOR — integrated directly into this scene
+//  ───────────────────────────────────────────────────────────────────────
+//  The previous "step inside" experience ran an entirely separate, isolated
+//  Three.js scene with its own renderer and camera, and showed a hand-painted
+//  canvas standing in for the view. There was no way it could ever show the
+//  real polo field, lake, or clubhouse — they were never in that scene.
+//
+//  This version builds the room geometry from buildVillaRoomGroup()
+//  (interior.js) as a plain THREE.Group, positions and rotates it at the
+//  CLICKED villa's real plotRegistry coordinates (plot.x, plot.z, plot.ry —
+//  the exact same transform already applied to that villa's real GLB mesh),
+//  and adds it into THIS scene. The villa's own exterior shell is hidden
+//  while inside it. Everything visible through the glazing — the field, the
+//  lake, the clubhouse, the time of day, the weather — is the same estate,
+//  because it is literally the same scene, just viewed from inside a room
+//  that now stands at that villa's exact position and facing.
+//
+//  A room's local "south, facing the field" glazing therefore automatically
+//  faces whatever direction that SPECIFIC villa's front actually faces,
+//  because the room group inherits the villa's own ry — a west-column villa
+//  and a north-arc villa each get the correct view with no per-villa
+//  configuration at all.
+// ═══════════════════════════════════════════════════════════════════════════
+let _villaInterior = null;   // { plotKey, buildingType, x, z, ry, group, hidden, roomKey }
 
-  if (window._xixInteriorGroup) scene.remove(window._xixInteriorGroup);
-  // Loft units register an invisible raycast hitbox and NO villaClone, so this
-  // used to leave the real block standing and drop the shell through it.
-  window._xixInteriorHidden = [];
-  [plot.villaClone, plot.overlay && plot.overlay.userData.villaClone, plot.lod]
-    .forEach(o => { if (o && o.visible) { o.visible = false; window._xixInteriorHidden.push(o); } });
-  window._xixInteriorPlotKey = plotKey;
+// plot.type strings (as stored in plotRegistry) -> INTERIORS catalogue keys.
+const PLOT_TYPE_TO_INTERIOR = {
+  '3 BED VILLA': 'villa',
+  '2 BED LOFT TERRACE': 'loft',
+  '2 Bed Flat Block (24 units)': 'apartment',
+};
 
-  window._xixInteriorGroup = new THREE.Group();
-  window._xixInteriorGroup.position.set(plot.x, 0, plot.z);
-  window._xixInteriorGroup.rotation.y = plot.ry;
-
-  const floorMat = new THREE.MeshStandardMaterial({ color: 0xeae6dc, roughness: 0.7 }); 
-  const wallMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95 }); 
-  const glassMat = new THREE.MeshStandardMaterial({ color: 0xccddff, transparent: true, opacity: 0.25, roughness: 0.1, metalness: 0.8 });
-  const woodMat = new THREE.MeshStandardMaterial({ color: 0xb58e65, roughness: 0.5 }); 
-
-  //  LEVELS. L1 is the two-car undercroft the villa actually has. The previous
-  //  build started at L2 = 2.85 and put NOTHING beneath it, which is exactly
-  //  why the walkthrough shell hung in mid-air with a clear gap under it.
-  const L1_Y = 0.15; const L2_Y = 2.85; const L3_Y = 6.15; const CEIL_H = 3.3;
-
-  window._xixInteriorGroup.userData.levels = [
-    { n:1, y:L1_Y, eye:L1_Y+1.65, label:'Undercroft & Entry' },
-    { n:2, y:L2_Y, eye:L2_Y+1.65, label:'Living & Dining'    },
-    { n:3, y:L3_Y, eye:L3_Y+1.65, label:'Master Bedroom'     },
-  ];
-
-  // ── LEVEL 1 — on the ground ──────────────────────────────────────────────
-  const screedMat = new THREE.MeshStandardMaterial({ color: 0x9a958c, roughness: 0.92 });
-  window._xixInteriorGroup.add(box(17.5, 0.30, 14.5, screedMat, [0, L1_Y-0.15, 0], 0, false));
-  // Piloti carrying the first-floor slab. Without them the eye has nothing to
-  // explain how the upper storeys stand up, which is most of why the old build
-  // read as a naked shell rather than a house.
-  [[-6.6,-4.8],[-6.6,4.8],[6.6,-4.8],[6.6,4.8],[0,-4.8],[0,4.8]].forEach(([cx,cz]) => {
-    window._xixInteriorGroup.add(box(0.42, L2_Y-L1_Y, 0.42, wallMat, [cx,(L1_Y+L2_Y)/2,cz]));
-  });
-  window._xixInteriorGroup.add(box(16, L2_Y-L1_Y, 0.4, wallMat, [0,(L1_Y+L2_Y)/2,-6.3]));
-  window._xixInteriorGroup.add(box(0.3, L2_Y-L1_Y, 5.0, wallMat, [4.6,(L1_Y+L2_Y)/2,-3.6]));
-  for (let i = 0; i < 4; i++)
-    window._xixInteriorGroup.add(box(3.2, 0.18, 0.34, screedMat, [4.0, L1_Y+0.09+i*0.18, 5.4-i*0.34], 0, false));
-  const bayMat = new THREE.MeshStandardMaterial({ color: 0xd8d4cc, roughness: 0.95 });
-  [-3.4,-0.2].forEach(bx => window._xixInteriorGroup.add(box(0.08,0.02,5.0,bayMat,[bx,L1_Y+0.02,1.2],0,false)));
-
-  // ── LEVEL 2 ──────────────────────────────────────────────────────────────
-  window._xixInteriorGroup.add(box(16, 0.2, 13, floorMat, [0, L2_Y, 0], 0, false)); 
-  window._xixInteriorGroup.add(box(16, CEIL_H, 0.4, wallMat, [0, L2_Y + (CEIL_H/2), -6.3])); 
-  window._xixInteriorGroup.add(box(0.4, CEIL_H, 13, wallMat, [-7.8, L2_Y + (CEIL_H/2), 0])); 
-  window._xixInteriorGroup.add(box(0.4, CEIL_H, 13, wallMat, [7.8, L2_Y + (CEIL_H/2), 0]));  
-  window._xixInteriorGroup.add(box(6, CEIL_H, 0.3, wallMat, [-3, L2_Y + (CEIL_H/2), -2]));
-  window._xixInteriorGroup.add(box(3.5, 0.9, 1.2, new THREE.MeshStandardMaterial({color: 0x222222}), [-4, L2_Y + 0.45, -2])); 
-  window._xixInteriorGroup.add(box(15.2, CEIL_H, 0.1, glassMat, [0, L2_Y + (CEIL_H/2), 6.3]));
-  window._xixInteriorGroup.add(box(15.2, 1.1, 0.05, glassMat, [0, L2_Y + 0.55, 7.5])); 
-  
-  const steps = 20; const stepH = (L3_Y - L2_Y) / steps; const stepD = 0.28; 
-  for (let i = 0; i < steps; i++) {
-    window._xixInteriorGroup.add(box(1.5, stepH, stepD, woodMat, [6, L2_Y + (i * stepH) + (stepH/2), -2 + (i * stepD)], 0, false));
-  }
-
-  window._xixInteriorGroup.add(box(12.5, 0.2, 13, floorMat, [-1.75, L3_Y, 0], 0, false)); 
-  window._xixInteriorGroup.add(box(3.5, 0.2, 7.4, floorMat, [6.25, L3_Y, 2.8], 0, false)); 
-  window._xixInteriorGroup.add(box(16, CEIL_H, 0.4, wallMat, [0, L3_Y + (CEIL_H/2), -6.3])); 
-  window._xixInteriorGroup.add(box(0.4, CEIL_H, 13, wallMat, [-7.8, L3_Y + (CEIL_H/2), 0])); 
-  window._xixInteriorGroup.add(box(0.4, CEIL_H, 13, wallMat, [7.8, L3_Y + (CEIL_H/2), 0]));  
-  window._xixInteriorGroup.add(box(8, CEIL_H, 0.2, wallMat, [-3.8, L3_Y + (CEIL_H/2), 0])); 
-  window._xixInteriorGroup.add(box(0.2, CEIL_H, 6.3, wallMat, [0.2, L3_Y + (CEIL_H/2), 3.15])); 
-  window._xixInteriorGroup.add(box(2.2, 0.6, 2.4, new THREE.MeshStandardMaterial({color: 0x99aaff}), [-4, L3_Y + 0.3, 2]));
-  window._xixInteriorGroup.add(box(15.2, CEIL_H, 0.1, glassMat, [0, L3_Y + (CEIL_H/2), 6.3]));
-  window._xixInteriorGroup.add(box(15.2, 1.1, 0.05, glassMat, [0, L3_Y + 0.55, 7.5])); 
-
-  // Roof slab. Without one the top storey is open to the sky and the whole
-  // thing reads as a section drawing rather than a building.
-  window._xixInteriorGroup.add(box(16.4, 0.24, 13.4, floorMat, [0, L3_Y+CEIL_H, 0], 0, false));
-
-  scene.add(window._xixInteriorGroup);
-
-  const camLocalZ = 2.0;
-  window._xixInteriorAnchor = {
-    x: plot.x + Math.sin(plot.ry) * camLocalZ,
-    z: plot.z + Math.cos(plot.ry) * camLocalZ,
-    ry: plot.ry, levels: window._xixInteriorGroup.userData.levels,
+function _villaRoomWorldView(room, x, z, ry) {
+  const [lx, ly, lz] = room.pos;
+  const c = Math.cos(ry), s = Math.sin(ry);
+  return {
+    pos: [x + lx * c - lz * s, ly, z + lx * s + lz * c],
+    yaw: room.yaw + ry,
+    pitch: room.pitch || 0,
   };
-  if (typeof window.setMoveMode === 'function') window.setMoveMode('walk');
-  window.setInteriorLevel(2);
-};
+}
 
-// Single entry point for floor navigation. app.js used to inline the eye
-// heights in two click handlers; owning them here means the geometry and the
-// camera can only ever be edited together.
-window.setInteriorLevel = function(n) {
-  const a = window._xixInteriorAnchor; if (!a) return null;
-  const lv = a.levels.find(l => l.n === n) || a.levels[1];
-  if (typeof setView === 'function') setView([a.x, lv.eye, a.z], a.ry, 0);
-  window._xixInteriorLevel = lv.n;
-  return lv;
-};
+export function enterVillaInterior(plotKey, roomKey) {
+  const plot = plotRegistry.get(plotKey);
+  if (!plot) return null;
+  const buildingType = PLOT_TYPE_TO_INTERIOR[plot.type];
+  if (!buildingType || !INTERIORS[buildingType]) return null;
 
-window.destroyInteriorBuild = function() {
-  if (window._xixInteriorGroup) {
-    scene.remove(window._xixInteriorGroup);
-    window._xixInteriorGroup = null;
-  }
-  (window._xixInteriorHidden || []).forEach(o => { o.visible = true; });
-  window._xixInteriorHidden = [];
-  window._xixInteriorAnchor = null;
-  window._xixInteriorPlotKey = null;
-};
+  exitVillaInterior();   // in case one was already open somewhere
+
+  // Hide the real exterior — same three possible homes for the mesh the
+  // suppressed version of this code already had to account for (loft units
+  // register an invisible raycast hitbox and no villaClone, so all three
+  // must be checked or the real block is left standing through the room).
+  const hidden = [];
+  [plot.villaClone, plot.overlay && plot.overlay.userData.villaClone, plot.lod]
+    .forEach(o => { if (o && o.visible) { o.visible = false; hidden.push(o); } });
+
+  const rooms = INTERIORS[buildingType].rooms;
+  const room = rooms.find(r => r.key === roomKey) || rooms[0];
+  const group = buildVillaRoomGroup(room);
+  group.position.set(plot.x, 0, plot.z);
+  group.rotation.y = plot.ry;
+  scene.add(group);
+
+  _villaInterior = { plotKey, buildingType, x: plot.x, z: plot.z, ry: plot.ry, group, hidden, roomKey: room.key };
+
+  return { room, rooms, buildingType, buildingName: INTERIORS[buildingType].name, view: _villaRoomWorldView(room, plot.x, plot.z, plot.ry) };
+}
+
+export function teleportVillaRoom(roomKey) {
+  if (!_villaInterior) return null;
+  const rooms = INTERIORS[_villaInterior.buildingType].rooms;
+  const room = rooms.find(r => r.key === roomKey);
+  if (!room) return null;
+
+  scene.remove(_villaInterior.group);
+  const group = buildVillaRoomGroup(room);
+  group.position.set(_villaInterior.x, 0, _villaInterior.z);
+  group.rotation.y = _villaInterior.ry;
+  scene.add(group);
+
+  _villaInterior.group = group;
+  _villaInterior.roomKey = room.key;
+
+  return { room, rooms, view: _villaRoomWorldView(room, _villaInterior.x, _villaInterior.z, _villaInterior.ry) };
+}
+
+export function exitVillaInterior() {
+  if (!_villaInterior) return;
+  scene.remove(_villaInterior.group);
+  _villaInterior.hidden.forEach(o => { o.visible = true; });
+  _villaInterior = null;
+}
