@@ -666,6 +666,8 @@ function bindPlotSystem() {
   // ray — the crosshair position. Exposed on window so the frame loop, which
   // lives further down this file, can reach it without a module import cycle.
   let _lastCrosshairHover = 0;
+  const _crosshairRay = new THREE.Raycaster();
+  const _screenCentre = new THREE.Vector2(0, 0);
   window._tickCrosshairHover = function() {
     if (!document.pointerLockElement) return;
     if (!document.getElementById("world-overlay")?.classList.contains("open")) return;
@@ -676,8 +678,8 @@ function bindPlotSystem() {
     const cam = typeof getCamera === 'function' ? getCamera() : null;
     const sc  = typeof getScene  === 'function' ? getScene()  : null;
     if (!cam || !sc) return;
-    const raycaster = new THREE.Raycaster();
-    raycaster.setFromCamera(new THREE.Vector2(0, 0), cam);   // screen centre
+    const raycaster = _crosshairRay;
+    raycaster.setFromCamera(_screenCentre, cam);   // screen centre, reused each call
 
     const badgeHits = raycaster.intersectObjects(sc.children, false)
       .filter(h => h.object.userData?.isPlotBadge);
