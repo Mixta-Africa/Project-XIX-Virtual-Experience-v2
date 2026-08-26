@@ -191,7 +191,12 @@ function loadLampMeshes() {
 }
 
 let aptGLBScene = null, pendingApts = [];
-const APT_SCALE = 31.18;
+//  ZONES.flats: two 7-storey blocks share 48 x 204 m² = 9,792 m² total, so
+//  each block is 4,896 m² across 7 floors -> 699 m² footprint. New mesh
+//  W=1.8672 raw at that footprint gives 37.3m wide, matching a real block.
+//  31.18 was calibrated for the PREVIOUS mesh's raw dimensions; on this one
+//  it would produce a 58x29m block (1,701 m² footprint, 2.4x too large).
+const APT_SCALE = 19.99342;
 
 let loftGLBScene = null, pendingLofts = [];
 const LOFT_SCALE = 28.5;
@@ -237,6 +242,103 @@ export function loadHorseGLB() {
       action.play();
     }
   }, undefined, err => console.error("Horse GLB failed:", err));
+}
+
+// ── AMBIENT (NPC) HORSES ─────────────────────────────────────────────────
+//  Independent of horseGroup (the rider's mount). Each instance is its own
+//  GLTFLoader.load of horse.glb rather than a .clone() of the mount, because
+//  the mesh is skinned (has a skeleton + AnimationMixer): cloning an
+//  Object3D hierarchy duplicates the bone NODES but the SkinnedMesh's
+//  skeleton.bones array keeps pointing at the ORIGINAL bones, so every clone
+//  would animate identically to (and fight with) the source instead of
+//  moving independently. A second load is slightly heavier on first paint
+//  but is correct; the browser's HTTP cache makes repeat fetches cheap.
+const _ambientHorses = [];
+
+function _spawnAmbientHorse(bounds, startDelay) {
+  const rec = { model: null, mixer: null, pos: new THREE.Vector3(), yaw: 0,
+                target: new THREE.Vector3(), pauseT: 0, speed: 1.0 + Math.random()*0.6, bounds };
+  const pick = () => new THREE.Vector3(
+    bounds.xMin + Math.random()*(bounds.xMax-bounds.xMin), 0,
+    bounds.zMin + Math.random()*(bounds.zMax-bounds.zMin));
+  rec.pos.copy(pick()); rec.target.copy(pick());
+  _ambientHorses.push(rec);
+
+  setTimeout(() => {
+    makeDracoLoader().load('./assets/horse.glb', gltf => {
+      const model = gltf.scene;
+      model.scale.setScalar(0.022);
+      applyPS4Materials(model);
+      const bbox = new THREE.Box3().setFromObject(model);
+      if (bbox.min.y < 0) model.position.y = -bbox.min.y;
+      const group = new THREE.Group();
+      group.add(model);
+      group.position.copy(rec.pos);
+      scene.add(group);
+      rec.model = group;
+
+      const mixer = new THREE.AnimationMixer(model);
+      const rawClip = gltf.animations.find(a => /trot|walk|run/i.test(a.name)) || gltf.animations[0];
+      if (rawClip) {
+        const filteredTracks = rawClip.tracks.filter(track => {
+          const isRoot = /^(root|_rootjoint|rootnode|hips_01)/i.test(track.name.split('.')[0]);
+          return !(isRoot && (track.name.endsWith('.position') || track.name.endsWith('.quaternion')));
+        });
+        const clip = new THREE.AnimationClip(rawClip.name, rawClip.duration, filteredTracks);
+        const action = mixer.clipAction(clip);
+        action.setLoop(THREE.LoopRepeat, Infinity);
+        action.timeScale = 0.55;   // grazing pace, slower than the rider's mount
+        action.play();
+      }
+      rec.mixer = mixer;
+    }, undefined, err => console.warn('[XIX] ambient horse load failed:', err));
+  }, startDelay);
+}
+
+export function spawnAmbientHorses() {
+  // Two per zone, staggered load starts so six simultaneous GLB fetches
+  // don't compete with the villa/loft/apartment/clubhouse/stables queue.
+  const POLO_N   = { xMin: -60, xMax: 60,  zMin: -88, zMax: -76 };  // north safety zone, clear of the lake
+  const POLO_S   = { xMin: -60, xMax: 60,  zMin:  76, zMax:  90 };
+  const TRAINING = { xMin: -335, xMax: -185, zMin: -80, zMax: 5 };  // matches the 180x110 turf patch at (-260,-40)
+  const PADDOCK  = { xMin: 212, xMax: 268, zMin: -55, zMax: -5 };   // inset from the rail fence at 205-275/-60-0
+  [POLO_N, POLO_S, TRAINING, TRAINING, PADDOCK, PADDOCK].forEach((b, i) =>
+    _spawnAmbientHorse(b, 2400 + i * 350));
+}
+
+// Called every frame from tickScene — NOT from tickHorseAnim, which app.js
+// only invokes inside its 'ride'-mode branch. Ambient horses must keep
+// wandering and animating in the default 'walk' mode too, so they need a
+// tick source that runs unconditionally regardless of the player's move mode.
+export function tickAmbientHorses(delta) {
+  const REACH = 1.5;
+  _ambientHorses.forEach(h => {
+    if (h.mixer) h.mixer.update(delta);
+    if (!h.model) return;   // still loading
+    if (h.pauseT > 0) { h.pauseT -= delta; return; }   // grazing pause
+
+    const dx = h.target.x - h.pos.x, dz = h.target.z - h.pos.z;
+    const dist = Math.hypot(dx, dz);
+    if (dist < REACH) {
+      h.pauseT = 3 + Math.random() * 5;
+      h.target.set(
+        h.bounds.xMin + Math.random() * (h.bounds.xMax - h.bounds.xMin), 0,
+        h.bounds.zMin + Math.random() * (h.bounds.zMax - h.bounds.zMin));
+      if (h.mixer) h.mixer.timeScale = 0.55;   // idle/grazing pace
+      return;
+    }
+    const step = Math.min(h.speed * delta, dist);
+    h.pos.x += (dx / dist) * step;
+    h.pos.z += (dz / dist) * step;
+    const targetYaw = Math.atan2(dx, dz);
+    let yawDiff = targetYaw - h.yaw;
+    while (yawDiff > Math.PI) yawDiff -= Math.PI * 2;
+    while (yawDiff < -Math.PI) yawDiff += Math.PI * 2;
+    h.yaw += yawDiff * Math.min(delta * 3, 1);
+    h.model.position.set(h.pos.x, 0, h.pos.z);
+    h.model.rotation.y = h.yaw;
+    if (h.mixer) h.mixer.timeScale = 0.9;   // walking pace
+  });
 }
 
 export function tickHorseAnim(delta, isMoving) {
@@ -416,6 +518,33 @@ let _windGain = null, _birdsGain = null;
 let _hoovesPanner = null, _lakePanner = null, _clubPanner = null;
 let _hoovesGain = null;
 
+// Bridges the names app.js actually imports (initAudio / enableAudio /
+// updateSpatialAudio) onto the implementation below, which has been fully
+// built and correct since the very first upload but was never reachable —
+// app.js has always imported three names this file never exported.
+export function initAudio() { initAmbientAudio(); }
+
+// AudioContext starts 'suspended' until resumed from within a user gesture
+// (browser autoplay policy) — enableAudio() is called from a click handler
+// in app.js, which is exactly the right place to both create and resume it.
+export function enableAudio() {
+  initAmbientAudio();
+  if (_audioCtx && _audioCtx.state === 'suspended') _audioCtx.resume();
+}
+
+// app.js calls this every frame as updateSpatialAudio(camera.x, camera.z) —
+// two arguments, no movement flag. updateAudioForMovement needs isMoving as
+// its first argument, so movement is derived here from the position delta
+// since the previous call rather than requiring app.js to pass anything new.
+let _lastAudioX = null, _lastAudioZ = null;
+export function updateSpatialAudio(worldX, worldZ) {
+  const isMoving = _lastAudioX !== null &&
+    (Math.abs(worldX - _lastAudioX) > 0.01 || Math.abs(worldZ - _lastAudioZ) > 0.01);
+  _lastAudioX = worldX; _lastAudioZ = worldZ;
+  updateAudioForMovement(isMoving, worldX, worldZ);
+  _tickAmbientNeighs(worldX, worldZ);
+}
+
 export function initAmbientAudio() {
   if (_audioCtx) return;
   try {
@@ -524,6 +653,60 @@ function _makeBirds() {
   }
   setTimeout(chirp, 800);
   return gain;
+}
+
+// Frequency-swept noise burst approximating a whinny: a fast upward pitch
+// sweep (the initial cry) followed by a fluttering amplitude-modulated tail
+// (the vocal-fold flutter of a real neigh). No sample library is available,
+// so this is synthesis, not playback — it reads as "a horse" at ambient
+// volume and distance without pretending to be a studio recording.
+function _makeNeighAt(x, z) {
+  if (!_audioCtx) return;
+  const panner = _createPanner(x, z, 15, 90);
+  panner.connect(_audioCtx.destination);
+  const t0 = _audioCtx.currentTime;
+
+  const osc = _audioCtx.createOscillator();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(340, t0);
+  osc.frequency.exponentialRampToValueAtTime(620, t0 + 0.12);
+  osc.frequency.exponentialRampToValueAtTime(260, t0 + 0.55);
+
+  const flutter = _audioCtx.createOscillator();
+  flutter.frequency.value = 24;
+  const flutterGain = _audioCtx.createGain();
+  flutterGain.gain.value = 60;
+  flutter.connect(flutterGain); flutterGain.connect(osc.frequency);
+
+  const filt = _audioCtx.createBiquadFilter();
+  filt.type = 'bandpass'; filt.frequency.value = 900; filt.Q.value = 0.8;
+
+  const g = _audioCtx.createGain();
+  g.gain.setValueAtTime(0, t0);
+  g.gain.linearRampToValueAtTime(0.05, t0 + 0.05);
+  g.gain.linearRampToValueAtTime(0.035, t0 + 0.3);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.7);
+
+  osc.connect(filt); filt.connect(g); g.connect(panner);
+  osc.start(t0); flutter.start(t0);
+  osc.stop(t0 + 0.75); flutter.stop(t0 + 0.75);
+  setTimeout(() => panner.disconnect(), 900);
+}
+
+let _lastNeigh = 0;
+function _tickAmbientNeighs(listenerX, listenerZ) {
+  if (!_audioCtx) return;
+  const now = performance.now();
+  if (now - _lastNeigh < 6000) return;   // never more than one every 6s
+  // Only from horses within ~90m, and only occasionally (updateSpatialAudio
+  // fires roughly every frame, so this gate is what keeps it from becoming a
+  // dice roll every 16ms) so it reads as an occasional ambient event.
+  if (Math.random() > 0.004) return;
+  for (const h of _ambientHorses) {
+    if (!h.model) continue;
+    const d = Math.hypot(h.pos.x - listenerX, h.pos.z - listenerZ);
+    if (d < 90) { _makeNeighAt(h.pos.x, h.pos.z); _lastNeigh = now; break; }
+  }
 }
 
 function _makeHooves() {
@@ -1126,6 +1309,7 @@ export function initScene(canvas) {
     setTimeout(() => { loadClubhouseGLB(); }, 1200);
     setTimeout(() => { loadStablesGLB(); }, 1600);
     setTimeout(() => { loadHorseGLB(); }, 2000);
+    spawnAmbientHorses();   // decorative horses on the polo field, training field, paddock
     
     addPaddock();
     addGamePark();
@@ -2511,7 +2695,7 @@ function loadApartmentGLB(){
     gltf.scene.position.y=bbox.min.y<0?-bbox.min.y:0;
     const wrapper=new THREE.Group(); wrapper.add(gltf.scene); aptGLBScene=wrapper;
     const q=[...pendingApts]; pendingApts=[];
-    q.forEach(({x,z,ry})=>placeAptGLB(x,z,ry));
+    q.forEach(({x,z,ry,plotKey})=>placeAptGLB(x,z,ry,plotKey));
   },null,err=>{
     console.warn('[XIX] apartment-mesh.glb failed:', err);
     const q=[...pendingApts]; pendingApts=[];
@@ -2531,9 +2715,16 @@ function loadLoftGLB(){
   },null,err=>{pendingLofts.forEach(({x,z,ry})=>scene.add(_createLoftBlock(x,z,ry)));pendingLofts=[];});
 }
 
-function placeAptGLB(x,z,ry=0){
-  if(!aptGLBScene){pendingApts.push({x,z,ry});return;}
+function placeAptGLB(x,z,ry=0,plotKey=null){
+  if(!aptGLBScene){pendingApts.push({x,z,ry,plotKey});return;}
   const clone=aptGLBScene.clone(true); clone.position.set(x,0,z); clone.rotation.y=ry; scene.add(clone);
+  // These two instances previously got no overlay and no plotKey at all —
+  // the actual placed buildings were invisible to getPlotAtRay, so hover
+  // and click never worked no matter where the crosshair or cursor sat.
+  // addPlotOverlay is the same call villas and lofts already use; only the
+  // footprint size changes, since a 37x19m block needs a much larger
+  // hit-plane than a single villa's 20x18.
+  if (plotKey) addPlotOverlayCustom(x, z, ry, plotKey, clone, 40, 22);
 }
 function placeLoftGLB(x,z,ry,plotKey){
   ry=ry||0; if(!loftGLBScene){pendingLofts.push({x,z,ry,plotKey});return;}
@@ -2543,12 +2734,17 @@ function placeLoftGLB(x,z,ry,plotKey){
 
 // ─── PLOT OVERLAY ─────────────────────────────────────────────────────────────
 function addPlotOverlay(x,z,ry,plotKey,villaClone){
+  addPlotOverlayCustom(x, z, ry, plotKey, villaClone, 20, 18);
+}
+// Same registration, sizeable footprint — apartment blocks need a much
+// larger hit-plane (37x19m) than a single villa's 20x18m default above.
+function addPlotOverlayCustom(x,z,ry,plotKey,villaClone,w,d){
   const mat=MATS.plotAvail();
-  const overlay=new THREE.Mesh(new THREE.PlaneGeometry(20,18),mat);
+  const overlay=new THREE.Mesh(new THREE.PlaneGeometry(w,d),mat);
   overlay.rotation.x=-Math.PI/2; overlay.position.set(x,.25,z);
   overlay.userData.plotKey=plotKey; overlay.userData.isPlotOverlay=true; overlay.userData.villaClone=villaClone;
   scene.add(overlay);
-  
+
   const existingData = plotRegistry.get(plotKey) || {};
   plotRegistry.set(plotKey, { ...existingData, status: "available", overlay, villaClone, x, z, ry });
 }
@@ -2809,8 +3005,8 @@ function addWestCompound() {
   s(plane(120, 185, MATS.safetyBrown(), [-320, .06, 0])); 
   // West compound grass — ground shader handles laterite/grass boundary
   
-  placeAptGLB(-245, -45, Math.PI / 2); 
-  placeAptGLB(-245, 45, Math.PI / 2);
+  placeAptGLB(-245, -45, Math.PI / 2, 'APT-BLOCK-1');
+  placeAptGLB(-245, 45,  Math.PI / 2, 'APT-BLOCK-2');
 
   for (let i = 0; i < 24; i++) {
     const key = String(window._nextUnitId++);
@@ -2821,6 +3017,13 @@ function addWestCompound() {
     const key = String(window._nextUnitId++);
     plotRegistry.set(key, { status: 'available', type: '2 BED FLAT', x: -245, z: 0, isApt: true });
   }
+  // APT-BLOCK-1/2 are populated by addPlotOverlayCustom once placeAptGLB
+  // resolves; pre-seed the type here so a hover before the GLB loads still
+  // shows sensible text instead of undefined.
+  ['APT-BLOCK-1', 'APT-BLOCK-2'].forEach(k => {
+    const existing = plotRegistry.get(k) || {};
+    plotRegistry.set(k, { ...existing, type: '2 Bed Flat Block (24 units)' });
+  });
   
   for (let i = 0; i < 12; i++) {
     const key = String(window._nextUnitId++);
@@ -2927,6 +3130,7 @@ export function tickScene(elapsed, camera) {
   if (camera && !camera.layers.isEnabled(HOTSPOT_LAYER)) camera.layers.enable(HOTSPOT_LAYER);
   tickLampPool(camera);
   tickPlotHighlights(_dt, elapsed);
+  tickAmbientHorses(_dt);
 
   // ── a. GLASS SUN GLINT — update emissiveIntensity on glass panels ──────────
   // Every 20 frames — cheap traverse, avoids full scene walk every frame
