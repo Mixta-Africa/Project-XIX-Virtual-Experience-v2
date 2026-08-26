@@ -3079,9 +3079,15 @@ function addLoftTerraces(){
   [-75, -45, -15].forEach(z => { placeLoftBlock(-200, z, 0); });
   [15, 45, 75, 105].forEach(z => { placeLoftBlock(-200, z, 0); });
 
-  // Fills the gap between the north row's east end (~z=-175) and the
-  // paddock's north edge (z=-60) — "east-central," not further east.
-  [-155, -135, -115, -95, -75].forEach(z => { placeLoftBlock(165, z, 0); });
+  //  x=165 collided with the east villa column at (162, -75) — only 3m of
+  //  separation against a 12m villa radius, hence "intersecting with the
+  //  villas." Realigned to x=275, matching the north row's own last block
+  //  (the loop above stops at x=275, since 95+36*5=275 and the next step,
+  //  311, exceeds the 310 cap) — this is the exact "last loft terrace on
+  //  the north-east corner" the alignment was asked for. z stays entirely
+  //  north of the paddock (zMin=-60) and clear of every villa z (-75 is the
+  //  nearest, and this range stops at -85), so neither collision can recur.
+  [-165, -145, -125, -105, -85].forEach(z => { placeLoftBlock(275, z, 0); });
 }
 
 function addWestCompound() {
