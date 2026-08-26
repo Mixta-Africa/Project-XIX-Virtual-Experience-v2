@@ -2762,6 +2762,9 @@ let _tickFrame=0;
 let _prevElapsed=0;
 
 let _lastTickT = 0;
+export function setTargetYaw(yaw) {
+  if(typeof window._xixSetTargetYaw==='function')window._xixSetTargetYaw(yaw);
+}
 export function tickScene(elapsed, camera) {
   _tickFrame++;
   const _dt = Math.min(Math.max(elapsed - _lastTickT, 0), 0.05); _lastTickT = elapsed;
@@ -2932,6 +2935,8 @@ window._xixInteriorGroup = null;
 window._xixInteriorPlotKey = null;
 
 window.triggerInteriorBuild = function(plotKey) {
+  console.info('[XIX] triggerInteriorBuild suppressed');
+  return;
   const plot = plotRegistry.get(plotKey);
   if (!plot) return;
 
