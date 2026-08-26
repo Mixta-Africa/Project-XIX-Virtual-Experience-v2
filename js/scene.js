@@ -83,7 +83,9 @@ window.addEventListener('keydown', e => {
 export function loadHorseGLB() {
   makeDracoLoader().load("./assets/horse.glb", gltf => {
     const model = gltf.scene;
-    model.scale.setScalar(0.022);
+    // NEW MESH is in metres not millimetres — scale derived from GFA:
+    // 330 m² ÷ 3 floors = 110 m² footprint, W=2.000 raw → 11.4 m world
+    model.scale.setScalar(5.71853);
     applyPS4Materials(model);
     const bbox = new THREE.Box3().setFromObject(model);
     if (bbox.min.y < 0) model.position.y = -bbox.min.y;
@@ -153,7 +155,8 @@ const NPC_PATHS = [
 function spawnNPCHorse(pathIndex) {
   makeDracoLoader().load("./assets/horse.glb", gltf => {
     const model = gltf.scene;
-    model.scale.setScalar(0.020); 
+    // NEW MESH in metres: 125 m² ÷ 2 floors = 62 m² footprint, W=1.902 raw → 9.1 m world
+    model.scale.setScalar(4.79208);
     applyPS4Materials(model);
     const bbox = new THREE.Box3().setFromObject(model);
     if (bbox.min.y < 0) model.position.y = -bbox.min.y;
@@ -2363,7 +2366,8 @@ function loadStablesGLB() {
 
 function loadVillaGLB(){
   makeDracoLoader().load("assets/villa-mesh.glb", gltf => {
-    gltf.scene.scale.setScalar(VILLA_SCALE);
+    // GFA 330m² ÷ 3 floors → 11.4m wide at scale 5.71853
+    gltf.scene.scale.setScalar(5.71853);
     // villa-mesh.glb ships with baked PBR maps (albedo / normal / metal-rough)
     // generated from its own atlas, so applyPS4Materials must NOT overwrite them
     // with procedural substitutes. It only tunes envMap and shadow flags here.
@@ -2426,7 +2430,8 @@ function loadApartmentGLB(){
 
 function loadLoftGLB(){
   makeDracoLoader().load("assets/loft-mesh.glb",gltf=>{
-    gltf.scene.scale.setScalar(LOFT_SCALE);
+    // GFA 125m² ÷ 2 floors → 9.1m wide at scale 4.79208
+    gltf.scene.scale.setScalar(4.79208);
     applyPS4Materials(gltf.scene);
     const bbox=new THREE.Box3().setFromObject(gltf.scene);
     gltf.scene.position.y=bbox.min.y<0?-bbox.min.y:0;
