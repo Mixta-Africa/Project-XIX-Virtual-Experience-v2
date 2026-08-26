@@ -19,6 +19,7 @@ import {
   RIDER_EYE_HEIGHT, FOOT_EYE_HEIGHT, tickHorse, tickHorseAnim,
   setHorsePosition, getThirdPersonCameraOffset, setAerialMode,
   getSunLight, getHorseGroup, updateNightLights, updateBuildingNightGlow,
+  enterVillaInterior, teleportVillaRoom, exitVillaInterior,
 } from "./scene.js";
 import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js";
 import {
@@ -35,6 +36,83 @@ import {
 } from "./ui.js";
 
 window.plotRegistry = plotRegistry;
+
+function _findAnyVillaPlotKey() {
+  for (const [key, plot] of plotRegistry) if (plot.type === '3 BED VILLA') return key;
+  return null;
+}
+const _INTERIOR_TYPE_TO_PLOT_TYPE = {
+  villa: '3 BED VILLA', loft: '2 BED LOFT TERRACE', apartment: '2 Bed Flat Block (24 units)',
+};
+window._xixFindAnyPlot = function(interiorType) {
+  const wantType = _INTERIOR_TYPE_TO_PLOT_TYPE[interiorType];
+  if (!wantType) return null;
+  for (const [key, plot] of plotRegistry) if (plot.type === wantType) return key;
+  return null;
+};
+
+function _buildInteriorRoomStrip(rooms, activeKey) {
+  const strip = document.getElementById('int-room-strip');
+  if (!strip) return;
+  strip.innerHTML = '';
+  rooms.forEach(room => {
+    const btn = document.createElement('button');
+    btn.className = 'int-room-btn' + (room.key === activeKey ? ' active' : '');
+    btn.dataset.key = room.key;
+    btn.innerHTML = `<span class="irb-label">${room.label}</span><span class="irb-sub">${room.sublabel}</span>`;
+    btn.addEventListener('click', () => {
+      const result = teleportVillaRoom(room.key);
+      if (!result) return;
+      setView(result.view.pos, result.view.yaw, result.view.pitch);
+      strip.querySelectorAll('.int-room-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const overlay = document.getElementById('interior-overlay');
+      overlay?.querySelector('.int-room-label')?.replaceChildren(document.createTextNode(result.room.label));
+      overlay?.querySelector('.int-room-hint')?.replaceChildren(document.createTextNode(result.room.hint || result.room.sublabel));
+    });
+    strip.appendChild(btn);
+  });
+}
+
+// The one real entry point for every "Step Inside" / "Walk through" button.
+// plotKey is optional — omit it (or pass one that isn't a real villa) to get
+// a representative real villa instead, for entry points that were never
+// tied to a specific building (the marketing page, the toolbar zone panel).
+// plotKey may be a villa, loft, or apartment plot — enterVillaInterior derives
+// the correct room catalogue from that plot's real registered type. Falls
+// back to a representative real villa only if no plotKey (or an invalid one)
+// was given at all, which previously silently discarded any loft/apartment
+// key passed in and always opened a villa regardless — a real bug fixed here
+// alongside the wider integration.
+window.stepInsideVilla = function(plotKey) {
+  let key = (plotKey && plotRegistry.get(plotKey)) ? plotKey : null;
+  if (!key) key = _findAnyVillaPlotKey();
+  if (!key) { console.warn('[XIX] stepInsideVilla: no plot available'); return; }
+
+  const result = enterVillaInterior(key, null);
+  if (!result) return;
+
+  if (typeof setMoveMode === 'function') setMoveMode('walk');
+  setView(result.view.pos, result.view.yaw, result.view.pitch);
+
+  const overlay = document.getElementById('interior-overlay');
+  overlay?.querySelector('.int-building-name')?.replaceChildren(document.createTextNode(result.buildingName));
+  overlay?.querySelector('.int-room-label')?.replaceChildren(document.createTextNode(result.room.label));
+  overlay?.querySelector('.int-room-hint')?.replaceChildren(document.createTextNode(result.room.hint || result.room.sublabel));
+  _buildInteriorRoomStrip(result.rooms, result.room.key);
+
+  overlay?.classList.add('open');
+  document.body.classList.add('interior-open');
+  if (typeof activate === 'function') activate();
+};
+
+window.exitVillaWalkthrough = function() {
+  exitVillaInterior();
+  document.getElementById('interior-overlay')?.classList.remove('open');
+  document.body.classList.remove('interior-open');
+  if (typeof setMoveMode === 'function') setMoveMode('ride');
+};
+document.getElementById('int-exit-btn')?.addEventListener('click', () => window.exitVillaWalkthrough());
 
 // ── setCaption filter — must come after imports so _setCaption_raw is resolved ──
 // Suppresses stale captions from data.js (e.g. "Drag right to look")
@@ -785,7 +863,7 @@ function showPlotPanel(plotKey) {
       ${_INTERIOR_TYPE ? `
       <div style="margin-bottom:24px;">
         <h4 style="font-size:10px; color:rgba(201,168,76,0.8); text-transform:uppercase; border-bottom:1px solid rgba(201,168,76,0.2); padding-bottom:6px; margin:0 0 12px 0;">1st-Person Walkthrough</h4>
-        <button onclick="document.getElementById('xix-plot-panel')?.remove(); window.openInteriorView('${_INTERIOR_TYPE}', null)" style="width:100%; background:rgba(201,168,76,0.15); border:1px solid rgba(201,168,76,0.4); border-radius:4px; padding:14px; color:#e4c878; cursor:pointer; font-size:13px; font-weight:600; letter-spacing:.04em;">
+        <button onclick="document.getElementById('xix-plot-panel')?.remove(); window.stepInsideVilla('${plotKey}')" style="width:100%; background:rgba(201,168,76,0.15); border:1px solid rgba(201,168,76,0.4); border-radius:4px; padding:14px; color:#e4c878; cursor:pointer; font-size:13px; font-weight:600; letter-spacing:.04em;">
           Step Inside — ${_ptData.title}
         </button>
       </div>` : ''}
@@ -1517,7 +1595,7 @@ function _showPropertyPanel(data, propKey) {
         <h4 style="font-size:10px; color:rgba(201,168,76,0.8); text-transform:uppercase; letter-spacing:.1em; border-bottom:1px solid rgba(201,168,76,0.2); padding-bottom:6px; margin:0 0 12px 0;">Interactive Walkthrough</h4>
         <div style="font-size:12px;color:rgba(240,236,224,0.6);margin-bottom:10px;">Experience the space in 1st-person 3D.</div>
         <div style="display:flex; flex-direction:column; gap:8px;">
-          <button onclick="document.getElementById('xix-prop-panel')?.remove(); window.openInteriorView('${_INTERIOR_TYPE}', null)" style="background:rgba(201,168,76,0.9); border:none; border-radius:4px; padding:14px; color:#061208; cursor:pointer; font-size:13px; font-weight:700; font-family:Inter,sans-serif; text-align:center; transition:all 0.2s; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
+          <button onclick="document.getElementById('xix-prop-panel')?.remove(); window.stepInsideVilla(window._xixFindAnyPlot ? window._xixFindAnyPlot('${_INTERIOR_TYPE}') : null)" style="background:rgba(201,168,76,0.9); border:none; border-radius:4px; padding:14px; color:#061208; cursor:pointer; font-size:13px; font-weight:700; font-family:Inter,sans-serif; text-align:center; transition:all 0.2s; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
             Step Inside — ${data.title}
           </button>
         </div>
@@ -1670,7 +1748,7 @@ window.openGallery = function(kind, plotKey) {
 
 // ─── SPAWN-ON-DEMAND INTERIOR TRIGGER ────────────────────────────────────────
 // ─── VILLA EXPERIENCE (replaces the fake interior shell) ─────────────────────
-// Interior walkthrough uses window.openInteriorView() (interior.js), not this file.
+// Interior walkthrough: window.stepInsideVilla() below, built into the main scene.
 
 function teleportTo(key, vp){
   try {
@@ -1837,6 +1915,24 @@ function closeWorld(){
 }
 
 //           RENDER LOOP
+// Exposed so index.html's interior-walkthrough module can pause the entire
+// estate render loop while the interior overlay is open. Confirmed nothing
+// currently stops it — the estate keeps rendering fully hidden behind any overlay.
+// full estate (43 villas, shadows, GTAO, ambient horses, hologram fades) was
+// rendering every frame, completely hidden, fighting the lightweight
+// interior scene for the same GPU the whole time someone was "inside" a
+// villa. That is the actual reason movement felt heavy — the interior's own
+// code is lean; it just never got the GPU to itself.
+// The real system never needs a second scene, so it never needs to pause
+// the main one — this stays exported only in case something else relies on
+// it, but villa walkthroughs no longer call it.
+window.pauseMainRenderLoop = function() {
+  if (animFrameId) { cancelAnimationFrame(animFrameId); animFrameId = null; }
+};
+window.resumeMainRenderLoop = function() {
+  if (!animFrameId) startRenderLoop();
+};
+
 function startRenderLoop(){
   if(animFrameId) cancelAnimationFrame(animFrameId);
   const clock=getClock();
@@ -1956,7 +2052,7 @@ function bindVillaInteriorBtn(){
     const cardType=card?.querySelector(".residence-card-type")?.textContent?.trim();
     const interiorType=cardType && RESIDENCE_CARD_INTERIOR[cardType];
     if(enterBtn&&interiorType){
-      if(window.openInteriorView) window.openInteriorView(interiorType, null);
+      window.stepInsideVilla(window._xixFindAnyPlot ? window._xixFindAnyPlot(interiorType) : null);
       return;
     }
     // .plan-tab / .plan-room: the static Floor Plans panel already present
@@ -1975,12 +2071,17 @@ function bindVillaInteriorBtn(){
     if(room?.dataset.key){
       document.querySelectorAll(".plan-room").forEach(r=>r.classList.remove("active"));
       room.classList.add("active");
-      if(window.openInteriorView) window.openInteriorView('villa', room.dataset.key);
+      // Already inside the real system (this panel only ever shows villa
+      // rooms) — just switch rooms within the current session, or start
+      // one at a representative villa if none is open yet.
+      const r = teleportVillaRoom(room.dataset.key);
+      if (r) { setView(r.view.pos, r.view.yaw, r.view.pitch); }
+      else { window.stepInsideVilla(); }
     }
   });
 }
 
-// Interior walkthrough is entirely owned by window.openInteriorView (interior.js), called directly above.
+// Interior walkthrough is entirely owned by window.stepInsideVilla, defined above.
 
 // ─── SEARCHABLE PROPERTY DIRECTORY (AERIAL MODE) ──────────────────────────
 function injectPropertyDirectory() {
