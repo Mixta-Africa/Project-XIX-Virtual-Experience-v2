@@ -566,7 +566,7 @@
       <button id="int-exit-btn" class="int-exit-btn" aria-label="Exit interior view">× Exit Interior</button>
     </div>
   </div>
-  <canvas id="interior-canvas" aria-label="Interior walkthrough view"></canvas>
+  <!-- interior-canvas removed: the main world-canvas is used directly now -->
   <div class="int-crosshair" aria-hidden="true"></div>
   <div class="int-room-strip" id="int-room-strip"></div>
   <div class="int-controls-hint" aria-hidden="true">Click to look · WASD to walk · ESC to exit</div>
@@ -626,44 +626,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
 <script type="module" src="js/app.js?v=29"></script>
 
-<script type="module">
-import { initInterior, openInterior, closeInterior, resizeInterior, getInteriorRooms, INTERIORS } from "./js/interior.js";
-const intCanvas = document.getElementById("interior-canvas");
-initInterior(intCanvas);
-window.openInteriorView = function(buildingType, roomKey) {
-  const overlay = document.getElementById("interior-overlay");
-  const bld = INTERIORS[buildingType]; if (!bld) return;
-  overlay.querySelector(".int-building-name").textContent = bld.name;
-  const strip = document.getElementById("int-room-strip"); strip.innerHTML = "";
-  bld.rooms.forEach(room => {
-    const btn = document.createElement("button");
-    btn.className = "int-room-btn"; btn.dataset.key = room.key;
-    btn.innerHTML = `<span class="irb-label">${room.label}</span><span class="irb-sub">${room.sublabel}</span>`;
-    btn.addEventListener("click", () => {
-      document.querySelectorAll(".int-room-btn").forEach(b=>b.classList.remove("active"));
-      btn.classList.add("active");
-      overlay.querySelector(".int-room-label").textContent = room.label;
-      overlay.querySelector(".int-room-hint").textContent  = room.hint||room.sublabel;
-      openInterior(buildingType, room.key);
-    });
-    strip.appendChild(btn);
-  });
-  strip.querySelector(".int-room-btn")?.classList.add("active");
-  const firstRoom = bld.rooms[0];
-  overlay.querySelector(".int-room-label").textContent = firstRoom.label;
-  overlay.querySelector(".int-room-hint").textContent  = firstRoom.hint||firstRoom.sublabel;
-  const W=window.innerWidth, H=window.innerHeight;
-  intCanvas.width=W; intCanvas.height=H; resizeInterior(W,H);
-  openInterior(buildingType, firstRoom.key);
-  overlay.classList.add("open"); document.body.classList.add("interior-open");
-};
-window.closeInteriorView = function() {
-  document.getElementById("interior-overlay")?.classList.remove("open");
-  document.body.classList.remove("interior-open"); closeInterior();
-};
-document.getElementById("int-exit-btn")?.addEventListener("click", ()=>window.closeInteriorView());
-window.addEventListener("resize", ()=>{ const W=window.innerWidth,H=window.innerHeight; intCanvas.width=W; intCanvas.height=H; resizeInterior(W,H); });
-</script>
+<!-- Interior walkthrough is now built directly into the main scene by app.js -->
+<!-- (window.stepInsideVilla, scene.js: enterVillaInterior/teleportVillaRoom/exitVillaInterior) -->
+<!-- interior.js is now a pure geometry factory only — no separate scene/camera/renderer. -->
 
 <script type="module">
 import { openProductPanel, closeProductPanel, resizePanelViewer } from "./js/product-panel.js";
