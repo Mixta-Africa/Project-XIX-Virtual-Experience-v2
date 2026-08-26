@@ -209,9 +209,9 @@ export function setPerfModeGraphics(mode) {
     if (mode === 'rich') {
       // New villa mesh is 157k tris vs 1.47M — GTAO costs less per pixel,
       // so we can push radius and sample count without a frame-rate cliff.
-      gtaoPass.updateGtaoMaterial({ radius: 4.5, distanceExponent: 1.8, thickness: 2.5, scale: 1.25 });
-      gtaoPass.blendIntensity = 0.92;
-      if (gtaoPass.updatePdMaterial) gtaoPass.updatePdMaterial({ lumaPhi: 20, depthPhi: 4, normalPhi: 7, radius: 8, rings: 4, samples: 32 });
+      gtaoPass.updateGtaoMaterial({ radius: 3.4, distanceExponent: 1.65, thickness: 2.0, scale: 1.15 });
+      gtaoPass.blendIntensity = 0.85;
+      if (gtaoPass.updatePdMaterial) gtaoPass.updatePdMaterial({ lumaPhi: 15, depthPhi: 3, normalPhi: 5, radius: 6, rings: 3, samples: 18 });
     } else if (mode === 'balanced') {
       gtaoPass.updateGtaoMaterial({ radius: 2.5, distanceExponent: 1.5, thickness: 1.8, scale: 1.05 });
       gtaoPass.blendIntensity = 0.70;
