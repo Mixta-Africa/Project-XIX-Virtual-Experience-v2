@@ -726,6 +726,170 @@ footer {
   display: flex;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+   INTERIOR WALKTHROUGH OVERLAY
+   ───────────────────────────────────────────────────────────────────────
+   This entire block was missing. #interior-overlay had NO display/position/
+   z-index rule anywhere in this file — as a plain <div> it defaulted to
+   position:static, display:block, no stacking context at all. Every "Step
+   Inside" / "Walk through" button was correctly calling openInteriorView(),
+   which correctly toggled the .open class and started the 3D render loop —
+   but nothing was watching that class to make the element behave like a
+   full-screen modal, so it rendered inline in normal document flow instead
+   of covering the viewport. That is why the button appeared to do nothing.
+   z-index 5500 is deliberately far above the property/plot panels (2000)
+   so this is guaranteed to sit on top even if a panel is ever left open.
+   ═══════════════════════════════════════════════════════════════════════ */
+.interior-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 5500;
+  display: none;
+  background: #0a1208;
+}
+.interior-overlay.open {
+  display: block;
+}
+
+#interior-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.int-header {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  z-index: 2;
+  height: var(--nav-h, 64px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 1.5rem;
+  background: linear-gradient(to bottom, rgba(6,18,8,0.92), rgba(6,18,8,0.55) 70%, transparent);
+  pointer-events: none;   /* let clicks pass through to the canvas beneath, except the button */
+}
+.int-header-left {
+  display: flex;
+  align-items: baseline;
+  gap: 0.7rem;
+  min-width: 0;
+}
+.int-building-name {
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--gold-300, #e4c878);
+  white-space: nowrap;
+}
+.int-room-label {
+  font-size: 0.95rem;
+  color: #f0ece0;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.int-room-hint {
+  font-size: 0.78rem;
+  color: rgba(240,236,224,0.55);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.int-header-right { pointer-events: auto; }
+.int-exit-btn {
+  pointer-events: auto;
+  cursor: pointer;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.16);
+  border-radius: 4px;
+  color: #f0ece0;
+  padding: 0.5rem 0.9rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+.int-exit-btn:hover {
+  border-color: var(--gold-500, #c9a84c);
+  color: var(--gold-300, #e4c878);
+}
+
+.int-crosshair {
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 6px; height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.7);
+  box-shadow: 0 0 4px rgba(0,0,0,0.6);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.int-room-strip {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 1rem 1.4rem;
+  padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(to top, rgba(6,18,8,0.95), rgba(6,18,8,0.65) 70%, transparent);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.int-room-strip::-webkit-scrollbar { display: none; }
+
+.int-room-btn {
+  pointer-events: auto;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  padding: 0.6rem 1rem;
+  min-height: 44px;
+  border-radius: 4px;
+  border: 1px solid rgba(201,168,76,0.18);
+  background: rgba(6,18,8,0.7);
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+.int-room-btn:hover {
+  border-color: rgba(201,168,76,0.45);
+  background: rgba(201,168,76,0.06);
+}
+.int-room-btn.active {
+  border-color: var(--gold-500, #c9a84c);
+  background: rgba(201,168,76,0.1);
+}
+.irb-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #f0ece0;
+}
+.int-room-btn.active .irb-label { color: var(--gold-300, #e4c878); }
+.irb-sub {
+  font-size: 0.68rem;
+  color: rgba(240,236,224,0.5);
+}
+
+.int-controls-hint {
+  position: absolute;
+  top: calc(var(--nav-h, 64px) + 0.6rem);
+  left: 1.5rem;
+  z-index: 2;
+  font-size: 0.75rem;
+  color: rgba(240,236,224,0.55);
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
+
 .world-topbar {
   height: var(--nav-h);
   display: flex;
