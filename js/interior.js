@@ -1,13 +1,3 @@
-/**
- * Project XIX -- Interior Walkthrough System v2
- * Built from actual architectural drawings:
- *   - 3-Bed Villa floor plans + section + elevation
- * All dimensions in metres, sourced from drawings:
- *   Level 0=0m, Level 5=2.1m (undercroft), Level 2=2.85m (GF floor),
- *   Level 3=6.15m (F1 floor), Level 4=9.45m (roof base)
- *   Floor-to-floor = 3.3m each level
- */
-
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
 
 //        ROOM CATALOGUE                                                                                                                                                                                        
@@ -15,6 +5,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
 // yaw = camera facing direction (0 = south/field, PI = north/lake)
 // pitch = camera tilt (-ve = look down, +ve = look up)
 export const INTERIORS = {
+
 
   villa: {
     name: "3-Bedroom Premium Villa",
@@ -277,449 +268,168 @@ export const INTERIORS = {
   },
 };
 
-//        INTERIOR SCENE                                                                                                                                                                                     
-let intRenderer=null, intScene=null, intCamera=null;
-let intActive=false, intYaw=0, intPitch=0, intLocked=false;
-let moveF=false,moveB=false,moveL=false,moveR=false;
-let currentRoom=null;
 
-export function initInterior(canvas) {
-  intRenderer = new THREE.WebGLRenderer({ canvas, antialias:true, alpha:true });
-  intRenderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
-  intRenderer.toneMapping = THREE.ACESFilmicToneMapping;
-  intRenderer.toneMappingExposure = 1.05;
-  intRenderer.outputColorSpace = THREE.SRGBColorSpace;
-  intRenderer.setClearColor(0x0a1208, 1);
-  intCamera = new THREE.PerspectiveCamera(75, 1, 0.02, 300);
-  intScene  = new THREE.Scene();
-  bindControls(canvas);
-}
+export function getInteriorRooms(t){return INTERIORS[t]?.rooms||[];}
 
-export function openInterior(buildingType, roomKey) {
-  const bld = INTERIORS[buildingType];
-  if (!bld) return;
-  const room = bld.rooms.find(r=>r.key===roomKey) || bld.rooms[0];
-  buildRoom(room);
-  teleport(room);
-  intActive = true;
-  intRenderer.setAnimationLoop(loop);
-}
+// ═══════════════════════════════════════════════════════════════════════════
+//  GEOMETRY FACTORY — this file no longer owns a scene, camera, renderer, or
+//  controls. It previously ran an entire second, isolated Three.js app
+//  (initInterior/openInterior/loop/bindControls) rendering a hand-painted
+//  canvas texture standing in for "the view" — which is why stepping inside
+//  a villa never showed the real polo field: the real field was never in
+//  that scene at all, nothing could be. buildVillaRoomGroup() below returns
+//  a self-contained THREE.Group of room geometry (walls, floor, ceiling,
+//  glazing, furniture, fixture lighting) with NO exterior backdrop and NO
+//  sun/hemisphere light of its own — the caller (scene.js) positions and
+//  rotates this group at a specific villa's real world coordinates and adds
+//  it directly into the estate's own scene, so whatever is visible through
+//  the glazing is the same lake, clubhouse and polo field that were always
+//  there, lit by the same sun already lighting the rest of the estate.
+// ═══════════════════════════════════════════════════════════════════════════
+export function buildVillaRoomGroup(room) {
+  const group = new THREE.Group();
+  group.name = `villaRoom_${room.key}`;
 
-export function closeInterior() {
-  intActive = false;
-  intRenderer.setAnimationLoop(null);
-  if (intLocked) document.exitPointerLock();
-  moveF=moveB=moveL=moveR=false;
-}
+  const { floorY, ceilH, W, D } = room;
+  const wallH = ceilH - floorY;
+  const halfW = W / 2, halfD = D / 2;
 
-function teleport(room) {
-  currentRoom = room;
-  intCamera.position.set(...room.pos);
-  intCamera.fov = room.fov || 75;
-  intCamera.updateProjectionMatrix();
-  intYaw   = room.yaw || 0;
-  intPitch = room.pitch || 0;
-}
+  const add = (mesh) => { group.add(mesh); return mesh; };
+  const addIM = (w, h, d, mat, pos) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    m.position.set(...pos);
+    return add(m);
+  };
+  const addSB = (mat, x1, x2, y, z1, z2) => {
+    add(new THREE.Mesh(new THREE.BoxGeometry(x2 - x1, 0.1, 0.02), mat)).position.set((x1 + x2) / 2, y + 0.05, z1);
+    add(new THREE.Mesh(new THREE.BoxGeometry(x2 - x1, 0.1, 0.02), mat)).position.set((x1 + x2) / 2, y + 0.05, z2);
+  };
 
-//        ROOM BUILDER                                                                                                                                                                                           
-function buildRoom(room) {
-  while (intScene.children.length) intScene.remove(intScene.children[0]);
-
-  const { floorY, ceilH, W, D, windows, exterior } = room;
-  const wallH   = ceilH - floorY;
-  const floorCx = 0, floorCz = 0;
-  const halfW   = W/2, halfD = D/2;
-
-  //        MATERIALS                                                                                                                                                                                              
+  //        MATERIALS
   const M = {
     plaster:  new THREE.MeshStandardMaterial({color:0xf2efe7, roughness:.88, side:THREE.BackSide}),
     plasterF: new THREE.MeshStandardMaterial({color:0xf2efe7, roughness:.88}),
     floor:    new THREE.MeshStandardMaterial({color:0xc8b898, roughness:.35, metalness:.06}),
     ceil:     new THREE.MeshStandardMaterial({color:0xe8e5de, roughness:.9, side:THREE.BackSide}),
     timber:   new THREE.MeshStandardMaterial({color:0x8a6a3a, roughness:.65}),
-    glass:    new THREE.MeshStandardMaterial({color:0x2a6080, roughness:.04, metalness:.25, transparent:true, opacity:.32, side:THREE.DoubleSide}),
-    glassW:   new THREE.MeshStandardMaterial({color:0x3a5870, roughness:.04, metalness:.2,  transparent:true, opacity:.28, side:THREE.DoubleSide}),
+    // Real transmission, not a painted-on tint — the whole point is that the
+    // real estate scene shows through. depthWrite:false so this can never
+    // wrongly occlude anything genuinely behind it (a bug fixed on the old
+    // system's glass, kept here since it's the same underlying pitfall).
+    glassW:   new THREE.MeshPhysicalMaterial({
+      color: 0xaecbe0, roughness: 0.05, metalness: 0.0,
+      transmission: 0.92, thickness: 0.02, ior: 1.5,
+      transparent: true, depthWrite: false, side: THREE.DoubleSide,
+    }),
     frame:    new THREE.MeshStandardMaterial({color:0x181818, roughness:.45, metalness:.65}),
     skirt:    new THREE.MeshStandardMaterial({color:0xe5e2d8, roughness:.6}),
     concrete: new THREE.MeshStandardMaterial({color:0xd5cfc5, roughness:.8}),
     rail:     new THREE.MeshStandardMaterial({color:0x1a1a1a, roughness:.4, metalness:.8, transparent:true, opacity:.7}),
-    railGlass:new THREE.MeshStandardMaterial({color:0x88aabb, roughness:.05, transparent:true, opacity:.25, side:THREE.DoubleSide}),
+    railGlass:new THREE.MeshPhysicalMaterial({color:0xaecbe0, roughness:.05, transmission:.85, thickness:.02, ior:1.5, transparent:true, depthWrite:false, side:THREE.DoubleSide}),
   };
 
-  //        FLOOR                                                                                                                                                                                                          
-  const floorG = new THREE.PlaneGeometry(W, D);
-  const floorM = new THREE.Mesh(floorG, M.floor);
-  floorM.rotation.x = -Math.PI/2; floorM.position.set(0, floorY, 0);
-  floorM.receiveShadow = true; intScene.add(floorM);
-  // Skirting board
+  //        FLOOR
+  const floorM = new THREE.Mesh(new THREE.PlaneGeometry(W, D), M.floor);
+  floorM.rotation.x = -Math.PI / 2; floorM.position.set(0, floorY, 0);
+  floorM.receiveShadow = true; add(floorM);
   addSB(M.skirt, -halfW, halfW, floorY, halfD, halfD);
 
-  //        CEILING                                                                                                                                                                                                       
-  const ceilG = new THREE.PlaneGeometry(W, D);
-  const ceilM = new THREE.Mesh(ceilG, M.ceil);
-  ceilM.rotation.x = Math.PI/2; ceilM.position.set(0, ceilH, 0);
-  intScene.add(ceilM);
-  // Timber ceiling battens
-  for (let bx=-halfW+.5; bx<=halfW-.5; bx+=.55) {
-    const btn=new THREE.Mesh(new THREE.BoxGeometry(.08,.08,D-.3),M.timber);
-    btn.position.set(bx, ceilH-.05, 0); intScene.add(btn);
+  //        CEILING
+  const ceilM = new THREE.Mesh(new THREE.PlaneGeometry(W, D), M.ceil);
+  ceilM.rotation.x = Math.PI / 2; ceilM.position.set(0, ceilH, 0);
+  add(ceilM);
+  for (let bx = -halfW + .5; bx <= halfW - .5; bx += .55) {
+    addIM(.08, .08, D - .3, M.timber, [bx, ceilH - .05, 0]);
   }
 
-  //        WALLS                                                                                                                                                                                                             
-  // Build a room box (open on field-facing side for large glazing)
-  // North wall (always solid)
-  addWall(M.plaster, 0, floorY+wallH/2, -halfD,   W, wallH, .22, 0, windows);
-  // East wall
-  addWall(M.plaster, halfW, floorY+wallH/2, 0,     .22, wallH, D,  0, windows, 'east');
-  // West wall
-  addWall(M.plaster,-halfW, floorY+wallH/2, 0,     .22, wallH, D,  0, windows, 'west');
-  // South wall (glazed / partial)
-  addSouthGlazing(M, floorY, wallH, W, halfD, windows);
+  //        WALLS — north/east/west solid, south glazed. Matches what the
+  //        original system actually built (its own addWall() never used the
+  //        windows array on those three sides either); a per-window cutout
+  //        on every wall is a bigger geometry task than this pass needs.
+  const wall = (x, y, z, w, h, d) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), M.plaster);
+    m.position.set(x, y, z); m.receiveShadow = true; add(m);
+  };
+  wall(0, floorY + wallH / 2, -halfD, W, wallH, .22);      // north
+  wall(halfW, floorY + wallH / 2, 0, .22, wallH, D);        // east
+  wall(-halfW, floorY + wallH / 2, 0, .22, wallH, D);       // west
 
-  //        FLOOR SLAB EDGE (visible from below)                                                                                                                
-  if (floorY > 0.5) {
-    const slabM = new THREE.Mesh(new THREE.BoxGeometry(W+.5, .22, D+.5), M.concrete);
-    slabM.position.set(0, floorY-.11, 0); intScene.add(slabM);
-  }
-
-  //        FURNITURE                                                                                                                                                                                                    
-  addFurniture(room, M, floorY);
-
-  //        EXTERIOR VIEW (what's visible through the glass)                                                                            
-  addExteriorView(room, M);
-
-  //        LIGHTING                                                                                                                                                                                                    
-  addInteriorLighting(room, floorY, ceilH, W);
-}
-
-function addWall(mat, x, y, z, w, h, d, ry, windows, side) {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), mat);
-  m.position.set(x, y, z); m.rotation.y=ry||0;
-  m.receiveShadow=true; intScene.add(m);
-}
-
-function addSouthGlazing(M, floorY, wallH, W, halfD, windows) {
-  // Concrete piers on edges of south face
+  // South glazing
   addIM(1.4, wallH, .22, M.plasterF, [-W/2+.7, floorY+wallH/2, halfD]);
   addIM(1.4, wallH, .22, M.plasterF, [ W/2-.7, floorY+wallH/2, halfD]);
-  // Sill
   addIM(W-3.0, .45, .28, M.concrete, [0, floorY+.22, halfD]);
-  // Glass pane
   const glassW = W - 3.2;
   addIM(glassW, wallH-.6, .06, M.glassW, [0, floorY+wallH/2+.2, halfD]);
-  // Frame lines
   addIM(glassW, .08, .08, M.frame, [0, floorY+.45, halfD]);
   addIM(glassW, .08, .08, M.frame, [0, floorY+wallH-.05, halfD]);
-  for (let mx=-glassW/2+.8; mx<=glassW/2-.8; mx+=1.55)
+  for (let mx = -glassW/2+.8; mx <= glassW/2-.8; mx += 1.55)
     addIM(.08, wallH-.6, .08, M.frame, [mx, floorY+wallH/2+.2, halfD]);
-  // Glass balustrade on balcony side (exterior)
   addIM(glassW, .9, .06, M.railGlass, [0, floorY+.5, halfD+.5]);
   addIM(glassW, .06, .06, M.rail, [0, floorY+.96, halfD+.5]);
-}
 
-function addSB(mat, x1, x2, y, z1, z2) { // skirting board
-  [[x1,z1,x2,z1],[x1,z2,x2,z2],[x1,z1,x1,z2],[x2,z1,x2,z2]].forEach(([ax,az,bx,bz])=>{
-    const len = Math.sqrt((bx-ax)**2+(bz-az)**2);
-    const m = new THREE.Mesh(new THREE.BoxGeometry(len,.1,.06), mat);
-    m.position.set((ax+bx)/2, y+.05, (az+bz)/2);
-    m.rotation.y = Math.atan2(bx-ax, bz-az);
-    intScene.add(m);
-  });
-}
-
-//        FURNITURE                                                                                                                                                                                                 
-function addFurniture(room, M, floorY) {
-  const y = floorY;
-  const sofaM  = new THREE.MeshStandardMaterial({color:0xd4c8b4,roughness:.88});
-  const tableM = new THREE.MeshStandardMaterial({color:0x3a2010,roughness:.5,metalness:.08});
-  const bedM   = new THREE.MeshStandardMaterial({color:0xeae5dc,roughness:.9});
-  const pillow = new THREE.MeshStandardMaterial({color:0xfdfcfa,roughness:.85});
-  const rugM   = new THREE.MeshStandardMaterial({color:0x9a8060,roughness:.95});
-  const plantM = new THREE.MeshStandardMaterial({color:0x2a5a18,roughness:.9});
-  const potM   = new THREE.MeshStandardMaterial({color:0x3a6048,roughness:.6,metalness:.15});
-  const tvM    = new THREE.MeshStandardMaterial({color:0x0a0a0a,roughness:.3,metalness:.7});
-
-  const k = room.key;
-
-  if (k==='living_dining' || k==='apt_living_f2' || k==='apt_living_f5') {
-    // Sofa
-    addIM(2.6,.46,1.0,sofaM,[0,y+.46, 1.2]);
-    addIM(2.6,.52,.14,sofaM,[0,y+.72,-0.4]); // back
-    for(const ax of[-1.23,1.23]) addIM(.14,.55,1.0,sofaM,[ax,y+.52,1.2]);
-    // Coffee table
-    addIM(1.2,.04,.65,tableM,[0,y+.42,2.6]);
-    for(const [tx,tz] of [[-0.5,2.4],[.5,2.4],[-0.5,2.8],[.5,2.8]])
-      addIM(.05,.42,.05,tableM,[tx,y+.21,tz]);
-    // Rug
-    const rug=new THREE.Mesh(new THREE.PlaneGeometry(3.8,2.8),rugM);
-    rug.rotation.x=-Math.PI/2; rug.position.set(0,y+.01,1.8); intScene.add(rug);
-    // TV on north wall
-    addIM(1.6,.9,.06,tvM,[0,y+1.4,-2.9]);
-    addIM(.04,.85,.04,tableM,[0,y+.42,-2.85]);
-    // Side table + plant
-    addIM(.45,.04,.45,tableM,[2.8,y+.55,-.5]);
-    const stem=new THREE.Mesh(new THREE.CylinderGeometry(.1,.14,.65,8),potM);
-    stem.position.set(2.8,y+.65,-.5); intScene.add(stem);
-    const leaf=new THREE.Mesh(new THREE.SphereGeometry(.62,8,6),plantM);
-    leaf.position.set(2.8,y+1.1,-.5); intScene.add(leaf);
-    // Dining table (villa only)
-    if (k==='living_dining') {
-      addIM(2.2,.04,1.1,tableM,[3.0,y+.76,-1.8]);
-      for(const [tx,tz] of [[2.4,-1.4],[3.6,-1.4],[2.4,-2.2],[3.6,-2.2]])
-        addIM(.05,.76,.05,tableM,[tx,y+.38,tz]);
-      // Dining chairs (simple boxes)
-      const chairM=new THREE.MeshStandardMaterial({color:0xd0c4b0,roughness:.85});
-      for(const [cx,cz,cry] of [[2.0,-1.8,Math.PI/2],[4.0,-1.8,-Math.PI/2],[3.0,-1.1,0],[3.0,-2.5,Math.PI]])
-        { addIM(.45,.45,.42,chairM,[cx,y+.45,cz]); addIM(.45,.6,.08,chairM,[cx,y+.72,cz+.21*Math.cos(cry)]); }
-    }
+  //        FLOOR SLAB EDGE (visible from below, on upper floors)
+  if (floorY > 0.5) {
+    addIM(W+.5, .22, D+.5, M.concrete, [0, floorY-.11, 0]);
   }
 
-  if (k.includes('bedroom') || k.includes('master')) {
-    const bW=1.6, bD=2.1;
-    // Bed base
-    addIM(bW,.45,bD,bedM,[0,y+.45,-.5]);
-    // Mattress
-    addIM(bW-.1,.18,bD-.1,new THREE.MeshStandardMaterial({color:0xfaf8f4,roughness:.92}),[0,y+.58,-.5]);
-    // Pillows
-    for(const px of [-.35,.35]) addIM(.55,.18,.35,pillow,[px,y+.77,-.5-bD/2+.25]);
-    // Bedside tables
-    for(const bx of [-(bW/2+.35),(bW/2+.35)]) {
-      addIM(.5,.5,.45,tableM,[bx,y+.5,-.5]);
-      // Lamp
-      addIM(.08,.35,.08,tableM,[bx,y+.85,-.3]);
-      const shade=new THREE.Mesh(new THREE.ConeGeometry(.22,.28,12),
-        new THREE.MeshStandardMaterial({color:0xfff8e8,roughness:.6,emissive:new THREE.Color(0xffe0a0),emissiveIntensity:.4}));
-      shade.position.set(bx,y+1.12,-.3); intScene.add(shade);
-    }
-    // Wardrobe
-    addIM(1.8,2.1,.55,new THREE.MeshStandardMaterial({color:0xf0ece4,roughness:.7}),[-(room.W/2)+1.2,y+1.05,room.D/2-.35]);
-    // Rug
-    const rug2=new THREE.Mesh(new THREE.PlaneGeometry(2.5,3.0),rugM);
-    rug2.rotation.x=-Math.PI/2; rug2.position.set(0,y+.01,-.3); intScene.add(rug2);
+  //        FURNITURE
+  addFurniture(add, room, M, floorY);
+
+  //        FIXTURE LIGHTING ONLY — no sun, no hemisphere. The real estate
+  //        scene already has both; adding a second sun inside the room
+  //        would double-light the space and wash out the real one visible
+  //        through the glazing. Ceiling downlights and bedside lamps are
+  //        real room fixtures, so those stay.
+  for (let dx = -W/2+1.5; dx <= W/2-1.5; dx += 1.5) {
+    const pt = new THREE.PointLight(0xfff0e0, .55, 6, 2);
+    pt.position.set(dx, ceilH-.12, 0); add(pt);
   }
-
-  if (k==='west_terrace' || k==='south_balcony' || k==='loft_terrace') {
-    // Outdoor lounge chairs
-    const wicker=new THREE.MeshStandardMaterial({color:0xd4c098,roughness:.9});
-    for(const [cx,cz] of [[-0.8,-.5],[.8,-.5]]) {
-      addIM(.7,.45,.85,wicker,[cx,y+.45,cz]);
-      addIM(.7,.55,.1,wicker,[cx,y+.72,cz-.45]);
-    }
-    // Small side table
-    addIM(.55,.04,.55,tableM,[0,y+.42,.2]);
-    // Potted plants on edges
-    for(const px of [-2,2]) {
-      const pot=new THREE.Mesh(new THREE.CylinderGeometry(.22,.18,.55,12),potM);
-      pot.position.set(px,y+.28,1.0); intScene.add(pot);
-      const pl=new THREE.Mesh(new THREE.SphereGeometry(.38,8,6),plantM);
-      pl.position.set(px,y+.72,1.0); intScene.add(pl);
-    }
-  }
-}
-
-//        EXTERIOR VIEW BACKDROP                                                                                                                                                                
-function addExteriorView(room, M) {
-  const { exterior, floorY, D } = room;
-  const dir = exterior?.direction || 'field';
-  const elev = exterior?.elevation || floorY;
-
-  const c = document.createElement('canvas'); c.width=2048; c.height=512;
-  const ctx = c.getContext('2d');
-
-  if (dir === 'none') return;
-
-  // Sky
-  const sky = ctx.createLinearGradient(0,0,0,512);
-  sky.addColorStop(0,'#1a3a6a'); sky.addColorStop(.5,'#5a9acc'); sky.addColorStop(1,'#c8d8e0');
-  ctx.fillStyle=sky; ctx.fillRect(0,0,2048,512);
-
-  if (dir === 'field') {
-    // Polo field view     green turf, brown safety zone, clubhouse silhouette
-    // Ground plane
-    const gnd = ctx.createLinearGradient(0,280,0,512);
-    gnd.addColorStop(0,'#8B4513'); gnd.addColorStop(.15,'#5a9448'); gnd.addColorStop(1,'#3a7228');
-    ctx.fillStyle=gnd; ctx.fillRect(0,280,2048,232);
-
-    // Field stripes
-    for(let i=0;i<14;i++) {
-      ctx.fillStyle = i%2===0?'#5a9448':'#4a8038';
-      ctx.fillRect(0, 310+i*8, 2048, 8);
-    }
-
-    // Tree canopy horizon
-    ctx.fillStyle='#2a5a18';
-    for(let tx=0;tx<=2048;tx+=32) {
-      const th=18+Math.sin(tx*.05)*8+Math.random()*12;
-      ctx.beginPath(); ctx.arc(tx,290,th/2,0,Math.PI*2); ctx.fill();
-    }
-
-    // Lake glint (if elevated enough to see it)
-    if (elev >= 2.85) {
-      ctx.fillStyle='rgba(40,120,180,.55)';
-      ctx.beginPath(); ctx.ellipse(1024,285,220,14,0,0,Math.PI*2); ctx.fill();
-    }
-
-    // Clubhouse silhouette (south, visible from north-facing villas)
-    ctx.fillStyle='rgba(240,235,225,.85)';
-    ctx.fillRect(850,240,320,50); ctx.fillRect(860,215,30,30); ctx.fillRect(1150,215,30,30);
-
-    // Elevation label     show perspective based on floor height
-    // Higher elevation = more downward angle on field
-    if (elev >= 6.0) {
-      // F1 view     can see further, field recedes below
-      ctx.fillStyle='rgba(200,180,150,.25)';
-      ctx.beginPath(); ctx.moveTo(0,512); ctx.lineTo(2048,512); ctx.lineTo(1800,350); ctx.lineTo(248,350); ctx.closePath(); ctx.fill();
-    }
-
-    // Sun (afternoon, south-west)
-    const sunG=ctx.createRadialGradient(1600,60,0,1600,60,55);
-    sunG.addColorStop(0,'#ffe8b0'); sunG.addColorStop(1,'rgba(255,232,176,0)');
-    ctx.fillStyle=sunG; ctx.fillRect(1545,5,110,110);
-  }
-  else if (dir === 'lake') {
-    // North-facing     lake view
-    const gnd=ctx.createLinearGradient(0,300,0,512);
-    gnd.addColorStop(0,'#2a88c0'); gnd.addColorStop(.3,'#3a8848'); gnd.addColorStop(1,'#2a6828');
-    ctx.fillStyle=gnd; ctx.fillRect(0,295,2048,217);
-    // Lake water
-    ctx.fillStyle='rgba(40,130,190,.8)';
-    ctx.beginPath(); ctx.ellipse(1024,300,700,45,0,0,Math.PI*2); ctx.fill();
-    // Ripples
-    ctx.strokeStyle='rgba(255,255,255,.2)'; ctx.lineWidth=1.5;
-    for(let i=0;i<5;i++) { ctx.beginPath(); ctx.ellipse(1024,305,500-i*50,20+i*3,0,0,Math.PI*2); ctx.stroke(); }
-    // Tree line beyond lake
-    ctx.fillStyle='#2a5a18';
-    for(let tx=0;tx<=2048;tx+=28) {
-      const th=22+Math.sin(tx*.04)*10;
-      ctx.beginPath(); ctx.arc(tx,268,th/2,0,Math.PI*2); ctx.fill();
-    }
-  }
-  else if (dir === 'road' || dir === 'garden') {
-    const gnd=ctx.createLinearGradient(0,310,0,512);
-    gnd.addColorStop(0,'#d0c8b0'); gnd.addColorStop(1,'#4a7a38');
-    ctx.fillStyle=gnd; ctx.fillRect(0,300,2048,212);
-    ctx.fillStyle='#3a7028';
-    for(let tx=0;tx<=2048;tx+=24) {
-      const th=14+Math.sin(tx*.08)*6;
-      ctx.beginPath(); ctx.arc(tx,295,th/2,0,Math.PI*2); ctx.fill();
-    }
-  }
-
-  const tex=new THREE.CanvasTexture(c); tex.colorSpace=THREE.SRGBColorSpace;
-  const bg=new THREE.Mesh(new THREE.PlaneGeometry(250,80),
-    new THREE.MeshBasicMaterial({map:tex,depthWrite:false}));
-  bg.position.set(0, floorY+3.5, D/2+80);
-  bg.renderOrder=-1; intScene.add(bg);
-}
-
-//        INTERIOR LIGHTING                                                                                                                                                                            
-function addInteriorLighting(room, floorY, ceilH, W) {
-  // Sun streaming in from south glass
-  const sun=new THREE.DirectionalLight(0xffe8b0, 4.0);
-  sun.position.set(-5, floorY+8, 30);
-  sun.castShadow=true;
-  sun.shadow.mapSize.set(1024,1024);
-  intScene.add(sun);
-
-  // Warm ambient (plaster bounces warm)
-  intScene.add(new THREE.HemisphereLight(0xfff4e8, 0x2a1808, 1.1));
-
-  // Ceiling recessed downlights (every 1.5m)
-  for(let dx=-W/2+1.5; dx<=W/2-1.5; dx+=1.5) {
-    const pt=new THREE.PointLight(0xfff0e0, .9, 6, 2);
-    pt.position.set(dx, ceilH-.12, 0); intScene.add(pt);
-  }
-  // Bedside lamps (warm glow for bedrooms)
   if (room.key.includes('bedroom') || room.key.includes('master')) {
-    for(const bx of [-.9,.9]) {
-      const lmp=new THREE.PointLight(0xffcc70, 1.2, 3.5, 2);
-      lmp.position.set(bx, floorY+1.3, -.9); intScene.add(lmp);
+    for (const bx of [-.9, .9]) {
+      const lmp = new THREE.PointLight(0xffcc70, .8, 3.5, 2);
+      lmp.position.set(bx, floorY+1.3, -.9); add(lmp);
+    }
+  }
+
+  return group;
+}
+
+function addFurniture(add, room, M, floorY) {
+  const k = room.key;
+  const y = floorY;
+  if (k==='living_dining' || k==='apt_living_f2' || k==='apt_living_f5') {
+    const rugM = new THREE.MeshStandardMaterial({color:0xb8a888, roughness:.9});
+    const rug = new THREE.Mesh(new THREE.CircleGeometry(1.6, 24), rugM);
+    rug.rotation.x = -Math.PI/2; rug.position.set(0, y+.01, 1.8); add(rug);
+
+    const potM = new THREE.MeshStandardMaterial({color:0x6a5a4a, roughness:.8});
+    const leafM = new THREE.MeshStandardMaterial({color:0x2a6828, roughness:.7});
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(.22,.28,1.1,10), potM);
+    stem.position.set(2.8, y+.65, -.5); add(stem);
+    const leaf = new THREE.Mesh(new THREE.SphereGeometry(.55,10,8), leafM);
+    leaf.scale.set(1,1.3,1); leaf.position.set(2.8, y+1.1, -.5); add(leaf);
+  }
+  if (k==='master_bedroom' || k==='apt_master') {
+    const bedM = new THREE.MeshStandardMaterial({color:0xe8e0d0, roughness:.85});
+    const bed = new THREE.Mesh(new THREE.BoxGeometry(2.0,.5,2.1), bedM);
+    bed.position.set(0, y+.25, -.3); add(bed);
+    const shadeM = new THREE.MeshStandardMaterial({color:0xf0e8d0, roughness:.7, emissive:0x332200, emissiveIntensity:.3});
+    for (const bx of [-.9,.9]) {
+      const shade = new THREE.Mesh(new THREE.CylinderGeometry(.18,.22,.35,10), shadeM);
+      shade.position.set(bx, y+1.12, -.3); add(shade);
+    }
+    const rugM = new THREE.MeshStandardMaterial({color:0xa89878, roughness:.9});
+    const rug2 = new THREE.Mesh(new THREE.PlaneGeometry(2.4,1.6), rugM);
+    rug2.rotation.x = -Math.PI/2; rug2.position.set(0, y+.01, -.3); add(rug2);
+  }
+  if (k==='loft_living') {
+    const potM = new THREE.MeshStandardMaterial({color:0x6a5a4a, roughness:.8});
+    const plantM = new THREE.MeshStandardMaterial({color:0x2a6828, roughness:.7});
+    for (const px of [-2.2, 2.2]) {
+      const pot = new THREE.Mesh(new THREE.CylinderGeometry(.2,.24,.4,10), potM);
+      pot.position.set(px, y+.28, 1.0); add(pot);
+      const pl = new THREE.Mesh(new THREE.SphereGeometry(.4,10,8), plantM);
+      pl.position.set(px, y+.72, 1.0); add(pl);
     }
   }
 }
-
-//        GEOMETRY HELPER                                                                                                                                                                                  
-function addIM(w,h,d,mat,pos) {
-  const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);
-  m.position.set(...pos); m.castShadow=true; m.receiveShadow=true;
-  intScene.add(m); return m;
-}
-
-//        CONTROLS                                                                                                                                                                                                    
-function bindControls(canvas) {
-  canvas.addEventListener('click', ()=>{ if(intActive) canvas.requestPointerLock(); });
-  document.addEventListener('pointerlockchange', ()=>{ intLocked=document.pointerLockElement===canvas; });
-  document.addEventListener('mousemove', e=>{
-    if(!intActive||!intLocked) return;
-    intYaw   -= e.movementX*.0026;
-    intPitch  = Math.max(-.85,Math.min(.65,intPitch-e.movementY*.0026));
-  });
-  window.addEventListener('keydown', e=>{
-    if(!intActive) return;
-    if(e.key==='w'||e.key==='ArrowUp')   moveF=true;
-    if(e.key==='s'||e.key==='ArrowDown') moveB=true;
-    if(e.key==='a'||e.key==='ArrowLeft') moveL=true;
-    if(e.key==='d'||e.key==='ArrowRight')moveR=true;
-  });
-  window.addEventListener('keyup', e=>{
-    if(e.key==='w'||e.key==='ArrowUp')   moveF=false;
-    if(e.key==='s'||e.key==='ArrowDown') moveB=false;
-    if(e.key==='a'||e.key==='ArrowLeft') moveL=false;
-    if(e.key==='d'||e.key==='ArrowRight')moveR=false;
-  });
-  // Touch
-  let lLast=null;
-  canvas.addEventListener('touchstart',e=>{
-    if(!intActive)return; e.preventDefault();
-    for(const t of e.changedTouches)
-      if(t.clientX>canvas.clientWidth/2) lLast={x:t.clientX,y:t.clientY,id:t.identifier};
-  },{passive:false});
-  canvas.addEventListener('touchmove',e=>{
-    if(!intActive||!lLast)return; e.preventDefault();
-    for(const t of e.changedTouches) if(t.identifier===lLast.id){
-      intYaw-=(t.clientX-lLast.x)*.003;
-      intPitch=Math.max(-.85,Math.min(.65,intPitch-(t.clientY-lLast.y)*.003));
-      lLast={x:t.clientX,y:t.clientY,id:t.identifier};
-    }
-  },{passive:false});
-  canvas.addEventListener('touchend',e=>{
-    for(const t of e.changedTouches) if(lLast&&t.identifier===lLast.id) lLast=null;
-  });
-}
-
-//        ANIMATION LOOP                                                                                                                                                                                     
-const clk=new THREE.Clock();
-function loop(){
-  const dt=Math.min(clk.getDelta(),.05);
-  if(moveF||moveB||moveL||moveR){
-    const spd=3.0;
-    const fwd=new THREE.Vector3(-Math.sin(intYaw),0,-Math.cos(intYaw));
-    const rgt=new THREE.Vector3( Math.cos(intYaw),0,-Math.sin(intYaw));
-    const mv=new THREE.Vector3();
-    if(moveF) mv.addScaledVector(fwd,1);
-    if(moveB) mv.addScaledVector(fwd,-1);
-    if(moveL) mv.addScaledVector(rgt,-1);
-    if(moveR) mv.addScaledVector(rgt,1);
-    if(mv.lengthSq()>.001){
-      mv.normalize().multiplyScalar(spd*dt);
-      intCamera.position.add(mv);
-      const r=currentRoom;
-      if(r){
-        intCamera.position.x=Math.max(-r.W/2+.3,Math.min(r.W/2-.3,intCamera.position.x));
-        intCamera.position.z=Math.max(-r.D/2+.3,Math.min(r.D/2+2,intCamera.position.z));
-        intCamera.position.y=Math.max(r.floorY+.8,Math.min(r.ceilH-.2,intCamera.position.y));
-      }
-    }
-  }
-  intCamera.rotation.order='YXZ';
-  intCamera.rotation.y=intYaw;
-  intCamera.rotation.x=intPitch;
-  intRenderer.render(intScene,intCamera);
-}
-
-export function resizeInterior(w,h){
-  if(!intRenderer)return;
-  intRenderer.setSize(w,h);
-  if(intCamera){intCamera.aspect=w/h;intCamera.updateProjectionMatrix();}
-}
-export function getInteriorRooms(t){return INTERIORS[t]?.rooms||[];}
