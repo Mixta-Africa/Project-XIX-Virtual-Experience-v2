@@ -180,9 +180,9 @@ export function setPerfModeGraphics(mode) {
     //  Raised across every tier, still clamped to the device so nothing
     //  supersamples beyond what the panel can show.
     const pixelRatioMap = {
-      fast:     Math.min(dpr, 1.5),
-      balanced: Math.min(dpr, 2.0),
-      rich:     Math.min(dpr, 2.5),
+      fast:     Math.min(dpr, 1.5),   // unchanged — mobile survival
+      balanced: Math.min(dpr, 2.0),   // unchanged
+      rich:     Math.min(dpr, 3.0),   // native DPR on any current display
     };
     _renderer.setPixelRatio(pixelRatioMap[mode] || 1.0);
 
@@ -207,13 +207,15 @@ export function setPerfModeGraphics(mode) {
   if (gtaoPass) {
     gtaoPass.enabled = (mode !== 'fast');
     if (mode === 'rich') {
-      gtaoPass.updateGtaoMaterial({ radius: 3.2, distanceExponent: 1.6, thickness: 2.0, scale: 1.15 });
-      gtaoPass.blendIntensity = 0.85;
-      if (gtaoPass.updatePdMaterial) gtaoPass.updatePdMaterial({ lumaPhi: 14, depthPhi: 3, normalPhi: 5, radius: 6, rings: 3, samples: 16 });
+      // New villa mesh is 157k tris vs 1.47M — GTAO costs less per pixel,
+      // so we can push radius and sample count without a frame-rate cliff.
+      gtaoPass.updateGtaoMaterial({ radius: 4.5, distanceExponent: 1.8, thickness: 2.5, scale: 1.25 });
+      gtaoPass.blendIntensity = 0.92;
+      if (gtaoPass.updatePdMaterial) gtaoPass.updatePdMaterial({ lumaPhi: 20, depthPhi: 4, normalPhi: 7, radius: 8, rings: 4, samples: 32 });
     } else if (mode === 'balanced') {
-      gtaoPass.updateGtaoMaterial({ radius: 2.0, distanceExponent: 1.4, thickness: 1.5, scale: 1.0 });
-      gtaoPass.blendIntensity = 0.6;
-      if (gtaoPass.updatePdMaterial) gtaoPass.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 4, rings: 2, samples: 8 });
+      gtaoPass.updateGtaoMaterial({ radius: 2.5, distanceExponent: 1.5, thickness: 1.8, scale: 1.05 });
+      gtaoPass.blendIntensity = 0.70;
+      if (gtaoPass.updatePdMaterial) gtaoPass.updatePdMaterial({ lumaPhi: 12, depthPhi: 2.5, normalPhi: 4, radius: 5, rings: 3, samples: 12 });
     }
   }
 
@@ -224,8 +226,10 @@ export function setPerfModeGraphics(mode) {
   if (vignettePass) {
     vignettePass.enabled = (mode !== 'fast');
     if (vignettePass.uniforms) {
-      vignettePass.uniforms.uVignette.value   = mode === 'rich' ? 0.46 : 0.26;
-      vignettePass.uniforms.uCAStrength.value = mode === 'rich' ? 0.0035 : 0.0012;
+      // Vignette draws the eye to the centre; CA adds filmic micro-fringing.
+      // Both are zero on Fast, subtle on Balanced, deliberate on Rich.
+      vignettePass.uniforms.uVignette.value   = mode === 'rich' ? 0.52 : mode === 'balanced' ? 0.26 : 0.0;
+      vignettePass.uniforms.uCAStrength.value = mode === 'rich' ? 0.0042 : mode === 'balanced' ? 0.0012 : 0.0;
     }
   }
 
@@ -233,11 +237,12 @@ export function setPerfModeGraphics(mode) {
   if (_renderer) {
     if (mode === 'rich') {
       _renderer.shadowMap.type      = THREE.PCFSoftShadowMap;
-      _renderer.toneMappingExposure = 0.68;   // slightly brighter, more headroom
+      _renderer.toneMappingExposure = 0.72;   // lifted — new mesh is better lit
     } else if (mode === 'balanced') {
-      _renderer.shadowMap.type      = THREE.PCFShadowMap;  // cheaper filter
-      _renderer.toneMappingExposure = 0.62;
+      _renderer.shadowMap.type      = THREE.PCFSoftShadowMap; // affordable now
+      _renderer.toneMappingExposure = 0.66;
     } else {
+      _renderer.shadowMap.type      = THREE.PCFShadowMap;
       _renderer.toneMappingExposure = 0.60;
     }
   }
@@ -245,8 +250,11 @@ export function setPerfModeGraphics(mode) {
   // ── IBL strength: Rich gets fuller environment lighting ─────────────────
   if (_scene && _scene.environmentIntensity !== undefined) {
     const base = _scene.environmentIntensity || 1.0;
-    _scene.environmentIntensity = mode === 'rich' ? Math.min(base * 1.18, 1.6)
-                                : mode === 'balanced' ? base
+    // The new PBR mesh carries a proper metallic-roughness map, so IBL
+    // variations actually read as material differences now rather than as
+    // uniform brightening. Push the ceiling up.
+    _scene.environmentIntensity = mode === 'rich'     ? Math.min(base * 1.35, 2.0)
+                                : mode === 'balanced' ? Math.min(base * 1.10, 1.4)
                                 : base * 0.85;
   }
 
