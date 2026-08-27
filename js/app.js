@@ -10,7 +10,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
-import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=31";
+import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=32";
 // villa-interior.js removed — dead file, superseded by interior.js
 import {
   initScene, getRenderer, getScene, getCamera, getClock,
@@ -20,12 +20,12 @@ import {
   setHorsePosition, getThirdPersonCameraOffset, setAerialMode,
   getSunLight, getHorseGroup, updateNightLights, updateBuildingNightGlow,
   enterVillaInterior, teleportVillaRoom, exitVillaInterior,
-} from "./scene.js?v=31";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=31";
+} from "./scene.js?v=32";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=32";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
-} from "./controls.js?v=31";
+} from "./controls.js?v=32";
 import {
   initMinimap, updateMinimap,
   buildViewpointStrip, showZonePanel, hideZonePanel,
@@ -33,7 +33,7 @@ import {
   setCaption as _setCaption_raw, showEnterPrompt, hideEnterPrompt,
   showVRButton, showJoystick, hideJoystick, isMobile,
   enableAudio, updateSpatialAudio, initAudio
-} from "./ui.js?v=31";
+} from "./ui.js?v=32";
 
 window.plotRegistry = plotRegistry;
 
@@ -417,11 +417,17 @@ function injectModeToggle() {
   document.getElementById('world-overlay')?.appendChild(bar);
 }
 
-window.switchPerfMode = function(mode) {
+window.switchPerfMode = function(mode, auto) {
   setPerfMode(mode);          // updates scene (shadow map, pixel ratio, fog)
   setPerfModeGraphics(mode);  // updates graphics pipeline (bloom, SMAA, direct render)
   document.querySelectorAll('.perf-btn').forEach(b =>
     b.classList.toggle('active', b.dataset.mode === mode));
+  // When a HUMAN picks a tier (auto is falsy), record it so the adaptive
+  // governor won't override the choice for a while. The governor passes
+  // auto=true so it doesn't trip its own back-off.
+  if (!auto) {
+    window._xixManualQualityUntil = performance.now() + 30000; // 30s respect window
+  }
 };
 
 window.setMoveMode = function(mode) {
@@ -1957,6 +1963,22 @@ window.resumeMainRenderLoop = function() {
   if (!animFrameId) startRenderLoop();
 };
 
+// Brief, non-intrusive toast shown when the governor auto-drops quality, so the
+// visual change isn't mysterious. Auto-dismisses; reuses one element.
+let _qualityNoteEl = null, _qualityNoteTimer = null;
+function _showQualityNote(tier) {
+  const label = tier.charAt(0).toUpperCase() + tier.slice(1);
+  if (!_qualityNoteEl) {
+    _qualityNoteEl = document.createElement('div');
+    _qualityNoteEl.style.cssText = 'position:fixed;bottom:88px;left:50%;transform:translateX(-50%);background:rgba(10,20,12,0.9);color:#c9a84c;padding:9px 16px;border-radius:8px;font-family:Inter,sans-serif;font-size:12.5px;z-index:9998;border:1px solid rgba(201,168,76,0.35);pointer-events:none;transition:opacity 0.4s;opacity:0;';
+    (document.getElementById('world-overlay') || document.body).appendChild(_qualityNoteEl);
+  }
+  _qualityNoteEl.textContent = `Graphics set to ${label} for smoother performance`;
+  _qualityNoteEl.style.opacity = '1';
+  if (_qualityNoteTimer) clearTimeout(_qualityNoteTimer);
+  _qualityNoteTimer = setTimeout(() => { if (_qualityNoteEl) _qualityNoteEl.style.opacity = '0'; }, 3200);
+}
+
 function startRenderLoop(){
   if(animFrameId) cancelAnimationFrame(animFrameId);
   const clock=getClock();
@@ -1964,6 +1986,60 @@ function startRenderLoop(){
 
   // Track consecutive errors — if too many, stop the loop gracefully
   let _frameErrors = 0;
+
+  // ── ADAPTIVE FRAME-RATE GOVERNOR ─────────────────────────────────────────
+  // Measures real frame time and steps quality DOWN (never up) when the machine
+  // can't sustain the target. Rich → Balanced → Fast. This is what keeps "Rich"
+  // usable: capable GPUs stay on it; slower ones auto-drop instead of grinding.
+  // Design:
+  //  • Rolling window of the last 90 frame durations (~1.5s at 60fps).
+  //  • If the MEDIAN fps over that window is below the step-down threshold,
+  //    and it's been at least 3s since the last change, drop one tier.
+  //  • Only steps down. The user can always manually pick a higher tier again;
+  //    we record that and back off so we never override a deliberate choice.
+  //  • Uses median, not mean, so a single GC hitch or alt-tab stall doesn't
+  //    trigger a drop — only sustained low framerate does.
+  const _fpsSamples = new Float32Array(90);
+  let   _fpsIdx = 0, _fpsCount = 0;
+  let   _lastGovT = performance.now();
+  let   _govCooldownUntil = performance.now() + 4000; // 4s grace after load before first action
+  const _TIER_ORDER = ['fast', 'balanced', 'rich'];
+  const _STEP_DOWN_FPS = 32;   // sustained median below this → drop a tier
+
+  function _governorTick(now) {
+    const dt = now - _lastGovT;
+    _lastGovT = now;
+    if (dt <= 0 || dt > 200) return;   // ignore first frame and post-stall spikes
+    const fps = 1000 / dt;
+    _fpsSamples[_fpsIdx] = fps;
+    _fpsIdx = (_fpsIdx + 1) % _fpsSamples.length;
+    if (_fpsCount < _fpsSamples.length) _fpsCount++;
+
+    // Only evaluate on a full window and outside the cooldown
+    if (_fpsCount < _fpsSamples.length) return;
+    if (now < _govCooldownUntil) return;
+    // Respect a recent manual quality choice (set by switchPerfMode wrapper)
+    if (window._xixManualQualityUntil && now < window._xixManualQualityUntil) return;
+
+    // Median of the window
+    const arr = Array.prototype.slice.call(_fpsSamples).sort((a,b)=>a-b);
+    const medianFps = arr[arr.length >> 1];
+
+    if (medianFps < _STEP_DOWN_FPS) {
+      const cur = PERF_MODE || 'rich';   // live ES-module binding from scene.js
+      const idx = _TIER_ORDER.indexOf(cur);
+      if (idx > 0) {
+        const next = _TIER_ORDER[idx - 1];
+        console.warn(`[XIX] Auto quality: ${cur} → ${next} (median ${medianFps.toFixed(0)} fps)`);
+        if (typeof window.switchPerfMode === 'function') window.switchPerfMode(next, /*auto=*/true);
+        _govCooldownUntil = now + 3500;   // let it settle before considering another drop
+        // Reset the window so the new tier is measured fresh
+        _fpsCount = 0; _fpsIdx = 0;
+        // Brief on-screen note so the drop isn't mysterious
+        _showQualityNote(next);
+      }
+    }
+  }
 
   function frame(){
     animFrameId=requestAnimationFrame(frame);
@@ -2019,6 +2095,7 @@ function startRenderLoop(){
     updateMinimap(camera.position.x,camera.position.z,getYaw());
     updateSpatialAudio(camera.position.x,camera.position.z);
     renderFrame();
+    _governorTick(performance.now());   // adaptive quality step-down
     _frameErrors = 0; // reset on successful frame
     } catch(err) {
       _frameErrors++;
