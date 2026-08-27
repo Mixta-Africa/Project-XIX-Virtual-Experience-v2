@@ -14,7 +14,7 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=31";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=32";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
   buildPalmInstances, tickPalms,
@@ -22,7 +22,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=31";
+} from "./graphics.js?v=32";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -1185,19 +1185,17 @@ export function setAerialMode(on) {
   _aerialModeActive = on;
   const sun = getSunLight ? getSunLight() : null;
   if (on) {
-    // Save current PERF_MODE and force 'rich' for the aerial shot.
-    // On a mobile device in 'fast' mode this will briefly increase GPU load,
-    // but the aerial camera is static/slow and the estate is a single draw-list
-    // with no character movement — the budget is very different from walking.
-    // 'balanced' is the floor: never go below it even if the saved mode was 'fast'.
-    _aerialSavedPerfMode = PERF_MODE;
-    const aerialMode = 'rich';  // always request richest; setPerfMode caps if GPU can't sustain
-    setPerfMode(aerialMode);
-    if (typeof setPerfModeGraphics === 'function') setPerfModeGraphics(aerialMode);
-    // Raise pixel ratio for aerial — max native DPR for a crisp estate shot.
-    if (renderer) renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2.5));
+    // Aerial no longer forces 'rich'. The user chose to prioritise smoothness,
+    // and the adaptive governor owns the quality tier — forcing rich here would
+    // fight it and reintroduce the lag. We keep whatever tier is active and only
+    // make the two cheap improvements that help the wide shot without cost:
+    // full villa LOD (no simplified buildings in the hero view) and a widened
+    // shadow frustum to cover the whole estate. Pixel ratio is left as the
+    // current tier set it — no 2.5× override.
+    _aerialSavedPerfMode = null;  // nothing to restore; we don't change the tier
 
-    // Force every villa to full detail
+    // Force every villa to full detail (geometry swap only — negligible cost at
+    // orbital distance since there's no character movement competing for the GPU)
     scene.traverse(obj => {
       if (obj.isLOD && obj.userData.isVillaGLB && obj.levels[1]) {
         obj.levels[1].distance = 1e6;
