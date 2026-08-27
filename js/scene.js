@@ -780,19 +780,44 @@ function _makeHooves() {
   gain.connect(panner);
   panner.connect(_masterGain);
 
+  // A single triangle-wave oscillator at 120-160 Hz sounds exactly like a
+  // hollow wooden block being struck — a marimba, not a hoofbeat. Real hoof
+  // impacts are broadband transients: short noise bursts shaped by a fast
+  // exponential decay, not a pitched tone. Replace the oscillator with a
+  // filtered noise burst. Gate threshold raised from 0.001 to 0.35 so the
+  // clops only fire when the player is clearly moving at sustained speed.
   function clop() {
-    if (!_audioCtx || gain.gain.value < 0.001) { setTimeout(clop, 400); return; }
-    const osc = _audioCtx.createOscillator();
-    const g   = _audioCtx.createGain();
-    osc.type  = 'triangle';
-    osc.frequency.value = 120 + Math.random() * 40;
-    g.gain.setValueAtTime(0.08, _audioCtx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.0001, _audioCtx.currentTime + 0.15);
-    osc.connect(g); g.connect(gain);
-    osc.start(); osc.stop(_audioCtx.currentTime + 0.18);
-    setTimeout(clop, 280 + Math.random() * 120);
+    // Tight gate: only play when clearly moving (gain well above threshold).
+    // The old 0.001 threshold let clops leak at partial volume during the
+    // setTargetAtTime ramp-down, which is what read as "hollow percussion".
+    if (!_audioCtx || gain.gain.value < 0.35) { setTimeout(clop, 350 + Math.random() * 150); return; }
+
+    // Broadband noise burst — sounds like a hoof on compacted laterite
+    const bufSize = Math.floor(_audioCtx.sampleRate * 0.12);
+    const buf = _audioCtx.createBuffer(1, bufSize, _audioCtx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < bufSize; i++) data[i] = (Math.random() * 2 - 1);
+
+    const src = _audioCtx.createBufferSource();
+    src.buffer = buf;
+
+    // Band-pass shaped to the low-mid thud of a hoof on dirt (300-900 Hz)
+    const filt = _audioCtx.createBiquadFilter();
+    filt.type = 'bandpass';
+    filt.frequency.value = 380 + Math.random() * 200;
+    filt.Q.value = 1.4;
+
+    // Sharp transient decay — 60ms to silence
+    const g = _audioCtx.createGain();
+    g.gain.setValueAtTime(0.12, _audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001, _audioCtx.currentTime + 0.06);
+
+    src.connect(filt); filt.connect(g); g.connect(gain);
+    src.start(); src.stop(_audioCtx.currentTime + 0.07);
+
+    setTimeout(clop, 260 + Math.random() * 140);
   }
-  setTimeout(clop, 1200);
+  setTimeout(clop, 1400);
   return { panner, gain };
 }
 
@@ -1353,33 +1378,16 @@ export function getSunLight() { return sunLight; }
 
 export function initScene(canvas) {
   clock = new THREE.Clock();
-
-  // Detect mobile FIRST — sets PERF_MODE before any renderer parameter is read,
-  // so pixelRatio, shadowMap, etc. are all correct from the very first frame.
-  // Previously detectMobileTier() ran AFTER renderer creation, meaning mobile
-  // always paid one shadow-map frame at the wrong pixel ratio before the lock fired.
-  detectMobileTier();
-
   const perfS = PERF_SETTINGS[PERF_MODE];
-  const isMobileDevice = /iPhone|iPad|Android|Mobile/i.test(navigator.userAgent);
 
-  renderer = new THREE.WebGLRenderer({
-    canvas,
-    antialias: false,              // AA is postprocessed (SMAA) — not needed here
-    powerPreference: "high-performance",
-    // iOS Safari: failIfMajorPerformanceCaveat prevents context creation on
-    // extremely low-end devices that would crash mid-session anyway.
-    failIfMajorPerformanceCaveat: false,
-  });
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference:"high-performance" });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, perfS.pixelRatio));
-  // Shadows off on mobile (PERF_MODE === 'fast') — saves 4-8ms per frame.
-  // buildLighting() checks PERF_MODE too, but setting it here means the
-  // shadow map is never allocated at all, not just disabled after allocation.
-  renderer.shadowMap.enabled   = (PERF_MODE !== 'fast');
+  renderer.shadowMap.enabled   = true;
   renderer.shadowMap.type      = THREE.PCFSoftShadowMap;
   renderer.toneMapping         = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.85;
+  renderer.toneMappingExposure = 0.85; 
   renderer.outputColorSpace    = THREE.SRGBColorSpace;
+  detectMobileTier(); // Auto-lock PERF_MODE for mobile/low-end GPU
 
   scene  = new THREE.Scene();
   scene.fog = new THREE.FogExp2(0x8ab8cc, perfS.fogDensity);
@@ -1442,27 +1450,17 @@ export function initScene(canvas) {
     setTimeout(() => { loadClubhouseGLB(); }, 1200);
     setTimeout(() => { loadStablesGLB(); }, 1600);
     // loadHorseGLB() no longer called — see the no-op definition above.
-    // Ambient horses and NPC horses: skip entirely on mobile.
-    // Each is a separate GLB+Draco load spinning up its own worker; 6 ambient
-    // + 4 NPC = 10 simultaneous Draco decodes is a reliable crash vector on
-    // iOS Safari and low-end Android. The estate reads correctly without them
-    // and they can be re-enabled if the device tier is later upgraded.
-    const _isMobileUA = /iPhone|iPad|Android|Mobile/i.test(navigator.userAgent);
-    if (!_isMobileUA) {
-      spawnAmbientHorses(); // decorative horses on polo field, training field, paddock
-    }
-
+    spawnAmbientHorses();   // decorative horses on the polo field, training field, paddock
+    
     addPaddock();
     addGamePark();
     addCommercialBlock();
     addServiceCompound();
     addLandscaping();
 
-    // NPC horses: desktop only, capped at 4
-    if (!_isMobileUA) {
-      for (let i = 0; i < 4; i++) {
-        setTimeout(() => spawnNPCHorse(i), 3000 + i * 600);
-      }
+    // Cap NPC horses at 4 — each is a separate GLB+Draco load; 8 was too expensive
+    for (let i = 0; i < 4; i++) {
+      setTimeout(() => spawnNPCHorse(i), 3000 + i * 600);
     }
   });
 
@@ -1663,19 +1661,6 @@ export function tickLampPool(camera) {
   }
 }
 
-// Cache of lamp globe meshes — populated lazily on first night/sunset call.
-// Avoids an O(n) scene.traverse on every time-of-day change.
-const _lampGlobeCache = [];
-let   _lampGlobeCacheBuilt = false;
-
-function _buildLampGlobeCache() {
-  if (_lampGlobeCacheBuilt || !scene) return;
-  _lampGlobeCacheBuilt = true;
-  scene.traverse(o => {
-    if (o.isMesh && o.userData.isLampGlobe) _lampGlobeCache.push(o);
-  });
-}
-
 export function updateNightLights(timeName) {
   const isNight = (timeName === 'night');
   const isSunset = (timeName === 'sunset');
@@ -1684,15 +1669,14 @@ export function updateNightLights(timeName) {
 
   _lampTargetIntensity = isNight ? 3.2 : isSunset ? 1.4 : 0;
 
-  // Drive emissive glow on every lamp globe (post + sconce).
-  // Build the cache once (after the first night/sunset), then iterate the
-  // array — O(k) where k is lamp count, not O(total scene objects).
-  const globeInt = isNight ? 4.0 : isSunset ? 1.4 : 0.0;
-  _buildLampGlobeCache();
-  for (const o of _lampGlobeCache) {
-    const m = Array.isArray(o.material) ? o.material[0] : o.material;
-    if (m) m.emissiveIntensity = globeInt;
-  }
+  // Drive emissive glow on every lamp globe (post + sconce)
+  const globeInt = isNight ? 4.0 : isSunset ? 1.4 : 0.0;   // "very bright at night" — raised from 2.8
+  scene.traverse(o => {
+    if (o.isMesh && o.userData.isLampGlobe) {
+      const m = Array.isArray(o.material) ? o.material[0] : o.material;
+      if (m) m.emissiveIntensity = globeInt;
+    }
+  });
 
   _nightLights.forEach(item => {
     if (item.pt && _lampTargetIntensity === 0) { item.pt.intensity = 0; item.pt.visible = false; }
@@ -1932,7 +1916,7 @@ function addGround() {
   // (the flat olive areas seen around the lake and villa frontages).
   const greens = [
     // [ width, depth, [x, y, z], options ]
-    [ 180, 110, [-260, 0.10, -40], { chevron:true  } ],  // training field
+    [ 180, 110, [-260, 0.12, -40], { chevron:true  } ],  // training field — raised above ground shader
     //  GRASS ENCROACHING THE SETBACK
     //  Two separate faults. First, these planes were sized to overlap the
     //  laterite rather than butt against it: the inner verges were 120 m wide
@@ -1962,8 +1946,30 @@ function addGround() {
   });
 
   // Hard surfaces
-  s(plane(180, 80, MATS.concrete(), [0, .02, 122]));
-  s(plane(90,  70, MATS.cobble(),   [-355, .02, 90]));
+  // Cobblestone yard at the stables (unchanged)
+  s(plane(90, 70, MATS.cobble(), [-355, .02, 90]));
+
+  // ── CLUBHOUSE CAR PARKS ───────────────────────────────────────────────────
+  // The masterplan shows a large asphalt car park behind the clubhouse (south,
+  // z > 108) and flanking both sides. The previous concrete plane was 180×80
+  // centred at z=122, which only covered the rear face partially and used the
+  // wrong material (concrete, not asphalt). Three asphalt planes now match the
+  // masterplan: rear centre, left wing, right wing.
+  // Clubhouse centre: x=0, z=108, footprint ~48×22m, rotation PI (faces -Z).
+  // Rear (south): starts at z=120 (just clear of building rear), extends to ~z=185.
+  // Left/right wings: flank the building and the rear approach.
+  const asphaltMat = new THREE.MeshStandardMaterial({
+    color: 0x2a2a2a, roughness: 0.94, metalness: 0.0, envMapIntensity: 0.08,
+  });
+  asphaltMat.userData.isRoadSurface = true;
+  // Rear / south car park — large central block
+  s(plane(180, 70, asphaltMat, [0,   .05,  153]));  // z 118..188
+  // Left wing car park (west of clubhouse)
+  s(plane(60,  90, asphaltMat, [-114, .05, 135]));   // x -84..-144, z 90..180
+  // Right wing car park (east of clubhouse)
+  s(plane(60,  90, asphaltMat, [ 114, .05, 135]));   // x 84..144, z 90..180
+  // Forecourt / front approach (between field road and building entrance)
+  s(plane(140,  16, asphaltMat, [0,   .05,  118]));  // z 110..126
 }
 
 function _makeMicroTexture(col1, col2, planeW, planeD) {
@@ -2455,10 +2461,18 @@ function addSafetyZone() {
     return m;
   };
 
-  s(plane(298, 25, mkMat(298, 25), [0, .11, -85.5]));
-  s(plane(298, 25, mkMat(298, 25), [0, .11,  85.5]));
-  s(plane(11, 146, mkMat(11, 146), [-142.5, .11, 0]));
-  s(plane(11, 146, mkMat(11, 146), [ 142.5, .11, 0]));
+  // Safety zone proportions derived from both masterplans:
+  // N/S run-off (behind goals): 25m deep × 298m wide — same as before.
+  // E/W side strips (pony lines): 27m wide × 146m long.
+  // In the masterplan the side strips are clearly thicker than the narrow 11m
+  // currently rendered — the goal-end zones (N/S) and side zones (E/W) read
+  // as roughly equal visual mass from aerial, which requires ~25-27m on each side.
+  // The field is 274×146; with 27m side strips the full brown envelope becomes
+  // 328 wide × 196 deep, which matches the masterplan proportionally.
+  s(plane(298, 25, mkMat(298, 25), [0, .11, -85.5]));   // north (behind N goal)
+  s(plane(298, 25, mkMat(298, 25), [0, .11,  85.5]));   // south (behind S goal)
+  s(plane(27, 146, mkMat(27, 146), [-150.5, .11, 0]));  // west side strip (was 11m)
+  s(plane(27, 146, mkMat(27, 146), [ 150.5, .11, 0]));  // east side strip (was 11m)
 }
 
 function addYardMarkings() {
@@ -3017,67 +3031,31 @@ export function unreservePlot(plotKey) {
   return true;
 }
 
-// Pre-built flat array of overlay planes for raycasting — avoids touching
-// material.opacity on every plot on every tap (which writes GPU state for
-// the full plot count, O(223) per tap on mobile).
-const _overlayRaycastTargets = [];
-let   _overlayRaycastDirty = true;   // set true whenever plotRegistry changes
-
-export function markOverlaysDirty() { _overlayRaycastDirty = true; }
-
-function _rebuildOverlayTargets() {
-  _overlayRaycastTargets.length = 0;
+export function getPlotAtRay(raycaster) {
+  const targets = [];
+  
   plotRegistry.forEach((plot, key) => {
     if (plot.overlay) {
-      // Store plotKey on the overlay userData once here rather than per-tap
-      plot.overlay.userData.plotKey = key;
-      _overlayRaycastTargets.push(plot.overlay);
+      plot.overlay.material.opacity = 0.01;
+      targets.push(plot.overlay);
     }
-  });
-  _overlayRaycastDirty = false;
-}
-
-export function getPlotAtRay(raycaster) {
-  if (_overlayRaycastDirty) _rebuildOverlayTargets();
-
-  // Make overlays temporarily visible for raycasting without writing opacity —
-  // use raycastOnlyVisible = false on the raycaster instead.
-  raycaster.params.Mesh = raycaster.params.Mesh || {};
-  const savedThresh = raycaster.params.Mesh.threshold;
-  raycaster.params.Mesh.threshold = 0.5;
-
-  // Temporarily ensure overlays participate in the raycast by making them
-  // visible (they may be opacity-0 but visible:true from tickPlotHighlights).
-  // We do NOT write material.opacity here — that was the old approach that
-  // issued a GPU uniform write for every plot on every tap.
-  const hidden = [];
-  for (const ov of _overlayRaycastTargets) {
-    if (!ov.visible) { ov.visible = true; hidden.push(ov); }
-  }
-
-  const hits = raycaster.intersectObjects(_overlayRaycastTargets, false);
-
-  // Restore any we temporarily made visible
-  for (const ov of hidden) ov.visible = false;
-  raycaster.params.Mesh.threshold = savedThresh;
-
-  // Also check villa clones (unchanged)
-  const villaTargets = [];
-  plotRegistry.forEach((plot, key) => {
     if (plot.villaClone && plot.villaClone.visible) {
       plot.villaClone.traverse(c => {
-        if (c.isMesh) { c.userData.plotKey = key; villaTargets.push(c); }
+        if (c.isMesh) {
+          c.userData.plotKey = key;
+          targets.push(c);
+        }
       });
     }
   });
-  const villaHits = hits.length ? [] : raycaster.intersectObjects(villaTargets, false);
-  const allHits = [...hits, ...villaHits];
-
-  // Opacity-reset no-op — kept as a comment for any caller that expected the
-  // old pattern. We no longer set opacity=0.01 before the raycast, so nothing
-  // needs resetting here. The overlay opacity is owned solely by tickPlotHighlights.
-
-  if (allHits.length > 0) return allHits[0].object.userData.plotKey;
+  
+  const hits = raycaster.intersectObjects(targets, false);
+  
+  plotRegistry.forEach(plot => {
+    if (plot.overlay && plot.status !== 'reserved') plot.overlay.material.opacity = 0;
+  });
+  
+  if (hits.length > 0) return hits[0].object.userData.plotKey;
   return null;
 }
 // ─── VILLA RING ───────────────────────────────────────────────────────────────
@@ -3182,6 +3160,13 @@ function addVillaRing(){
 }
 
 function addLoftTerraces(){
+  // SPACING: From the masterplan, loft blocks are clearly tight — nearly touching,
+  // with only a narrow road gap between them. The previous 36m pitch (= block width)
+  // gave zero gap. Reduced to 26m: ~10m gap between block edges (the access road).
+  // West column z positions: the last south block should align with the south
+  // edge of the apartment blocks (APT at z=-45, footprint ≈ 38m → south edge ≈ -64).
+  // z range revised from [-75,-45,-15,15,45,75,105] to match plan.
+
   function placeLoftBlock(x, z, ry) {
     placeLoftGLB(x, z, ry, null); 
     const offsets = [-13.5, -4.5, 4.5, 13.5]; 
@@ -3200,38 +3185,47 @@ function addLoftTerraces(){
       hitbox.rotation.y = ry;
       hitbox.renderOrder = 999;
       hitbox.userData = { isPlotOverlay: true, plotKey: key };
-      hitbox.visible = false; // Invisible — only used for raycasting, never rendered
+      hitbox.visible = false;
       scene.add(hitbox);
       
       plotRegistry.set(key, { x: unitX, z: unitZ, status: 'available', overlay: hitbox, type: "2 BED LOFT TERRACE", ry: ry });
     });
   }
 
-  for(let x=-310; x<=-110; x+=36){ 
+  // North and south horizontal rows: 26m pitch (was 36m) → tighter, matches plan
+  for(let x=-310; x<=-110; x+=26){ 
     placeLoftBlock(x, -162-Math.abs(x)*.05, Math.PI); 
   }
-  for(let x=95; x<=310; x+=36){ 
+  for(let x=95; x<=310; x+=26){ 
     placeLoftBlock(x, -162-Math.abs(x)*.05, Math.PI); 
   }
   
-  [-75, -45, -15].forEach(z => { placeLoftBlock(-200, z, 0); });
-  [15, 45, 75, 105].forEach(z => { placeLoftBlock(-200, z, 0); });
+  // West vertical column: z range chosen so the southernmost block aligns with
+  // the south edge of APT-BLOCK-1 (centred z=-45, approx south edge z≈-66).
+  // 26m pitch from z=62 stepping south: 62, 36, 10, -16, -42, -68
+  // That puts the last block at z=-68, aligning with apartment block south face.
+  [62, 36, 10, -16, -42, -68].forEach(z => { placeLoftBlock(-200, z, 0); });
 
-  //  x=165 collided with the east villa column at (162, -75) — only 3m of
-  //  separation against a 12m villa radius, hence "intersecting with the
-  //  villas." Realigned to x=275, matching the north row's own last block
-  //  (the loop above stops at x=275, since 95+36*5=275 and the next step,
-  //  311, exceeds the 310 cap) — this is the exact "last loft terrace on
-  //  the north-east corner" the alignment was asked for. z stays entirely
-  //  north of the paddock (zMin=-60) and clear of every villa z (-75 is the
-  //  nearest, and this range stops at -85), so neither collision can recur.
+  // North-east corner column: aligned with north row's last block (x=275)
   [-165, -145, -125, -105, -85].forEach(z => { placeLoftBlock(275, z, 0); });
 }
 
 function addWestCompound() {
-  s(plane(120, 185, MATS.safetyBrown(), [-320, .06, 0])); 
-  // West compound grass — ground shader handles laterite/grass boundary
+  // West compound ground — split into two planes so neither overlaps the
+  // training field turf. Training field occupies roughly x: -170..-350, z: -95..+15.
+  // The compound brown only needs to cover the non-field areas:
+  //   • North of the field (z > 15): the apartment block forecourt/roads
+  //   • The service area south of z=-95 and east of the stables compound
+  // A single 120×185 plane centred at (-320, 0) spanned exactly the same z
+  // range as the training field at y=0.06, which sat ABOVE the turf at y=0.07
+  // — causing the brown to intercept the green field surface from below.
+  // Two smaller planes with clear spatial separation fix this.
   
+  // North compound strip (between the apartment blocks and the training field's north edge)
+  s(plane(120, 80, MATS.safetyBrown(), [-320, .04, 55]));   // z 15..95
+  // South compound strip (south of training field, service/road area)
+  s(plane(120, 60, MATS.safetyBrown(), [-320, .04, -125])); // z -95..-155
+
   placeAptGLB(-245, -45, Math.PI / 2, 'APT-BLOCK-1');
   placeAptGLB(-245, 45,  Math.PI / 2, 'APT-BLOCK-2');
 
