@@ -1333,7 +1333,7 @@ function toggleAerial(btn){
     document.getElementById('xix-property-directory').style.display = 'block';
     btn&&btn.classList.add("active");
     deactivate();
-    aerialAngle=0; aerialYawOffset=0; aerialPitch=-0.685;
+    aerialAngle=0; aerialYawOffset=-0.78; aerialPitch=-0.38;
     // Narrow FOV — 55° completely removes architectural edge warping
     const _aerCam = getCamera();
     _aerCam.fov = 55; _aerCam.far = 2000; _aerCam.updateProjectionMatrix();
