@@ -10,9 +10,13 @@ import { GLTFLoader }      from "https://cdn.jsdelivr.net/npm/three@0.165.0/exam
 import { DRACOLoader }     from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/DRACOLoader.js";
 import { OrbitControls }   from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/controls/OrbitControls.js";
 
-// Setup Draco decoder instance
+// Shared singleton — one DRACOLoader + one GLTFLoader for the lifetime of the
+// panel module. Previously a new DRACOLoader was created on every panel open,
+// spinning up a new WASM worker each time. On iOS Safari this compounds with
+// scene.js's own loaders and can exhaust the worker budget.
 const dracoLoader = new DRACOLoader();
 dracoLoader.setDecoderPath("https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/libs/draco/");
+dracoLoader.preload(); // Warm the WASM decoder immediately so the first panel open is fast
 
 //        PRODUCT CATALOGUE                                                                                                                                                                            
 export const PRODUCTS = {
@@ -236,7 +240,32 @@ export function closeProductPanel() {
   const panel = document.getElementById("product-panel");
   if (panel) panel.classList.remove("open");
   document.body.classList.remove("panel-open");
+
+  // Stop the render loop first
   if (panelAnimId) { cancelAnimationFrame(panelAnimId); panelAnimId = null; }
+
+  // Dispose the WebGL renderer and free the GPU context.
+  // iOS Safari enforces a hard limit of ~8 active WebGL contexts — not
+  // disposing the previous one before creating the next is the actual cause
+  // of the "WebGL context lost" crash that appears on repeated panel opens.
+  if (panelRenderer) {
+    panelRenderer.dispose();
+    panelRenderer = null;
+  }
+  if (panelScene) {
+    panelScene.traverse(obj => {
+      if (obj.isMesh) {
+        obj.geometry?.dispose();
+        if (obj.material) {
+          const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+          mats.forEach(m => { m.map?.dispose(); m.dispose(); });
+        }
+      }
+    });
+    panelScene = null;
+  }
+  panelCamera = null;
+  panelControls = null;
 }
 
 //        3D GLB VIEWER                                                                                                                                                                                        
@@ -255,8 +284,11 @@ function initGLBViewer(product) {
   const H = canvas.clientHeight || 320;
 
   // Create renderer
-  panelRenderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-  panelRenderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  panelRenderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: true });
+  // Cap at 1.5 on mobile — a 3× DPR phone rendering a small rotating model
+  // at full res gains nothing visible but costs 4× the fill rate vs 1.5×.
+  const _panelMobile = /iPhone|iPad|Android|Mobile/i.test(navigator.userAgent);
+  panelRenderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, _panelMobile ? 1.5 : 2));
   panelRenderer.setSize(W, H);
   panelRenderer.toneMapping = THREE.ACESFilmicToneMapping;
   panelRenderer.toneMappingExposure = 1.0;
@@ -304,8 +336,9 @@ function initGLBViewer(product) {
 
   if (product.glb) {
     if (fallback) fallback.style.display = "none";
+    // Reuse module-level dracoLoader singleton — never new GLTFLoader() here
     const loader = new GLTFLoader();
-    loader.setDRACOLoader(dracoLoader); // decompress Draco-compressed GLBs
+    loader.setDRACOLoader(dracoLoader);
     loader.load(
       product.glb,
       gltf => {
@@ -344,18 +377,28 @@ function initGLBViewer(product) {
       }
     );
   } else {
-    // No GLB - show render image
+    // No GLB — show render image, and do NOT start a render loop.
+    // Previously the loop ran with canvas display:none, consuming GPU
+    // every frame for zero visible output. Stop here.
     canvas.style.display = "none";
     if (fallback) fallback.style.display = "flex";
+    return; // no render loop needed
   }
 
-  // Render loop
-  function loop() {
+  // Render loop — only reached when a real GLB is loading/loaded
+  // Throttled on mobile to 30fps to halve GPU load without visible quality loss.
+  const isMobile = /iPhone|iPad|Android|Mobile/i.test(navigator.userAgent);
+  let _lastPanelFrame = 0;
+  const _panelFrameMs = isMobile ? 33 : 0; // 30fps cap on mobile, uncapped on desktop
+
+  function loop(now) {
     panelAnimId = requestAnimationFrame(loop);
+    if (isMobile && now - _lastPanelFrame < _panelFrameMs) return;
+    _lastPanelFrame = now;
     panelControls.update();
     panelRenderer.render(panelScene, panelCamera);
   }
-  loop();
+  loop(0);
 }
 
 // Resize viewer when panel resizes
