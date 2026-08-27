@@ -231,31 +231,20 @@ window.addEventListener('keydown', e => {
     horseViewMode = horseViewMode === 'first' ? 'third' : 'first';
 });
 
+// THE PLAYER-MOUNT HORSE — removed graphically per request. In 'ride' mode
+// (app.js) this model's XZ position was set to the CAMERA's own XZ every
+// single frame, offset only in Y by rider eye height — meaning the camera
+// sat essentially inside the horse's own body geometry continuously. That
+// is the "ghostly giant horse" seen filling the screen: the camera was that
+// close to (or inside) the mesh at all times ride mode was active, and
+// switching modes (aerial, the villa interior, toolbar teleports) simply
+// changed when that clipping became visually obvious.
+// Left as a real no-op rather than deleted outright, so nothing that
+// already imports loadHorseGLB/getHorseGroup/setHorsePosition/tickHorseAnim
+// throws a missing-export SyntaxError — the exact class of bug already hit
+// twice in this project from files drifting out of sync with each other.
 export function loadHorseGLB() {
-  makeDracoLoader().load("./assets/horse.glb", gltf => {
-    const model = gltf.scene;
-    model.scale.setScalar(0.022);   // horse.glb — millimetre mesh, unchanged
-    applyPS4Materials(model);
-    const bbox = new THREE.Box3().setFromObject(model);
-    if (bbox.min.y < 0) model.position.y = -bbox.min.y;
-    horseGroup = new THREE.Group();
-    horseGroup.name = 'horseRider';
-    horseGroup.add(model);
-    scene.add(horseGroup);
-    horseMixer = new THREE.AnimationMixer(model);
-    const rawClip = gltf.animations.find(a => /trot|walk|run/i.test(a.name)) || gltf.animations[0];
-    if (rawClip) {
-      const filteredTracks = rawClip.tracks.filter(track => {
-        const isRoot = /^(root|_rootjoint|rootnode|hips_01)/i.test(track.name.split('.')[0]);
-        return !(isRoot && (track.name.endsWith('.position') || track.name.endsWith('.quaternion')));
-      });
-      const clip = new THREE.AnimationClip(rawClip.name, rawClip.duration, filteredTracks);
-      const action = horseMixer.clipAction(clip);
-      action.setLoop(THREE.LoopRepeat, Infinity);
-      action.timeScale = 1.2;
-      action.play();
-    }
-  }, undefined, err => console.error("Horse GLB failed:", err));
+  return;
 }
 
 // ── AMBIENT (NPC) HORSES ─────────────────────────────────────────────────
@@ -389,6 +378,7 @@ export function tickAmbientHorses(delta) {
 }
 
 export function tickHorseAnim(delta, isMoving) {
+  return;   // player-mount horse removed graphically; kept as a no-op export
   if (!horseMixer) return;
   horseMixer.timeScale = isMoving ? 1.2 : 0.2;
   horseMixer.update(delta);
@@ -410,6 +400,7 @@ function getGroundY(x, z) {
 }
 
 export function setHorsePosition(x, z, yaw) {
+  return;   // player-mount horse removed graphically; kept as a no-op export
   if (!horseGroup) return;
   const groundY = getGroundY(x, z);
   if (horseViewMode === 'first') {
@@ -1433,7 +1424,7 @@ export function initScene(canvas) {
     setTimeout(() => { loadApartmentGLB(); addWestCompound(); }, 800);
     setTimeout(() => { loadClubhouseGLB(); }, 1200);
     setTimeout(() => { loadStablesGLB(); }, 1600);
-    setTimeout(() => { loadHorseGLB(); }, 2000);
+    // loadHorseGLB() no longer called — see the no-op definition above.
     spawnAmbientHorses();   // decorative horses on the polo field, training field, paddock
     
     addPaddock();
@@ -3408,7 +3399,7 @@ export function getRenderer()   { return renderer;   }
 export function getScene()      { return scene;      }
 export function getCamera()     { return camera;     }
 export function getClock()      { return clock;      }
-export function getHorseGroup() { return horseGroup; }
+export function getHorseGroup() { return null; }   // player-mount horse removed graphically
 
 // ─── PHASE 2: HOVER VISUALS (GREEN HOLOGRAM) ────────────────────────────────
 window._xixHoverState = null;
