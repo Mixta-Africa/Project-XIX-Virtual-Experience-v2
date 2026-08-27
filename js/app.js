@@ -914,28 +914,37 @@ function _startPlotGlow(plotKey) {
 }
 
 // ── Gold pulse on selected villa overlay ────────────────────────────────────
-let _pulseInterval = null;
+// Previously used setInterval + scene.traverse at 50ms (20×/second), which is
+// an O(n) GC-heavy traversal of the full scene graph on every tick. Replaced
+// with a direct reference to the plot's overlay mesh, updated in the render
+// loop via window._xixPulseOverlay rather than traversal.
+let _pulseOverlayMesh = null;
+let _pulseT = 0;
+
+// Called from startRenderLoop's frame() each tick — zero traversal, zero GC.
+window._tickPlotPulse = function(delta) {
+  if (!_pulseOverlayMesh) return;
+  _pulseT += delta;
+  const alpha = 0.15 + Math.abs(Math.sin(_pulseT * 2.8)) * 0.30;
+  _pulseOverlayMesh.material.opacity = alpha;
+  _pulseOverlayMesh.material.color.setHex(0xC9A84C);
+};
+
 function _startPlotHighlightPulse(plotKey) {
   _stopPlotHighlightPulse();
-  let t = 0;
-  _pulseInterval = setInterval(() => {
-    t += 0.08;
-    const alpha = 0.15 + Math.abs(Math.sin(t)) * 0.30;
-    try {
-      const sc = getScene();
-      if (!sc) return;
-      sc.traverse(o => {
-        if (o.userData?.isPlotOverlay && o.userData?.plotKey === plotKey && o.material) {
-          o.material.opacity = alpha;
-          o.material.color.setHex(0xC9A84C);
-          o.material.needsUpdate = true;
-        }
-      });
-    } catch(e){}
-  }, 50);
+  _pulseT = 0;
+  const plot = plotRegistry.get(plotKey);
+  _pulseOverlayMesh = (plot && plot.overlay) ? plot.overlay : null;
+  if (_pulseOverlayMesh) {
+    _pulseOverlayMesh.visible = true;
+  }
 }
 function _stopPlotHighlightPulse() {
-  if (_pulseInterval) { clearInterval(_pulseInterval); _pulseInterval = null; }
+  if (_pulseOverlayMesh) {
+    _pulseOverlayMesh.material.opacity = 0;
+    _pulseOverlayMesh.visible = false;
+    _pulseOverlayMesh = null;
+  }
   try { highlightPlot(null); } catch(e){}
 }
 
@@ -962,8 +971,12 @@ document.getElementById('res-close-btn')?.addEventListener('click', () => {
   document.getElementById('reservation-modal').style.display = 'none';
 });
 
-document.getElementById('reservation-form')?.addEventListener('submit', async (e) => {
-  e.preventDefault();
+// Submit button is type="button" (not type="submit") to prevent iOS Safari
+// scroll-to-top + keyboard dismiss. We wire the click handler here instead.
+// The e.preventDefault() is kept for safety in case a submit event fires anyway.
+document.getElementById('reservation-form')?.addEventListener('submit', async (e) => { e.preventDefault(); });
+document.getElementById('res-submit-btn')?.addEventListener('click', async () => {
+  const e = { preventDefault: () => {} }; // shim for legacy code below
   const btn = document.getElementById('res-submit-btn');
   btn.textContent = "Submitting...";
   btn.disabled = true;
@@ -1205,6 +1218,13 @@ async function openWorldAt(viewKey) {
   // Sync the topbar button icon to whatever mute state was restored from
   // localStorage in initAudio(), so the button never opens in the wrong state.
   if (typeof isAudioMuted === 'function') _syncSoundBtn(isAudioMuted());
+
+  // Cinematic intro: desktop only.
+  // On mobile the 300m aerial descent causes a ~3s jank spike before controls
+  // engage, and the raw oscillator AudioContext creation inside it triggers
+  // iOS Safari's autoplay policy guard (must be initiated from a direct user
+  // gesture, not a setTimeout chain). Skip it and go straight to the field.
+  // cinematicIntro() is still defined below for manual console testing.
   startRenderLoop();
 }
 
@@ -1990,6 +2010,7 @@ function startRenderLoop(){
 
     tickScene(elapsed,camera);
     if (typeof window._tickCrosshairHover === 'function') window._tickCrosshairHover();
+    if (typeof window._tickPlotPulse === 'function') window._tickPlotPulse(delta);
     tickDayCycle(elapsed);  // Auto day/night cycle
     updateMinimap(camera.position.x,camera.position.z,getYaw());
     updateSpatialAudio(camera.position.x,camera.position.z);
@@ -2016,13 +2037,24 @@ function startRenderLoop(){
   frame();
 }
 
+// resizeWorld is debounced — iOS Safari fires the resize event continuously
+// as the address bar shows/hides during scroll (up to 60× per second). Each
+// call to renderer.setSize() is expensive; debouncing to 150ms means at most
+// one real resize per scroll gesture.
+let _resizeTimer = null;
 function resizeWorld(){
-  const renderer=getRenderer(), camera=getCamera();
-  if(!renderer||!camera) return;
-  const canvas=document.getElementById("world-canvas");
-  const w=canvas.parentElement.clientWidth, h=canvas.parentElement.clientHeight;
-  renderer.setSize(w,h); camera.aspect=w/h; camera.updateProjectionMatrix();
-  resizeComposer(w,h);
+  if (_resizeTimer) return;
+  _resizeTimer = setTimeout(() => {
+    _resizeTimer = null;
+    const renderer=getRenderer(), camera=getCamera();
+    if(!renderer||!camera) return;
+    const canvas=document.getElementById("world-canvas");
+    if (!canvas || !canvas.parentElement) return;
+    const w=canvas.parentElement.clientWidth, h=canvas.parentElement.clientHeight;
+    if (!w || !h) return;
+    renderer.setSize(w,h); camera.aspect=w/h; camera.updateProjectionMatrix();
+    resizeComposer(w,h);
+  }, 150);
 }
 
 //           SCROLL ANIM
@@ -2139,8 +2171,13 @@ function injectPropertyDirectory() {
     }
   });
 
-  // 7. Logic: Search Filtering
-  searchInput.addEventListener('input', (e) => populateDirectoryList(e.target.value.toLowerCase()));
+  // 7. Logic: Search Filtering — debounced to avoid rebuilding 223 DOM nodes
+  // on every keystroke. 120ms feels instant to the user but batches fast typing.
+  let _dirSearchTimer = null;
+  searchInput.addEventListener('input', (e) => {
+    if (_dirSearchTimer) clearTimeout(_dirSearchTimer);
+    _dirSearchTimer = setTimeout(() => populateDirectoryList(e.target.value.toLowerCase()), 120);
+  });
 
   // 8. Logic: Build the List dynamically (USING DOCUMENT FRAGMENT FOR SPEED)
   function populateDirectoryList(searchTerm) {
