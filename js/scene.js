@@ -14,7 +14,7 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=31";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
   buildPalmInstances, tickPalms,
@@ -22,10 +22,20 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js";
+} from "./graphics.js?v=31";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
+
+// NORTH GROUP RIGID SHIFT — defined at top of module so every geometry function
+// (addGround, addRoads, addLake, addVillaRing) reads the same value with no
+// temporal-dead-zone risk. The N/S safety strip was reduced 25m→13m, pulling
+// its outer edge from z=-98 to z=-86 (12m). Moving the whole north group
+// (villas, arc, corners, lake, banks, hedges, cypress, shadows, north grass,
+// crescent road, lake audio, label) inward by this restores the original
+// villa-to-strip relationship with no internal proportions changed.
+const NORTH_SHIFT = 12;   // metres toward the field (+Z)
+if (typeof window !== 'undefined') window._xixNorthShift = NORTH_SHIFT;
 
 const PERF_SETTINGS = {
   fast:     { shadowMapSize: 1024, pixelRatio: 1.5, fogDensity: 0.00002, palmTickDiv: 6 },
@@ -625,15 +635,24 @@ export function initAmbientAudio() {
     _hoovesPanner = hoovesSetup.panner;
     _hoovesGain = hoovesSetup.gain;
 
-    _lakePanner = _makePositionalNoise('water', 30, -115);
-    // Separate gain node for proximity-based lake volume boost (driven each frame)
-    if (_lakePanner) {
+    // Lake water: NOT routed through an HRTF panner. The panner's exponential
+    // distance rolloff stacked with the proximity gain node, double-attenuating
+    // to near-silence. Instead a plain looping noise source → gain → master,
+    // with the gain driven entirely by JS distance in updateAudioForMovement.
+    // This guarantees the water is clearly audible on the north shore.
+    {
+      const bufSize = _audioCtx.sampleRate * 2;
+      const buf = _audioCtx.createBuffer(1, bufSize, _audioCtx.sampleRate);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < bufSize; i++) data[i] = (Math.random() * 2 - 1);
+      const src = _audioCtx.createBufferSource();
+      src.buffer = buf; src.loop = true;
+      const filt = _audioCtx.createBiquadFilter();
+      filt.type = 'lowpass'; filt.frequency.value = 320; filt.Q.value = 0.7;
       const lakeGain = _audioCtx.createGain();
       lakeGain.gain.value = 0;
-      // Re-wire: source already connects to _lakePanner; insert gain in front of master
-      _lakePanner.disconnect();
-      _lakePanner.connect(lakeGain);
-      lakeGain.connect(_masterGain);
+      src.connect(filt); filt.connect(lakeGain); lakeGain.connect(_masterGain);
+      src.start();
       window._lakeGain = lakeGain;
     }
     _clubPanner = _makePositionalNoise('murmur', 0, 108);  
@@ -885,16 +904,13 @@ export function updateAudioForMovement(isMoving, worldX, worldZ) {
     _birdsGain.gain.setTargetAtTime(isMoving ? 0 : 0.8, _audioCtx.currentTime, 0.8);
   }
 
-  // Lake water: explicit distance-based gain so the sound is clearly audible
-  // when near the crescent lake (centred at z≈-108 to -128). The HRTF panner
-  // handles direction; a gain node on the source handles overall level.
-  // _lakePanner is the panner node — its parent gain is unreachable, so we
-  // use the dedicated _lakeGain node tracked alongside it.
+  // Lake water: distance-driven gain (no panner — see initAmbientAudio).
+  // Lake centre ≈ (0, -113), shifted north-group amount toward the field.
   if (window._lakeGain) {
-    const lakeDist = Math.hypot(worldX - 30, worldZ - (-115));
-    // Full volume at 20m, fades to near-zero at 200m
-    const lakeVol = Math.max(0, 1 - lakeDist / 200) * 0.55;
-    window._lakeGain.gain.setTargetAtTime(lakeVol, _audioCtx.currentTime, 0.6);
+    const lakeCz = -113 + (window._xixNorthShift || 0);
+    const lakeDist = Math.hypot(worldX - 0, worldZ - lakeCz);
+    const lakeVol = Math.max(0, 1 - Math.max(0, lakeDist - 30) / 130) * 0.9;
+    window._lakeGain.gain.setTargetAtTime(lakeVol, _audioCtx.currentTime, 0.25);
   }
 }
 
@@ -1285,7 +1301,7 @@ const _hotspots = [];
 
 const HOTSPOT_DEFS = [
   { label:'The Clubhouse',        sublabel:'3,419m²  ·  3 floors  ·  8 skyboxes', pos:[0, 18, 108],    productKey:'clubhouse' },
-  { label:'Crescent Lake',        sublabel:'200m  ·  Waterfront plots',            pos:[30, 14, -115],  productKey:null },
+  { label:'Crescent Lake',        sublabel:'200m  ·  Waterfront plots',            pos:[30, 14, -115 + 12],  productKey:null }, // +12 = north group shift
   { label:'Horse Stables',        sublabel:'56 stalls  ·  Cobblestone yard',       pos:[-375, 16, 90],  productKey:'stables' },
   { label:'Premium Villas',       sublabel:'330m²  ·  Polo-facing',                pos:[-162, 14, 0],   productKey:'villas' },
   { label:'Training Field',       sublabel:'FIP standard  ·  100×160m',            pos:[-390, 12, -40], productKey:'training' },
@@ -1320,6 +1336,24 @@ function _makeHotspotCanvas(label, sublabel) {
 export const HOTSPOT_LAYER = 1;
 
 export function addLandmarkHotspots() {
+  // IDEMPOTENT: remove and dispose any existing hotspot sprites first.
+  // The duplicate "crossed box" behind each label was caused by this running
+  // more than once (a quality/graphics-pipeline rebuild re-adding labels without
+  // clearing the old ones). Whatever calls it, we now guarantee exactly one
+  // sprite per landmark by tearing down the previous set here.
+  if (_hotspots.length) {
+    _hotspots.forEach(h => {
+      if (h.sprite) {
+        scene.remove(h.sprite);
+        if (h.sprite.material) {
+          if (h.sprite.material.map) h.sprite.material.map.dispose();
+          h.sprite.material.dispose();
+        }
+      }
+    });
+    _hotspots.length = 0;
+  }
+
   HOTSPOT_DEFS.forEach(def => {
     const canvas  = _makeHotspotCanvas(def.label, def.sublabel);
     const tex     = new THREE.CanvasTexture(canvas);
@@ -1336,11 +1370,6 @@ export function addLandmarkHotspots() {
     sprite.userData.productKey = def.productKey;
     sprite.userData.label      = def.label;
     sprite.userData.isHotspot  = true;
-    // Three's Water builds its own virtual camera for the reflection pass and
-    // leaves it on the default layer mask, so anything moved off layer 0 never
-    // enters the reflection buffer. The label still floats above the villa —
-    // the main camera opts back in inside tickScene — it just no longer
-    // appears upside down in the water.
     sprite.layers.set(HOTSPOT_LAYER);
     scene.add(sprite);
     _hotspots.push({ sprite, productKey: def.productKey });
@@ -1913,6 +1942,26 @@ function buildGroundMaterial() {
       vec3 innerCol  = mix(grassCol, dryGrass, transT * transT);
       vec3 finalAlbedo = mix(innerCol, latCol, zoneT);
 
+      // ── 4b. CLUBHOUSE HARDSCAPE OVERRIDE ────────────────────────────────
+      // The clubhouse sits at (0, 108) — well inside the grass radius, so the
+      // shader rendered grass under and around it (the "green blob"). The car
+      // park geometry planes sit on top but can't cover the full irregular
+      // shader area at grazing aerial angles. Override the albedo to dark
+      // asphalt-grey across the whole clubhouse precinct so no green shows
+      // through regardless of camera angle or plane coverage.
+      // Ellipse over the clubhouse CAR PARK precinct only: centre (0, 148),
+      // half-extents 150m (x) × 48m (z) → covers z 100..196, x ±150. This is
+      // the car-park + building footprint. It stops at z≈100, north of which
+      // is the field safety zone (z<86) and south villas (z≈88) — those keep
+      // their grass. South edge z≈196 reaches the perimeter road.
+      float clubDX = wx.x / 150.0;
+      float clubDZ = (wx.y - 148.0) / 48.0;
+      float clubR  = sqrt(clubDX*clubDX + clubDZ*clubDZ);
+      float clubMask = 1.0 - smoothstep(0.82, 1.0, clubR);
+      float asphN = fbm2(wx * 0.08 + 91.0);
+      vec3 asphaltCol = mix(vec3(0.14,0.14,0.145), vec3(0.19,0.19,0.20), asphN);
+      finalAlbedo = mix(finalAlbedo, asphaltCol, clubMask);
+
       // ── 5. PBR LIGHTING ────────────────────────────────────────────────
       vec3 N = normalize(vNormal);
       // Fake micro-normal from FBM for surface roughness variation
@@ -2001,24 +2050,21 @@ function addGround() {
     //  stitch into each other and the grass appears to creep over the edge in
     //  a wavy line. Trimmed to the safety edge (x = +-148, z = +-98) with a
     //  4 cm drop, so neither the overlap nor the z-fight can happen.
-    [ 142, 360, [-219, 0.07,   0], { chevron:false } ],  // west villa frontage -> stops at x=-148
-    [ 142, 360, [ 219, 0.07,   0], { chevron:false } ],  // east villa frontage -> stops at x=+148
-    [  46, 360, [-171, 0.07,   0], { chevron:false } ],  // west inner verge, outside the strip
-    [  46, 360, [ 171, 0.07,   0], { chevron:false } ],  // east inner verge, outside the strip
-    [ 430, 108, [   0, 0.07, -156], { chevron:false } ], // north: lake surround + arc frontage
-    // south-inner [430, 56, z=130] and south/clubhouse [430, 110, z=186] removed —
-    // both were turf planes at y=0.07 that rendered on top of the asphalt car parks
-    // at y=0.05, producing the green blob visible around the clubhouse. The car
-    // parks (rear, wings, forecourt) replace those surfaces. Only the far-south
-    // lawn beyond the car park footprint (z > 188) is kept.
-    [ 240, 50,  [   0, 0.07,  213], { chevron:false } ], // far south: beyond car park, before road
-    [ 240, 120, [   0, 0.09,  235], { chevron:false } ], // south beyond the clubhouse
+    // E/W villa frontage lawns — depth reduced from 360m to 150m so they span
+    // only the field-length villa run (z ±75) and do NOT extend past the N/S
+    // safety strips. The 360m version created a grass band at the outer edge of
+    // the shortened N/S safety zones (the green you flagged). Beyond z=±75 the
+    // ground shader handles the surface (grass near centre, laterite outward).
+    [ 90, 150, [-200, 0.07,   0], { chevron:false } ],  // west villa frontage (x -155..-245, z ±75)
+    [ 90, 150, [ 200, 0.07,   0], { chevron:false } ],  // east villa frontage
+    [ 430, 108, [   0, 0.07, -156 + NORTH_SHIFT], { chevron:false } ], // north: lake surround + arc frontage (shifted with north group)
+    // Far-south grass planes removed — the clubhouse hardscape shader override
+    // and the perimeter road now cover z>100; no flat grass fill needed there.
     [  80,  90, [ 240, 0.09,  -30], { chevron:false } ], // paddock turf
     [  80,  80, [ 240, 0.09,   45], { chevron:false } ], // game park turf
-    // West compound: two narrow strips flanking the training field rather than
-    // one large plane that overlapped it. The ground shader handles the laterite
-    // colouring in the compound area; turf only needed at specific zones.
-    [  60,  80, [-320, 0.09,  55], { chevron:false } ],  // north of training field (z 15..95)
+    // West compound: single strip north of the training field. Ground shader
+    // handles laterite colouring elsewhere in the compound.
+    [  60,  80, [-320, 0.09,  55], { chevron:false } ],  // north of training field
   ];
   greens.forEach(([w, dp, pos, o]) => {
     const m = turfPlane(w, dp, pos, Object.assign({ markings:false, wear:false, wind:1.0 }, o));
@@ -2632,7 +2678,8 @@ function addRoads() {
   const cGeo = new THREE.ShapeGeometry(cShape, 64);
   const cMesh = new THREE.Mesh(cGeo, am);
   cMesh.rotation.x = -Math.PI / 2; 
-  cMesh.position.set(0, Y, 0);
+  // Crescent road serves the north villa row — shift it with the north group.
+  cMesh.position.set(0, Y, NORTH_SHIFT);
   cMesh.receiveShadow = true;
   scene.add(cMesh);
 }
@@ -2712,14 +2759,16 @@ function addLake() {
     alpha: 0.94,
   });
   lake.rotation.x = -Math.PI / 2;
-  lake.position.set(0, 0.34, 0);
+  // Rigid shift with the north group: +Z moves the lake toward the field by the
+  // same amount the north villas moved, so the villa-to-lake gap is unchanged.
+  lake.position.set(0, 0.34, NORTH_SHIFT);
   lake.name = 'crescentLake';
   lake.userData.isPlanarWater = true;
   scene.add(lake);
   waterMeshes.push(lake);
   window._xixLakeWater = lake;
 
-  addLakeBanks();
+  addLakeBanks(NORTH_SHIFT);
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -2729,7 +2778,14 @@ function addLake() {
 //  have a wet margin, reed beds, boulders and scattered planting. All of it
 //  is instanced, so the whole shoreline costs 4 draw calls.
 // ══════════════════════════════════════════════════════════════════════════
-function addLakeBanks() {
+function addLakeBanks(northShift) {
+  const _ns = northShift || 0;
+  // All bank geometry goes into this group, then the whole group is translated
+  // by the north shift — so banks, reeds, rocks and shrubs move rigidly with
+  // the lake and villas, preserving every relative position.
+  const bankGroup = new THREE.Group();
+  bankGroup.name = 'lakeBanks';
+  bankGroup.position.z = _ns;
   // Sample points along the lake's crescent edge
   const edge = [];
   const N = PERF_MODE === 'fast' ? 40 : PERF_MODE === 'balanced' ? 80 : 130;
@@ -2778,7 +2834,7 @@ function addLakeBanks() {
     });
     mesh.instanceMatrix.needsUpdate = true;
     mesh.receiveShadow = true;
-    scene.add(mesh);
+    bankGroup.add(mesh);
   });
 
   // ── 1. WET MARGIN — damp, dark soil where water meets land ──────────────
@@ -2796,7 +2852,7 @@ function addLakeBanks() {
   });
   margin.instanceMatrix.needsUpdate = true;
   margin.receiveShadow = true;
-  scene.add(margin);
+  bankGroup.add(margin);
 
   // ── 2. REED BEDS — tall marginal planting, the signature of a real bank ──
   const reedMat = new THREE.MeshStandardMaterial({
@@ -2816,7 +2872,7 @@ function addLakeBanks() {
   }
   reeds.instanceMatrix.needsUpdate = true;
   reeds.castShadow = PERF_MODE !== 'fast';
-  scene.add(reeds);
+  bankGroup.add(reeds);
 
   // ── 3. BOULDERS — irregular rock revetment holding the bank ─────────────
   const rockMat = new THREE.MeshStandardMaterial({
@@ -2836,7 +2892,7 @@ function addLakeBanks() {
   rocks.instanceMatrix.needsUpdate = true;
   rocks.castShadow = PERF_MODE !== 'fast';
   rocks.receiveShadow = true;
-  scene.add(rocks);
+  bankGroup.add(rocks);
 
   // ── 4. SHRUB CLUMPS — low planting softening the turf-to-water line ─────
   const shrubMat = new THREE.MeshStandardMaterial({
@@ -2855,7 +2911,9 @@ function addLakeBanks() {
   }
   shrubs.instanceMatrix.needsUpdate = true;
   shrubs.castShadow = PERF_MODE !== 'fast';
-  scene.add(shrubs);
+  bankGroup.add(shrubs);
+
+  scene.add(bankGroup);   // whole bank group translated by north shift
 }
 
 function addEastLake(){
@@ -3145,6 +3203,7 @@ export function getPlotAtRay(raycaster) {
 // ─── VILLA RING ───────────────────────────────────────────────────────────────
 const villaFootprints=[];
 window._nextUnitId = 1; 
+// NORTH_SHIFT is defined at the top of this module (see performance-mode block).
 
 const NO_BUILD_ZONES=[[0,128,75,55],[-375,90,55,45],[-248,-25,50,22],[-248,55,50,22],
   [-390,0,65,100],[270,65,28,18],[218,0,28,28],[218,52,30,26],[0,0,140,76],[30,-115,105,18]];
@@ -3165,6 +3224,10 @@ function isInNoBuildZone(x,z){
 function addVillaRing(){
   const PLOT=28;
   const cypressPositions=[];
+
+  // NORTH_SHIFT is module scope (defined above) so addLake/addRoads/addGround
+  // read the same value. Hedges, contact shadows and cypress derive from each
+  // villa's own (x,z) inside placeV(), so shifting the villa z moves them too.
   
   function placeV(x,z,ry){
     const plotKey = String(window._nextUnitId++); 
@@ -3177,9 +3240,11 @@ function addVillaRing(){
     if(!isInNoBuildZone(x-rx+fx,z-rz+fz)) cypressPositions.push([x-rx+fx,z-rz+fz]);
   }
   
-  // South row: west and east sides — straight villas facing north
-  [-86, -108, -130, -152].forEach(x => { placeV(x, -120, 0); });
-  [86, 108, 130, 152].forEach(x => { placeV(x, -120, 0); });
+  // North straight row (negative Z = north edge) — SHIFTED inward by NORTH_SHIFT.
+  // (The old comment mislabelled this "South row"; it is the north flank that
+  // faces the field across the lake.)
+  [-86, -108, -130, -152].forEach(x => { placeV(x, -120 + NORTH_SHIFT, 0); });
+  [86, 108, 130, 152].forEach(x => { placeV(x, -120 + NORTH_SHIFT, 0); });
 
   //  The arc sat 10-20 m outside the line the west and east columns hold, so
   //  it read as a separate row floating above the ring instead of part of it.
@@ -3189,7 +3254,7 @@ function addVillaRing(){
   for (let i = 0; i < 11; i++) {
     const t = 0.05 + (i / 10) * 0.90;
     const x = -70 + (t * 140);
-    const z = -118 - Math.sin(t * Math.PI) * 10;
+    const z = (-118 - Math.sin(t * Math.PI) * 10) + NORTH_SHIFT;   // arc shifted with the group
     placeV(x, z, Math.atan2(0 - x, -60 - z));
   }
 
@@ -3221,8 +3286,8 @@ function addVillaRing(){
   //  x = +-162, z = -75, leaving a 46 m hole at each shoulder. The east end
   //  already has its pair at (+-148, 105). Filling both brings the count to
   //  exactly 43 and closes the gap that was reported.
-  placeV(-158, -98,  Math.PI / 4);
-  placeV( 158, -98, -Math.PI / 4);
+  placeV(-158, -98 + NORTH_SHIFT,  Math.PI / 4);
+  placeV( 158, -98 + NORTH_SHIFT, -Math.PI / 4);
 
   // The schedule is the source of truth for the count, so it is asserted here
   // rather than left to be discovered in a screenshot.
