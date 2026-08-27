@@ -625,7 +625,17 @@ export function initAmbientAudio() {
     _hoovesPanner = hoovesSetup.panner;
     _hoovesGain = hoovesSetup.gain;
 
-    _lakePanner = _makePositionalNoise('water', 30, -115); 
+    _lakePanner = _makePositionalNoise('water', 30, -115);
+    // Separate gain node for proximity-based lake volume boost (driven each frame)
+    if (_lakePanner) {
+      const lakeGain = _audioCtx.createGain();
+      lakeGain.gain.value = 0;
+      // Re-wire: source already connects to _lakePanner; insert gain in front of master
+      _lakePanner.disconnect();
+      _lakePanner.connect(lakeGain);
+      lakeGain.connect(_masterGain);
+      window._lakeGain = lakeGain;
+    }
     _clubPanner = _makePositionalNoise('murmur', 0, 108);  
   } catch(e) { console.warn('[XIX] Audio init failed:', e); }
 }
@@ -646,7 +656,11 @@ function _createPanner(x, z, refDist = 20, maxDist = 150) {
 
 function _makePositionalNoise(type, x, z) {
   if (!_audioCtx) return null;
-  const panner = _createPanner(x, z, 30, 200);
+  // Water: refDist 15 (audible up close), maxDist 280 (fades at distance)
+  // Murmur: refDist 20, maxDist 180
+  const refD  = type === 'water' ? 15  : 20;
+  const maxD  = type === 'water' ? 280 : 180;
+  const panner = _createPanner(x, z, refD, maxD);
   const bufSize = _audioCtx.sampleRate * 2;
   const buf = _audioCtx.createBuffer(1, bufSize, _audioCtx.sampleRate);
   const data = buf.getChannelData(0);
@@ -658,10 +672,13 @@ function _makePositionalNoise(type, x, z) {
 
   const filter = _audioCtx.createBiquadFilter();
   filter.type = type === 'water' ? 'lowpass' : 'bandpass';
-  filter.frequency.value = type === 'water' ? 400 : 600;
+  // Water: lower cutoff for a deeper ripple sound rather than white hiss
+  filter.frequency.value = type === 'water' ? 280 : 600;
+  if (type === 'water') filter.Q.value = 0.6;
 
   const gain = _audioCtx.createGain();
-  gain.gain.value = type === 'water' ? 0.015 : 0.005;
+  // Water gain raised from 0.015 to 0.04 — previously nearly inaudible at any distance
+  gain.gain.value = type === 'water' ? 0.04 : 0.005;
 
   source.connect(filter); 
   filter.connect(gain); 
@@ -755,20 +772,38 @@ function _makeNeighAt(x, z) {
   setTimeout(() => panner.disconnect(), 900);
 }
 
+// Fixed positions on the polo field and training field where neighs can originate.
+// Used when no ambient horse model is within range (mobile: horses suppressed).
+const _NEIGH_POSITIONS = [
+  { x: -30, z: -60 }, { x: 25, z: 40 }, { x: -50, z: 20 },  // polo field N
+  { x: 40,  z: -30 }, { x: 0,  z: 60 }, { x: -20, z: -20 }, // polo field S
+  { x: -280, z: 0 },  { x: -260, z: -40 },                   // training field
+];
+
 let _lastNeigh = 0;
 function _tickAmbientNeighs(listenerX, listenerZ) {
   if (!_audioCtx) return;
   const now = performance.now();
-  if (now - _lastNeigh < 6000) return;   // never more than one every 6s
-  // Only from horses within ~90m, and only occasionally (updateSpatialAudio
-  // fires roughly every frame, so this gate is what keeps it from becoming a
-  // dice roll every 16ms) so it reads as an occasional ambient event.
-  if (Math.random() > 0.004) return;
+  if (now - _lastNeigh < 4500) return;   // at most one every 4.5s
+
+  // Slightly higher probability than before (0.006 vs 0.004) so neighs are
+  // heard every 10-20 seconds on average rather than every 30s.
+  if (Math.random() > 0.006) return;
+
+  // First try actual horse models (desktop only)
   for (const h of _ambientHorses) {
     if (!h.model) continue;
     const d = Math.hypot(h.pos.x - listenerX, h.pos.z - listenerZ);
-    if (d < 90) { _makeNeighAt(h.pos.x, h.pos.z); _lastNeigh = now; break; }
+    if (d < 120) { _makeNeighAt(h.pos.x, h.pos.z); _lastNeigh = now; return; }
   }
+
+  // Fallback: pick the nearest fixed position within 180m (always fires on mobile)
+  let best = null, bestD = 180;
+  for (const p of _NEIGH_POSITIONS) {
+    const d = Math.hypot(p.x - listenerX, p.z - listenerZ);
+    if (d < bestD) { bestD = d; best = p; }
+  }
+  if (best) { _makeNeighAt(best.x, best.z); _lastNeigh = now; }
 }
 
 function _makeHooves() {
@@ -848,6 +883,18 @@ export function updateAudioForMovement(isMoving, worldX, worldZ) {
   
   if (_birdsGain) {
     _birdsGain.gain.setTargetAtTime(isMoving ? 0 : 0.8, _audioCtx.currentTime, 0.8);
+  }
+
+  // Lake water: explicit distance-based gain so the sound is clearly audible
+  // when near the crescent lake (centred at z≈-108 to -128). The HRTF panner
+  // handles direction; a gain node on the source handles overall level.
+  // _lakePanner is the panner node — its parent gain is unreachable, so we
+  // use the dedicated _lakeGain node tracked alongside it.
+  if (window._lakeGain) {
+    const lakeDist = Math.hypot(worldX - 30, worldZ - (-115));
+    // Full volume at 20m, fades to near-zero at 200m
+    const lakeVol = Math.max(0, 1 - lakeDist / 200) * 0.55;
+    window._lakeGain.gain.setTargetAtTime(lakeVol, _audioCtx.currentTime, 0.6);
   }
 }
 
@@ -1056,14 +1103,15 @@ function buildInstancedCypress(positions) {
 }
 
 // ─── INSTANCED VILLA RENDERING WITH LOD ───────────────────────────────────────
-// Impostor material: fully transparent — if LOD kicks in at extreme distance, invisible not beige box
-// opacity was 0.0 — confirmed never modified anywhere else in this file, so
-// this was not a fade transition mid-flight, it was a permanently invisible
-// mesh. Any villa past 400m simply vanished rather than degrading to a
-// simplified silhouette. Given a real colour and full opacity, it now reads
-// as a distant building block, not a hole in the estate.
-const _impostorMat   = new THREE.MeshStandardMaterial({ color:0xE8DCC0, roughness:.85, metalness:0 });
-const _impostorGeo   = new THREE.BoxGeometry(14, 8, 12);
+// Impostor: fully invisible during load AND at LOD distance.
+// The previous version gave it a beige colour "so distant villas read as blocks"
+// but at orbital distance the box shape reads as wrong architecture and kills
+// realism. Invisible is correct — a missing villa at distance is less jarring
+// than a white cube. depthWrite:false prevents it from occluding anything behind it.
+const _impostorMat = new THREE.MeshBasicMaterial({
+  transparent: true, opacity: 0, depthWrite: false, visible: false,
+});
+const _impostorGeo = new THREE.BoxGeometry(14, 8, 12);
 
 function placeVillaGLBWithLOD(x, z, ry, plotKey) {
   if (!villaGLBScene) { 
@@ -1941,7 +1989,7 @@ function addGround() {
   // (the flat olive areas seen around the lake and villa frontages).
   const greens = [
     // [ width, depth, [x, y, z], options ]
-    [ 180, 110, [-260, 0.12, -40], { chevron:true  } ],  // training field — raised above ground shader
+    [ 185, 118, [-260, 0.14, -38], { chevron:true  } ],  // training field — wider/taller, covers laterite gaps at edges
     //  GRASS ENCROACHING THE SETBACK
     //  Two separate faults. First, these planes were sized to overlap the
     //  laterite rather than butt against it: the inner verges were 120 m wide
@@ -1967,7 +2015,10 @@ function addGround() {
     [ 240, 120, [   0, 0.09,  235], { chevron:false } ], // south beyond the clubhouse
     [  80,  90, [ 240, 0.09,  -30], { chevron:false } ], // paddock turf
     [  80,  80, [ 240, 0.09,   45], { chevron:false } ], // game park turf
-    [ 120, 150, [-330, 0.09,   40], { chevron:false } ], // west compound lawn
+    // West compound: two narrow strips flanking the training field rather than
+    // one large plane that overlapped it. The ground shader handles the laterite
+    // colouring in the compound area; turf only needed at specific zones.
+    [  60,  80, [-320, 0.09,  55], { chevron:false } ],  // north of training field (z 15..95)
   ];
   greens.forEach(([w, dp, pos, o]) => {
     const m = turfPlane(w, dp, pos, Object.assign({ markings:false, wear:false, wind:1.0 }, o));
@@ -1999,6 +2050,12 @@ function addGround() {
   s(plane(60,  90, asphaltMat, [ 114, .09, 135]));   // x 84..144, z 90..180
   // Forecourt / front approach (between field road and building entrance)
   s(plane(140,  16, asphaltMat, [0,   .09,  118]));  // z 110..126
+  // Gap-fill: ground shader shows between the wings at z≈90..118, x≈-84..+84
+  // These two strips close the remaining visible ground gaps at the clubhouse sides
+  s(plane(168,  30, asphaltMat, [0,   .09,  105]));  // z 90..120 central strip
+  // Full wrap: a ground-level asphalt base the clubhouse sits on — covers any
+  // remaining ground-shader patches at the building footprint
+  s(plane(60,   22, asphaltMat, [0,   .09,  108]));  // clubhouse base plate z 97..119
 }
 
 function _makeMicroTexture(col1, col2, planeW, planeD) {
@@ -3138,27 +3195,19 @@ function addVillaRing(){
 
   [-75, -47, -19].forEach(z => placeV(-162, z, Math.PI / 2));
   [19, 47, 75].forEach(z => placeV(-162, z, Math.PI / 2));
-  //  SW / SE CORNER OVERLAP (rule 5). These sat 6.0 m from the outermost
-  //  south-row villa — a hard clip against a 24 m footprint. The neighbours
-  //  they sit between, (-162, 75) and (-149, 111), are only 38.3 m apart, so
-  //  24 m to each is impossible; the midpoint is the maximum available and
-  //  gives 19.2 m both ways. Anything better needs one of the two runs to
-  //  give up a unit, which would break the 43 count.
-  placeV(-155.5, 93, 3 * Math.PI / 4);
+  // SW/SE corner villas — z adjusted to match the new south row at z≈88
+  placeV(-155.5, 88, 3 * Math.PI / 4);
 
   [-75, -47, -19].forEach(z => placeV(162, z, -Math.PI / 2));
   [19, 47, 75].forEach(z => placeV(162, z, -Math.PI / 2));
-  placeV(155.5, 93, -3 * Math.PI / 4);
+  placeV( 155.5, 88, -3 * Math.PI / 4);
 
-  //  ORIENTATION BUG: these villas sit south of the field (z=+105) and used
-  //  ry=0, which points the front toward +Z — further south, away from the
-  //  field, toward the clubhouse. The mirror-image north row at z=-120 uses
-  //  ry=0 correctly because +Z from there points INTO the field. South-side
-  //  villas need the opposite heading, ry=Math.PI, so their front (+Z at
-  //  ry=0) is rotated 180 degrees to point -Z: north, into the field.
+  // South villas: moved inward from z=105 to z=88 now that the N/S safety zone
+  // is 13m (inner edge at z=86) rather than 25m. 2m clearance from strip edge.
+  // This fills the gap left by the reduced setback and makes the ring more compact.
   for(const side of [-1, 1]) {
     [65, 93, 121, 149].forEach(xa => {
-      placeV(side * xa, 105 + xa * 0.04, Math.PI);
+      placeV(side * xa, 88 + xa * 0.04, Math.PI);
     });
   }
 
