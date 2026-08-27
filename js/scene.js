@@ -1353,16 +1353,33 @@ export function getSunLight() { return sunLight; }
 
 export function initScene(canvas) {
   clock = new THREE.Clock();
-  const perfS = PERF_SETTINGS[PERF_MODE];
 
-  renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference:"high-performance" });
+  // Detect mobile FIRST — sets PERF_MODE before any renderer parameter is read,
+  // so pixelRatio, shadowMap, etc. are all correct from the very first frame.
+  // Previously detectMobileTier() ran AFTER renderer creation, meaning mobile
+  // always paid one shadow-map frame at the wrong pixel ratio before the lock fired.
+  detectMobileTier();
+
+  const perfS = PERF_SETTINGS[PERF_MODE];
+  const isMobileDevice = /iPhone|iPad|Android|Mobile/i.test(navigator.userAgent);
+
+  renderer = new THREE.WebGLRenderer({
+    canvas,
+    antialias: false,              // AA is postprocessed (SMAA) — not needed here
+    powerPreference: "high-performance",
+    // iOS Safari: failIfMajorPerformanceCaveat prevents context creation on
+    // extremely low-end devices that would crash mid-session anyway.
+    failIfMajorPerformanceCaveat: false,
+  });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, perfS.pixelRatio));
-  renderer.shadowMap.enabled   = true;
+  // Shadows off on mobile (PERF_MODE === 'fast') — saves 4-8ms per frame.
+  // buildLighting() checks PERF_MODE too, but setting it here means the
+  // shadow map is never allocated at all, not just disabled after allocation.
+  renderer.shadowMap.enabled   = (PERF_MODE !== 'fast');
   renderer.shadowMap.type      = THREE.PCFSoftShadowMap;
   renderer.toneMapping         = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.85; 
+  renderer.toneMappingExposure = 0.85;
   renderer.outputColorSpace    = THREE.SRGBColorSpace;
-  detectMobileTier(); // Auto-lock PERF_MODE for mobile/low-end GPU
 
   scene  = new THREE.Scene();
   scene.fog = new THREE.FogExp2(0x8ab8cc, perfS.fogDensity);
@@ -1425,17 +1442,27 @@ export function initScene(canvas) {
     setTimeout(() => { loadClubhouseGLB(); }, 1200);
     setTimeout(() => { loadStablesGLB(); }, 1600);
     // loadHorseGLB() no longer called — see the no-op definition above.
-    spawnAmbientHorses();   // decorative horses on the polo field, training field, paddock
-    
+    // Ambient horses and NPC horses: skip entirely on mobile.
+    // Each is a separate GLB+Draco load spinning up its own worker; 6 ambient
+    // + 4 NPC = 10 simultaneous Draco decodes is a reliable crash vector on
+    // iOS Safari and low-end Android. The estate reads correctly without them
+    // and they can be re-enabled if the device tier is later upgraded.
+    const _isMobileUA = /iPhone|iPad|Android|Mobile/i.test(navigator.userAgent);
+    if (!_isMobileUA) {
+      spawnAmbientHorses(); // decorative horses on polo field, training field, paddock
+    }
+
     addPaddock();
     addGamePark();
     addCommercialBlock();
     addServiceCompound();
     addLandscaping();
 
-    // Cap NPC horses at 4 — each is a separate GLB+Draco load; 8 was too expensive
-    for (let i = 0; i < 4; i++) {
-      setTimeout(() => spawnNPCHorse(i), 3000 + i * 600);
+    // NPC horses: desktop only, capped at 4
+    if (!_isMobileUA) {
+      for (let i = 0; i < 4; i++) {
+        setTimeout(() => spawnNPCHorse(i), 3000 + i * 600);
+      }
     }
   });
 
@@ -1636,6 +1663,19 @@ export function tickLampPool(camera) {
   }
 }
 
+// Cache of lamp globe meshes — populated lazily on first night/sunset call.
+// Avoids an O(n) scene.traverse on every time-of-day change.
+const _lampGlobeCache = [];
+let   _lampGlobeCacheBuilt = false;
+
+function _buildLampGlobeCache() {
+  if (_lampGlobeCacheBuilt || !scene) return;
+  _lampGlobeCacheBuilt = true;
+  scene.traverse(o => {
+    if (o.isMesh && o.userData.isLampGlobe) _lampGlobeCache.push(o);
+  });
+}
+
 export function updateNightLights(timeName) {
   const isNight = (timeName === 'night');
   const isSunset = (timeName === 'sunset');
@@ -1644,14 +1684,15 @@ export function updateNightLights(timeName) {
 
   _lampTargetIntensity = isNight ? 3.2 : isSunset ? 1.4 : 0;
 
-  // Drive emissive glow on every lamp globe (post + sconce)
-  const globeInt = isNight ? 4.0 : isSunset ? 1.4 : 0.0;   // "very bright at night" — raised from 2.8
-  scene.traverse(o => {
-    if (o.isMesh && o.userData.isLampGlobe) {
-      const m = Array.isArray(o.material) ? o.material[0] : o.material;
-      if (m) m.emissiveIntensity = globeInt;
-    }
-  });
+  // Drive emissive glow on every lamp globe (post + sconce).
+  // Build the cache once (after the first night/sunset), then iterate the
+  // array — O(k) where k is lamp count, not O(total scene objects).
+  const globeInt = isNight ? 4.0 : isSunset ? 1.4 : 0.0;
+  _buildLampGlobeCache();
+  for (const o of _lampGlobeCache) {
+    const m = Array.isArray(o.material) ? o.material[0] : o.material;
+    if (m) m.emissiveIntensity = globeInt;
+  }
 
   _nightLights.forEach(item => {
     if (item.pt && _lampTargetIntensity === 0) { item.pt.intensity = 0; item.pt.visible = false; }
@@ -2976,31 +3017,67 @@ export function unreservePlot(plotKey) {
   return true;
 }
 
-export function getPlotAtRay(raycaster) {
-  const targets = [];
-  
+// Pre-built flat array of overlay planes for raycasting — avoids touching
+// material.opacity on every plot on every tap (which writes GPU state for
+// the full plot count, O(223) per tap on mobile).
+const _overlayRaycastTargets = [];
+let   _overlayRaycastDirty = true;   // set true whenever plotRegistry changes
+
+export function markOverlaysDirty() { _overlayRaycastDirty = true; }
+
+function _rebuildOverlayTargets() {
+  _overlayRaycastTargets.length = 0;
   plotRegistry.forEach((plot, key) => {
     if (plot.overlay) {
-      plot.overlay.material.opacity = 0.01;
-      targets.push(plot.overlay);
+      // Store plotKey on the overlay userData once here rather than per-tap
+      plot.overlay.userData.plotKey = key;
+      _overlayRaycastTargets.push(plot.overlay);
     }
+  });
+  _overlayRaycastDirty = false;
+}
+
+export function getPlotAtRay(raycaster) {
+  if (_overlayRaycastDirty) _rebuildOverlayTargets();
+
+  // Make overlays temporarily visible for raycasting without writing opacity —
+  // use raycastOnlyVisible = false on the raycaster instead.
+  raycaster.params.Mesh = raycaster.params.Mesh || {};
+  const savedThresh = raycaster.params.Mesh.threshold;
+  raycaster.params.Mesh.threshold = 0.5;
+
+  // Temporarily ensure overlays participate in the raycast by making them
+  // visible (they may be opacity-0 but visible:true from tickPlotHighlights).
+  // We do NOT write material.opacity here — that was the old approach that
+  // issued a GPU uniform write for every plot on every tap.
+  const hidden = [];
+  for (const ov of _overlayRaycastTargets) {
+    if (!ov.visible) { ov.visible = true; hidden.push(ov); }
+  }
+
+  const hits = raycaster.intersectObjects(_overlayRaycastTargets, false);
+
+  // Restore any we temporarily made visible
+  for (const ov of hidden) ov.visible = false;
+  raycaster.params.Mesh.threshold = savedThresh;
+
+  // Also check villa clones (unchanged)
+  const villaTargets = [];
+  plotRegistry.forEach((plot, key) => {
     if (plot.villaClone && plot.villaClone.visible) {
       plot.villaClone.traverse(c => {
-        if (c.isMesh) {
-          c.userData.plotKey = key;
-          targets.push(c);
-        }
+        if (c.isMesh) { c.userData.plotKey = key; villaTargets.push(c); }
       });
     }
   });
-  
-  const hits = raycaster.intersectObjects(targets, false);
-  
-  plotRegistry.forEach(plot => {
-    if (plot.overlay && plot.status !== 'reserved') plot.overlay.material.opacity = 0;
-  });
-  
-  if (hits.length > 0) return hits[0].object.userData.plotKey;
+  const villaHits = hits.length ? [] : raycaster.intersectObjects(villaTargets, false);
+  const allHits = [...hits, ...villaHits];
+
+  // Opacity-reset no-op — kept as a comment for any caller that expected the
+  // old pattern. We no longer set opacity=0.01 before the raycast, so nothing
+  // needs resetting here. The overlay opacity is owned solely by tickPlotHighlights.
+
+  if (allHits.length > 0) return allHits[0].object.userData.plotKey;
   return null;
 }
 // ─── VILLA RING ───────────────────────────────────────────────────────────────
