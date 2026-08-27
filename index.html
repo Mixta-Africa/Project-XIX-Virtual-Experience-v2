@@ -16,10 +16,6 @@
   <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
   <link rel="stylesheet" href="css/styles.css" />
 
-  <!-- Eruda mobile debugger — remove before production -->
-  <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
-  <script>eruda.init();</script>
-
   <script>
     // Global crash reporter for mobile debugging
     window.onerror = function(msg, url, lineNo) {
@@ -670,7 +666,8 @@ window.addEventListener("resize", resizePanelViewer, { passive:true });
         <textarea id="res-notes" rows="2" style="width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(201,168,76,0.3); padding:10px; color:#fff;"></textarea>
       </div>
 
-      <button type="submit" id="res-submit-btn" style="background:#c9a84c; color:#061208; padding:12px; font-weight:600;">Submit Reservation</button>
+      <!-- type="button" prevents iOS Safari scroll-to-top + keyboard dismiss on submit; JS handles validation -->
+      <button type="button" id="res-submit-btn" style="background:#c9a84c; color:#061208; padding:12px; font-weight:600;">Submit Reservation</button>
     </form>
   </div>
 </div>
