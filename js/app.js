@@ -10,7 +10,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
-import { VIEWPOINTS, ZONES, WORLD } from "./data.js";
+import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=31";
 // villa-interior.js removed — dead file, superseded by interior.js
 import {
   initScene, getRenderer, getScene, getCamera, getClock,
@@ -20,12 +20,12 @@ import {
   setHorsePosition, getThirdPersonCameraOffset, setAerialMode,
   getSunLight, getHorseGroup, updateNightLights, updateBuildingNightGlow,
   enterVillaInterior, teleportVillaRoom, exitVillaInterior,
-} from "./scene.js";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js";
+} from "./scene.js?v=31";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=31";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
-} from "./controls.js";
+} from "./controls.js?v=31";
 import {
   initMinimap, updateMinimap,
   buildViewpointStrip, showZonePanel, hideZonePanel,
@@ -33,7 +33,7 @@ import {
   setCaption as _setCaption_raw, showEnterPrompt, hideEnterPrompt,
   showVRButton, showJoystick, hideJoystick, isMobile,
   enableAudio, updateSpatialAudio, initAudio
-} from "./ui.js";
+} from "./ui.js?v=31";
 
 window.plotRegistry = plotRegistry;
 
@@ -1333,7 +1333,11 @@ function toggleAerial(btn){
     document.getElementById('xix-property-directory').style.display = 'block';
     btn&&btn.classList.add("active");
     deactivate();
-    aerialAngle=0; aerialYawOffset=-0.78; aerialPitch=-0.38;
+    // elevAngle in the render loop = -aerialPitch, measured FROM THE ZENITH.
+    // Small value = straight down (top view). For the low oblique establishing
+    // angle, elevAngle must be LARGE (~1.1 rad ≈ 63° off vertical).
+    // -1.1 → R_ground≈232m, height≈118m: camera low and out, looking across.
+    aerialAngle=-0.8; aerialYawOffset=0; aerialPitch=-1.1;
     // Narrow FOV — 55° completely removes architectural edge warping
     const _aerCam = getCamera();
     _aerCam.fov = 55; _aerCam.far = 2000; _aerCam.updateProjectionMatrix();
