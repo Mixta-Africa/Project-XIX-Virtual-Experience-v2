@@ -1978,20 +1978,14 @@ function startRenderLoop(){
       _prevCamX = camera.position.x;
       _prevCamZ = camera.position.z;
 
-      // Horse: direct reference via exported getter — O(1), no scene walk
-      const _horseRoot = getHorseGroup();
-
-      if (moveMode === 'ride') {
-        if (_horseRoot) _horseRoot.visible = true;
-        // Place horse at camera XZ on true ground. Camera sits at rider eye height.
-        // Horse faces the direction of travel (same as camera yaw).
-        if (typeof setHorsePosition === 'function') {
-          setHorsePosition(camera.position.x, camera.position.z, camera.rotation.y);
-        }
-        if (typeof tickHorseAnim === 'function') tickHorseAnim(delta, moved);
-      } else {
-        if (_horseRoot) _horseRoot.visible = false;
-      }
+      // Player-mount horse removed graphically — this block used to place the
+      // horse model at the camera's own XZ position every frame, meaning the
+      // camera sat essentially inside the horse's body continuously in 'ride'
+      // mode: the "ghostly giant horse" that filled the screen. getHorseGroup
+      // now always returns null and the setter/tick functions are no-ops, so
+      // this block is intentionally empty rather than deleted — moveMode still
+      // distinguishes ride/walk eye height elsewhere, which was not asked to
+      // change, only the horse's visual presence.
     }
 
     tickScene(elapsed,camera);
