@@ -1111,16 +1111,29 @@ function placeVillaGLBWithLOD(x, z, ry, plotKey) {
 // establishing shot — offline architectural renders never have this problem
 // because they don't need a tight frustum for real-time performance.
 let _aerialSavedFrustum = null;
-let _aerialModeActive = false;   // guards against a quality-tier change mid-orbit
-                                  // clobbering the widened frustum below
+let _aerialModeActive = false;
+// Quality tier saved before aerial entry so it can be restored on exit.
+// Aerial is the flagship shot — it should always render at the highest
+// quality the device's GPU can sustain, regardless of walking-mode tier.
+let _aerialSavedPerfMode = null;
 
 export function setAerialMode(on) {
   _aerialModeActive = on;
   const sun = getSunLight ? getSunLight() : null;
   if (on) {
-    // Force every villa to full detail — the flagship shot should never
-    // show a simplified building, and there are far fewer simultaneous
-    // draw calls to worry about during a slow orbit than during walking.
+    // Save current PERF_MODE and force 'rich' for the aerial shot.
+    // On a mobile device in 'fast' mode this will briefly increase GPU load,
+    // but the aerial camera is static/slow and the estate is a single draw-list
+    // with no character movement — the budget is very different from walking.
+    // 'balanced' is the floor: never go below it even if the saved mode was 'fast'.
+    _aerialSavedPerfMode = PERF_MODE;
+    const aerialMode = 'rich';  // always request richest; setPerfMode caps if GPU can't sustain
+    setPerfMode(aerialMode);
+    if (typeof setPerfModeGraphics === 'function') setPerfModeGraphics(aerialMode);
+    // Raise pixel ratio for aerial — max native DPR for a crisp estate shot.
+    if (renderer) renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2.5));
+
+    // Force every villa to full detail
     scene.traverse(obj => {
       if (obj.isLOD && obj.userData.isVillaGLB && obj.levels[1]) {
         obj.levels[1].distance = 1e6;
@@ -1129,26 +1142,38 @@ export function setAerialMode(on) {
     if (sun && sun.shadow) {
       const cam = sun.shadow.camera;
       _aerialSavedFrustum = { l: cam.left, r: cam.right, t: cam.top, b: cam.bottom, f: cam.far };
-      // 380m half-extent covers the full WORLD bounds with margin; shadow
-      // texel density drops accordingly, which is the correct trade at
-      // orbital viewing distance — coverage matters more than crispness
-      // when the whole estate is on screen at once.
+      // 380m half-extent covers the full WORLD bounds with margin
       cam.left = -380; cam.right = 380; cam.top = 380; cam.bottom = -380;
       cam.far  = 900;
       cam.updateProjectionMatrix();
     }
   } else {
+    // Restore LOD distances
     scene.traverse(obj => {
       if (obj.isLOD && obj.userData.isVillaGLB && obj.levels[1]) {
         obj.levels[1].distance = 400;
       }
     });
+    // Restore shadow frustum
     if (sun && sun.shadow && _aerialSavedFrustum) {
       const cam = sun.shadow.camera, f = _aerialSavedFrustum;
       cam.left = f.l; cam.right = f.r; cam.top = f.t; cam.bottom = f.b; cam.far = f.f;
       cam.updateProjectionMatrix();
       _aerialSavedFrustum = null;
     }
+    // Restore PERF_MODE to what it was before aerial entry.
+    // Walking mode uses whatever tier was set (fast on mobile, etc.);
+    // rich was only appropriate for the slow orbital shot.
+    if (_aerialSavedPerfMode && _aerialSavedPerfMode !== PERF_MODE) {
+      setPerfMode(_aerialSavedPerfMode);
+      if (typeof setPerfModeGraphics === 'function') setPerfModeGraphics(_aerialSavedPerfMode);
+      // Restore pixel ratio for the saved tier
+      if (renderer) {
+        const savedS = PERF_SETTINGS[_aerialSavedPerfMode];
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, savedS ? savedS.pixelRatio : 1.5));
+      }
+    }
+    _aerialSavedPerfMode = null;
   }
 }
 
@@ -1933,8 +1958,12 @@ function addGround() {
     [  46, 360, [-171, 0.07,   0], { chevron:false } ],  // west inner verge, outside the strip
     [  46, 360, [ 171, 0.07,   0], { chevron:false } ],  // east inner verge, outside the strip
     [ 430, 108, [   0, 0.07, -156], { chevron:false } ], // north: lake surround + arc frontage
-    [ 430,  56, [   0, 0.07,  130], { chevron:false } ], // south-inner: starts clear of the strip
-    [ 430, 110, [   0, 0.07,  186], { chevron:false } ], // south / clubhouse lawn
+    // south-inner [430, 56, z=130] and south/clubhouse [430, 110, z=186] removed —
+    // both were turf planes at y=0.07 that rendered on top of the asphalt car parks
+    // at y=0.05, producing the green blob visible around the clubhouse. The car
+    // parks (rear, wings, forecourt) replace those surfaces. Only the far-south
+    // lawn beyond the car park footprint (z > 188) is kept.
+    [ 240, 50,  [   0, 0.07,  213], { chevron:false } ], // far south: beyond car park, before road
     [ 240, 120, [   0, 0.09,  235], { chevron:false } ], // south beyond the clubhouse
     [  80,  90, [ 240, 0.09,  -30], { chevron:false } ], // paddock turf
     [  80,  80, [ 240, 0.09,   45], { chevron:false } ], // game park turf
@@ -1963,13 +1992,13 @@ function addGround() {
   });
   asphaltMat.userData.isRoadSurface = true;
   // Rear / south car park — large central block
-  s(plane(180, 70, asphaltMat, [0,   .05,  153]));  // z 118..188
+  s(plane(180, 70, asphaltMat, [0,   .09,  153]));  // z 118..188
   // Left wing car park (west of clubhouse)
-  s(plane(60,  90, asphaltMat, [-114, .05, 135]));   // x -84..-144, z 90..180
+  s(plane(60,  90, asphaltMat, [-114, .09, 135]));   // x -84..-144, z 90..180
   // Right wing car park (east of clubhouse)
-  s(plane(60,  90, asphaltMat, [ 114, .05, 135]));   // x 84..144, z 90..180
+  s(plane(60,  90, asphaltMat, [ 114, .09, 135]));   // x 84..144, z 90..180
   // Forecourt / front approach (between field road and building entrance)
-  s(plane(140,  16, asphaltMat, [0,   .05,  118]));  // z 110..126
+  s(plane(140,  16, asphaltMat, [0,   .09,  118]));  // z 110..126
 }
 
 function _makeMicroTexture(col1, col2, planeW, planeD) {
@@ -2461,18 +2490,16 @@ function addSafetyZone() {
     return m;
   };
 
-  // Safety zone proportions derived from both masterplans:
-  // N/S run-off (behind goals): 25m deep × 298m wide — same as before.
-  // E/W side strips (pony lines): 27m wide × 146m long.
-  // In the masterplan the side strips are clearly thicker than the narrow 11m
-  // currently rendered — the goal-end zones (N/S) and side zones (E/W) read
-  // as roughly equal visual mass from aerial, which requires ~25-27m on each side.
-  // The field is 274×146; with 27m side strips the full brown envelope becomes
-  // 328 wide × 196 deep, which matches the masterplan proportionally.
-  s(plane(298, 25, mkMat(298, 25), [0, .11, -85.5]));   // north (behind N goal)
-  s(plane(298, 25, mkMat(298, 25), [0, .11,  85.5]));   // south (behind S goal)
-  s(plane(27, 146, mkMat(27, 146), [-150.5, .11, 0]));  // west side strip (was 11m)
-  s(plane(27, 146, mkMat(27, 146), [ 150.5, .11, 0]));  // east side strip (was 11m)
+  // Safety zone proportions — revised after visual review:
+  // N/S run-off (behind goals): halved from 25m to 13m deep. Centre shifts from
+  // ±85.5m to ±79.5m (field half-depth 73m + 6.5m half-strip = 79.5m).
+  // E/W side strips: narrowed from 27m to 20m and shifted inward so their
+  // outer edge (±157m) clears the villa footprint at ±162m. Inner edge at
+  // ±137m matches the field edge exactly.
+  s(plane(298, 13, mkMat(298, 13), [0, .11, -79.5]));   // north (behind N goal)
+  s(plane(298, 13, mkMat(298, 13), [0, .11,  79.5]));   // south (behind S goal)
+  s(plane(20, 146, mkMat(20, 146), [-147, .11, 0]));     // west side strip
+  s(plane(20, 146, mkMat(20, 146), [ 147, .11, 0]));     // east side strip
 }
 
 function addYardMarkings() {
