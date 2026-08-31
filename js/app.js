@@ -10,22 +10,22 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
-import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=34";
+import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=35";
 // villa-interior.js removed — dead file, superseded by interior.js
 import {
   initScene, getRenderer, getScene, getCamera, getClock,
   tickScene, updateSky, updateSkyForTime, plotRegistry, reservePlot, getPlotAtRay,
-  highlightPlot, setPerfMode, PERF_MODE,
+  highlightPlot, setPerfMode, PERF_MODE, pickPlotFast, markPickTargetsDirty, refreshReservedOverlays,
   RIDER_EYE_HEIGHT, FOOT_EYE_HEIGHT, tickHorse, tickHorseAnim,
   setHorsePosition, getThirdPersonCameraOffset, setAerialMode,
   getSunLight, getHorseGroup, updateNightLights, updateBuildingNightGlow,
   enterVillaInterior, teleportVillaRoom, exitVillaInterior,
-} from "./scene.js?v=34";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=34";
+} from "./scene.js?v=35";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=35";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
-} from "./controls.js?v=34";
+} from "./controls.js?v=35";
 import {
   initMinimap, updateMinimap,
   buildViewpointStrip, showZonePanel, hideZonePanel,
@@ -33,7 +33,7 @@ import {
   setCaption as _setCaption_raw, showEnterPrompt, hideEnterPrompt,
   showVRButton, showJoystick, hideJoystick, isMobile,
   enableAudio, updateSpatialAudio, initAudio
-} from "./ui.js?v=34";
+} from "./ui.js?v=35";
 
 window.plotRegistry = plotRegistry;
 
@@ -768,29 +768,132 @@ function bindPlotSystem() {
   let _lastCrosshairHover = 0;
   const _crosshairRay = new THREE.Raycaster();
   const _screenCentre = new THREE.Vector2(0, 0);
-  window._tickCrosshairHover = function() {
-    if (!document.pointerLockElement) return;
-    if (!document.getElementById("world-overlay")?.classList.contains("open")) return;
-    const now = performance.now();
-    if (now - _lastCrosshairHover < 50) return;   // match the old 20/sec cadence
-    _lastCrosshairHover = now;
+  // ─── INSTANT HOVER HIGHLIGHT ───────────────────────────────────────────────
+  // Rewritten for Windows-desktop-style immediacy. The old version:
+  //   • bailed unless the pointer was locked → never ran in aerial at all
+  //   • throttled to 50ms (20Hz) → visibly behind the cursor
+  //   • raycast every top-level scene child looking for badges
+  // Now: driven by real mousemove, coalesced to at most one raycast per
+  // animation frame (so it can never outpace rendering), tests only the cached
+  // overlay planes, and lights up on the same frame the cursor arrives.
+  const _hoverNDC = new THREE.Vector2(0, 0);
+  let _hoverRafPending = false;
+  let _hoverClientX = 0, _hoverClientY = 0;
+  let _hoverPointerLocked = false;
+
+  function _runHoverPick() {
+    _hoverRafPending = false;
+    const overlay = document.getElementById("world-overlay");
+    if (!overlay || !overlay.classList.contains("open")) return;
 
     const cam = typeof getCamera === 'function' ? getCamera() : null;
-    const sc  = typeof getScene  === 'function' ? getScene()  : null;
-    if (!cam || !sc) return;
-    const raycaster = _crosshairRay;
-    raycaster.setFromCamera(_screenCentre, cam);   // screen centre, reused each call
+    if (!cam) return;
 
-    const badgeHits = raycaster.intersectObjects(sc.children, false)
-      .filter(h => h.object.userData?.isPlotBadge);
-    let plotKey = null;
-    if (badgeHits.length > 0) {
-      plotKey = badgeHits[0].object.userData.plotKey;
-    } else if (typeof getPlotAtRay === 'function') {
-      plotKey = getPlotAtRay(raycaster);
-    }
+    // Pointer-locked walkthrough aims from the screen centre (the crosshair);
+    // aerial and any unlocked mode aim from the actual cursor position.
+    if (_hoverPointerLocked) _hoverNDC.set(0, 0);
+
+    _crosshairRay.setFromCamera(_hoverNDC, cam);
+    const plotKey = (typeof pickPlotFast === 'function')
+      ? pickPlotFast(_crosshairRay)
+      : (typeof getPlotAtRay === 'function' ? getPlotAtRay(_crosshairRay) : null);
+
     if (typeof window.setHoveredPlot === 'function') window.setHoveredPlot(plotKey);
+    _updateHoverLabel(plotKey);
+  }
+
+  function _queueHoverPick() {
+    if (_hoverRafPending) return;      // coalesce: at most one pick per frame
+    _hoverRafPending = true;
+    requestAnimationFrame(_runHoverPick);
+  }
+
+  canvas.addEventListener('mousemove', e => {
+    _hoverPointerLocked = !!document.pointerLockElement;
+    if (!_hoverPointerLocked) {
+      const r = canvas.getBoundingClientRect();
+      _hoverNDC.set(
+        ((e.clientX - r.left) / r.width) * 2 - 1,
+        -((e.clientY - r.top) / r.height) * 2 + 1
+      );
+      _hoverClientX = e.clientX;
+      _hoverClientY = e.clientY;
+    }
+    _queueHoverPick();
+  }, { passive: true });
+
+  // Clear the highlight when the cursor leaves the canvas
+  canvas.addEventListener('mouseleave', () => {
+    if (typeof window.setHoveredPlot === 'function') window.setHoveredPlot(null);
+    _updateHoverLabel(null);
+  }, { passive: true });
+
+  // In pointer-locked walkthrough the mouse doesn't emit position changes the
+  // same way, and the camera itself moves — so re-pick every frame from centre.
+  // This is cheap now (one raycast against cached quads, no allocations).
+  window._tickCrosshairHover = function() {
+    if (!document.pointerLockElement) return;
+    _hoverPointerLocked = true;
+    _queueHoverPick();
   };
+
+  // ─── PLOT NUMBER LABEL ─────────────────────────────────────────────────────
+  // Follows the cursor (or sits just under the crosshair when pointer-locked)
+  // and shows the plot number, type and status the instant a plot is hovered.
+  let _hoverLabelEl = null;
+  let _hoverLabelKey = null;
+  function _updateHoverLabel(plotKey) {
+    if (!_hoverLabelEl) {
+      _hoverLabelEl = document.createElement('div');
+      _hoverLabelEl.id = 'plot-hover-label';
+      _hoverLabelEl.style.cssText =
+        'position:fixed;pointer-events:none;z-index:10000;display:none;' +
+        'background:rgba(8,16,10,0.94);border:1px solid rgba(201,168,76,0.55);' +
+        'border-radius:7px;padding:7px 11px;font-family:Inter,system-ui,sans-serif;' +
+        'font-size:12.5px;line-height:1.35;color:#f2e9d0;white-space:nowrap;' +
+        'box-shadow:0 4px 14px rgba(0,0,0,0.45);';
+      document.body.appendChild(_hoverLabelEl);
+    }
+
+    if (!plotKey) {
+      if (_hoverLabelEl.style.display !== 'none') _hoverLabelEl.style.display = 'none';
+      _hoverLabelKey = null;
+      return;
+    }
+
+    const plot = (typeof plotRegistry !== 'undefined') ? plotRegistry.get(plotKey) : null;
+    if (!plot) { _hoverLabelEl.style.display = 'none'; _hoverLabelKey = null; return; }
+
+    // Only rebuild the markup when the plot actually changes; on plain cursor
+    // movement over the same plot we just reposition, which costs nothing.
+    if (_hoverLabelKey !== plotKey) {
+      _hoverLabelKey = plotKey;
+      const reserved = plot.status === 'reserved';
+      const statusCol = reserved ? '#e0704a' : '#5fd07a';
+      const statusTxt = reserved ? 'RESERVED' : 'AVAILABLE';
+      _hoverLabelEl.innerHTML =
+        `<div style="color:#c9a84c;font-weight:600;letter-spacing:0.4px;">PLOT ${plotKey}</div>` +
+        `<div style="opacity:0.85;font-size:11.5px;">${plot.type || 'Villa'}</div>` +
+        `<div style="color:${statusCol};font-size:10.5px;font-weight:600;letter-spacing:0.6px;margin-top:2px;">${statusTxt}</div>`;
+      _hoverLabelEl.style.display = 'block';
+    }
+
+    // Position: follow the cursor when free, sit under the crosshair when locked
+    let lx, ly;
+    if (_hoverPointerLocked) {
+      lx = window.innerWidth / 2 + 18;
+      ly = window.innerHeight / 2 + 14;
+    } else {
+      lx = _hoverClientX + 16;
+      ly = _hoverClientY + 16;
+    }
+    // Keep it on screen
+    const w = _hoverLabelEl.offsetWidth || 150, h = _hoverLabelEl.offsetHeight || 50;
+    if (lx + w > window.innerWidth - 8)  lx = _hoverClientX - w - 16;
+    if (ly + h > window.innerHeight - 8) ly = _hoverClientY - h - 16;
+    _hoverLabelEl.style.left = lx + 'px';
+    _hoverLabelEl.style.top  = ly + 'px';
+  }
 
   // 2. Click to Select (Only fires on clean taps)
   canvas.addEventListener("pointerup", e => {
@@ -808,17 +911,10 @@ function bindPlotSystem() {
       if (!cam) return;
       raycaster.setFromCamera(mouse, cam);
 
-      const sc = typeof getScene === 'function' ? getScene() : null;
-      if (!sc) return;
-
-      const badgeHits = raycaster.intersectObjects(sc.children, false).filter(h => h.object.userData?.isPlotBadge);
-      let plotKey = null;
-      
-      if (badgeHits.length > 0) {
-        plotKey = badgeHits[0].object.userData.plotKey;
-      } else if (typeof getPlotAtRay === 'function') {
-        plotKey = getPlotAtRay(raycaster);
-      }
+      // Same cached overlay picker the hover uses — no full-scene traversal.
+      const plotKey = (typeof pickPlotFast === 'function')
+        ? pickPlotFast(raycaster)
+        : (typeof getPlotAtRay === 'function' ? getPlotAtRay(raycaster) : null);
 
       if (plotKey) {
         if (document.pointerLockElement) document.exitPointerLock();
