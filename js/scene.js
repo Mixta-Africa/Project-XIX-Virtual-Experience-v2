@@ -14,7 +14,7 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=32";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=34";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
   buildPalmInstances, tickPalms,
@@ -22,7 +22,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=32";
+} from "./graphics.js?v=34";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -38,13 +38,30 @@ const NORTH_SHIFT = 12;   // metres toward the field (+Z)
 if (typeof window !== 'undefined') window._xixNorthShift = NORTH_SHIFT;
 
 const PERF_SETTINGS = {
-  fast:     { shadowMapSize: 1024, pixelRatio: 1.5, fogDensity: 0.00002, palmTickDiv: 6 },
-  balanced: { shadowMapSize: 2048, pixelRatio: 1.75,fogDensity: 0.00002, palmTickDiv: 3 },
-  rich:     { shadowMapSize: 4096, pixelRatio: 2.0, fogDensity: 0.00002, palmTickDiv: 1 },
+  // 'balanced' is now the CEILING for integrated-GPU laptops (see detectGPUTier),
+  // so it is tuned for that hardware rather than for a mid-range discrete card.
+  // shadowMapSize 2048 and pixelRatio 1.25 keep fill-rate and shadow cost within
+  // what shared-memory graphics can sustain; 1.75 DPR on a scaled laptop display
+  // was rendering ~3x the pixels of native for no perceptible sharpness gain.
+  fast:     { shadowMapSize: 1024, pixelRatio: 1.25, fogDensity: 0.00002, palmTickDiv: 6 },
+  balanced: { shadowMapSize: 2048, pixelRatio: 1.25, fogDensity: 0.00002, palmTickDiv: 3 },
+  rich:     { shadowMapSize: 4096, pixelRatio: 2.0,  fogDensity: 0.00002, palmTickDiv: 1 },
 };
 
 export function setPerfMode(mode) {
   if (!PERF_SETTINGS[mode]) return;
+
+  // Enforce the hardware ceiling set by detectMobileTier()/detectGPUTier().
+  // An integrated-GPU laptop is capped at 'balanced' and a software renderer at
+  // 'fast', no matter who asks — the Quality buttons, aerial mode, or the
+  // adaptive governor. This is what stops an EliteBook landing on Rich at all.
+  const ORDER = ['fast', 'balanced', 'rich'];
+  const cap = window._xixMaxTier;
+  if (cap && ORDER.indexOf(mode) > ORDER.indexOf(cap)) {
+    console.log(`[XIX] Quality '${mode}' exceeds this GPU's ceiling — clamped to '${cap}'`);
+    mode = cap;
+  }
+
   PERF_MODE = mode;
   setPerfModeGraphics(mode);
   if (!renderer) return;
@@ -57,6 +74,10 @@ export function setPerfMode(mode) {
       sunLight.shadow.map.dispose();
       sunLight.shadow.map = null;
     }
+    // shadowMap.autoUpdate is OFF, so the disposed map above would NEVER be
+    // recreated on its own — shadows would silently vanish after any quality
+    // switch. Explicitly request a regeneration at the new resolution.
+    requestShadowUpdate(2);
   }
   
   if (scene && scene.fog) {
@@ -1056,6 +1077,7 @@ function buildInstancedCypress(positions) {
     cones.castShadow = PERF_MODE !== 'fast';
     cones.receiveShadow = true;
     scene.add(cones);
+    requestShadowUpdate(2);   // new geometry → refresh static shadow map
   }
 
   if (CAP === 0) return;
@@ -1112,6 +1134,7 @@ function buildInstancedCypress(positions) {
     trees.frustumCulled = true;
     trees.name = 'heroTrees';
     scene.add(trees);
+    requestShadowUpdate(2);   // new geometry → refresh static shadow map
 
     const tris = Math.round(geo.attributes.position.count / 3);
     console.log(`[XIX] Trees: ${heroList.length} radial-shell instances, ${tris.toLocaleString()} tris each`);
@@ -1208,6 +1231,7 @@ export function setAerialMode(on) {
       cam.left = -380; cam.right = 380; cam.top = 380; cam.bottom = -380;
       cam.far  = 900;
       cam.updateProjectionMatrix();
+      requestShadowUpdate(2);   // frustum changed → regenerate once
     }
   } else {
     // Restore LOD distances
@@ -1222,6 +1246,7 @@ export function setAerialMode(on) {
       cam.left = f.l; cam.right = f.r; cam.top = f.t; cam.bottom = f.b; cam.far = f.f;
       cam.updateProjectionMatrix();
       _aerialSavedFrustum = null;
+      requestShadowUpdate(2);   // frustum restored → regenerate once
     }
     // Restore PERF_MODE to what it was before aerial entry.
     // Walking mode uses whatever tier was set (fast on mobile, etc.);
@@ -1455,26 +1480,94 @@ let _envMapRef = null;
 // Call detectMobileTier() immediately after renderer is created in initScene().
 // On mobile UA: locks PERF_MODE to 'fast' regardless of user setting.
 // On low-end GPU: caps at 'balanced' if max texture size < 4096.
+// ─── GPU CAPABILITY DETECTION ────────────────────────────────────────────────
+// Returns 'weak' | 'integrated' | 'discrete'.
+//
+// The previous heuristic (MAX_TEXTURE_SIZE < 4096) was effectively dead code:
+// Intel UHD and Iris Xe both report 16384, so every integrated laptop GPU sailed
+// past it and was treated as a high-end desktop card. That is why an HP EliteBook
+// ended up running the full Rich pipeline (GTAO + 4096 shadows + planar water)
+// that it has no chance of sustaining. We now read the actual renderer string.
+function detectGPUTier() {
+  if (!renderer) return 'integrated';           // assume modest until proven otherwise
+  let name = '';
+  try {
+    const gl  = renderer.getContext();
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    if (ext) name = String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || '');
+    if (!name) name = String(gl.getParameter(gl.RENDERER) || '');
+  } catch (e) { /* blocked by privacy settings — fall through */ }
+
+  window._xixGPUName = name;
+
+  // Software / fallback renderers — barely render at all
+  if (/SwiftShader|llvmpipe|Software|Microsoft Basic|ANGLE \(Microsoft\)/i.test(name)) return 'weak';
+
+  // Discrete cards that can genuinely sustain the full pipeline.
+  // Apple Silicon is technically integrated but performs like a discrete GPU.
+  if (/NVIDIA|GeForce|RTX|GTX|Quadro|Radeon RX|Radeon Pro|Arc A\d|Apple M\d/i.test(name)) return 'discrete';
+
+  // Intel integrated (UHD, Iris, Iris Xe, HD Graphics) and AMD Vega/Radeon
+  // integrated graphics — the EliteBook case.
+  if (/Intel|UHD|Iris|HD Graphics|Vega \d|Radeon\(TM\) Graphics|Mesa/i.test(name)) return 'integrated';
+
+  return 'integrated';   // unknown → assume integrated; safer to under-promise
+}
+
 function detectMobileTier() {
   const isMobile = /iPhone|iPad|Android|Mobile/i.test(navigator.userAgent);
   if (isMobile) {
     PERF_MODE = 'fast';
     if (typeof setPerfModeGraphics === 'function') setPerfModeGraphics('fast');
     console.log('[XIX] Mobile UA detected → PERF_MODE locked to fast');
+    window._xixGPUTier = 'mobile';
+    window._xixMaxTier = 'fast';
     return;
   }
-  if (renderer) {
-    const gl     = renderer.getContext();
-    const maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE);
-    if (maxTex < 4096 && PERF_MODE === 'rich') {
-      PERF_MODE = 'balanced';
-      console.log('[XIX] Low-end GPU (maxTex:', maxTex, ') → PERF_MODE capped to balanced');
-    }
+
+  const tier = detectGPUTier();
+  window._xixGPUTier = tier;
+
+  // Cap the tier this machine is ALLOWED to reach. The Quality buttons and the
+  // adaptive governor both respect this ceiling, so a machine can never be put
+  // into a mode it cannot sustain — by the user, by aerial, or by anything else.
+  const TIER_CAP = { weak: 'fast', integrated: 'balanced', discrete: 'rich' };
+  const cap = TIER_CAP[tier] || 'balanced';
+  window._xixMaxTier = cap;
+
+  const ORDER = ['fast', 'balanced', 'rich'];
+  if (ORDER.indexOf(PERF_MODE) > ORDER.indexOf(cap)) {
+    PERF_MODE = cap;
+    if (typeof setPerfModeGraphics === 'function') setPerfModeGraphics(cap);
   }
+
+  console.log(`[XIX] GPU: "${window._xixGPUName || 'unknown'}" → tier=${tier}, max quality=${cap}, active=${PERF_MODE}`);
 }
 
 
 export function getSunLight() { return sunLight; }
+
+// ─── STATIC SHADOW MAP CONTROL ───────────────────────────────────────────────
+// renderer.shadowMap.autoUpdate is OFF (see initScene). Anything that genuinely
+// changes what the shadows should look like must call this. It is cheap: it
+// sets a flag, and three.js renders the shadow map on the NEXT frame only.
+// Called on: time-of-day change, GLB model arrival, aerial shadow-frustum
+// change, and weather changes that alter sun intensity.
+export function requestShadowUpdate(frames = 1) {
+  if (!renderer || !renderer.shadowMap) return;
+  renderer.shadowMap.needsUpdate = true;
+  // Some changes (a GLB streaming in over several frames) need a couple of
+  // consecutive updates to settle; queue them rather than leaving autoUpdate on.
+  if (frames > 1) {
+    let n = frames - 1;
+    const again = () => {
+      if (n-- <= 0 || !renderer) return;
+      renderer.shadowMap.needsUpdate = true;
+      requestAnimationFrame(again);
+    };
+    requestAnimationFrame(again);
+  }
+}
 
 export function initScene(canvas) {
   clock = new THREE.Clock();
@@ -1484,6 +1577,18 @@ export function initScene(canvas) {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, perfS.pixelRatio));
   renderer.shadowMap.enabled   = true;
   renderer.shadowMap.type      = THREE.PCFSoftShadowMap;
+  // ─── PERF: STATIC SHADOW MAP ────────────────────────────────────────────
+  // The estate is geometrically static and the sun only moves when the time
+  // preset changes (4x per day cycle). With autoUpdate left on, three.js
+  // re-renders the ENTIRE scene into the shadow depth buffer every frame —
+  // at 4096x4096 in Rich that is the single largest cost in the frame, spent
+  // reproducing an identical result 60 times a second.
+  // Turning autoUpdate off and flagging needsUpdate only when something
+  // actually changes is visually IDENTICAL and removes that whole pass.
+  // requestShadowUpdate() below is called on: sun/time change, GLB arrival,
+  // aerial frustum change, and the first few frames after load.
+  renderer.shadowMap.autoUpdate = false;
+  renderer.shadowMap.needsUpdate = true;   // render it once now
   renderer.toneMapping         = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 0.85; 
   renderer.outputColorSpace    = THREE.SRGBColorSpace;
@@ -1549,6 +1654,16 @@ export function initScene(canvas) {
     setTimeout(() => { loadApartmentGLB(); addWestCompound(); }, 800);
     setTimeout(() => { loadClubhouseGLB(); }, 1200);
     setTimeout(() => { loadStablesGLB(); }, 1600);
+
+    // LOAD-PHASE SHADOW SAFETY NET ─────────────────────────────────────────
+    // Models stream in asynchronously over several seconds. Rather than leave
+    // shadowMap.autoUpdate on (which costs a full shadow re-render every frame
+    // forever), refresh the static shadow map a handful of times across the
+    // load window. After that the scene is static and no further updates are
+    // needed until the sun moves.
+    [600, 1400, 2400, 3600, 5200, 7000, 9000].forEach(t =>
+      setTimeout(() => requestShadowUpdate(1), t)
+    );
     // loadHorseGLB() no longer called — see the no-op definition above.
     spawnAmbientHorses();   // decorative horses on the polo field, training field, paddock
     
@@ -1571,6 +1686,9 @@ export function updateSkyForTime(timeName) {
   if (!_skyUniforms) return;
   const exp = setSkyForTime(_skyUniforms, _skySun, sunLight, timeName);
   if (renderer) renderer.toneMappingExposure = exp;
+  // Sun has moved → the shadow map is now stale. This is one of the few
+  // moments it genuinely needs regenerating (see initScene autoUpdate note).
+  requestShadowUpdate(2);
   if (scene && scene.fog) {
     const fogColors = { morning:0x8ab8cc, afternoon:0x8ab8cc, sunset:0xc06040, night:0x020810 };
     scene.fog.color.set(fogColors[timeName] || 0x8ab8cc);
@@ -1672,6 +1790,9 @@ function buildLighting() {
   const ambient = new THREE.DirectionalLight(0xb8d0ff, 0.15);
   ambient.position.set(-80, 20, 80);
   scene.add(ambient);
+
+  // Lighting rig (re)built → static shadow map must be regenerated once.
+  requestShadowUpdate(2);
 }
 
 // ─── NIGHT SECURITY LIGHTS ────────────────────────────────────────────────────
@@ -1740,18 +1861,42 @@ function buildNightLights() {
 
 // Reassign the pool to the nearest lamps. Driven from tickScene.
 const _lampSort = [];
+// Preallocated scratch for the lamp pool so it never allocates per frame.
+const _lampScratch = [];
+let   _lampLastSortX = Infinity, _lampLastSortZ = Infinity;
+
 export function tickLampPool(camera) {
   if (!_lampPool.length || !_nightLightsActive || !camera) return;
-  _lampSort.length = 0;
   const cx = camera.position.x, cz = camera.position.z;
-  for (const n of _lampNodes) {
-    const dx = n.x - cx, dz = n.z - cz;
-    _lampSort.push({ n, d2: dx*dx + dz*dz });
+
+  // Only re-sort when the camera has actually moved a meaningful distance.
+  // Lamp ranking barely changes between adjacent frames, so re-sorting 58
+  // entries every frame was pure waste plus GC churn from the old
+  // `_lampSort.push({n, d2})` object-per-lamp-per-frame pattern.
+  const movedFar = ((cx - _lampLastSortX) ** 2 + (cz - _lampLastSortZ) ** 2) > 4; // >2m
+  if (movedFar || _lampScratch.length !== _lampNodes.length) {
+    _lampLastSortX = cx; _lampLastSortZ = cz;
+    _lampScratch.length = 0;
+    for (let i = 0; i < _lampNodes.length; i++) {
+      const n = _lampNodes[i];
+      const dx = n.x - cx, dz = n.z - cz;
+      // Reuse existing entry objects instead of allocating new ones
+      _lampScratch.push(n._e || (n._e = { n, d2: 0 }));
+      _lampScratch[i].d2 = dx * dx + dz * dz;
+    }
+    _lampScratch.sort((a, b) => a.d2 - b.d2);
+  } else {
+    // Camera barely moved: refresh distances on the already-sorted set only
+    for (let i = 0; i < _lampScratch.length; i++) {
+      const n = _lampScratch[i].n;
+      const dx = n.x - cx, dz = n.z - cz;
+      _lampScratch[i].d2 = dx * dx + dz * dz;
+    }
   }
-  _lampSort.sort((a, b) => a.d2 - b.d2);
+
   const R2 = 90 * 90;
   for (let i = 0; i < _lampPool.length; i++) {
-    const s = _lampSort[i], pt = _lampPool[i];
+    const s = _lampScratch[i], pt = _lampPool[i];
     if (!s || s.d2 > R2) { pt.visible = false; continue; }
     pt.position.set(s.n.x, s.n.y, s.n.z);
     pt.visible = true;
@@ -2742,7 +2887,10 @@ function addLake() {
     return t;
   })();
 
-  const resPerMode = { fast: 256, balanced: 512, rich: 1024 };
+  // Reflection resolution. 1024 was overkill: the surface is heavily distorted
+  // by the animated normal map, which destroys fine reflection detail anyway —
+  // 512 is visually indistinguishable and quarters the reflection fill cost.
+  const resPerMode = { fast: 256, balanced: 512, rich: 512 };
   const res = resPerMode[PERF_MODE] || 512;
 
   const lake = new Water(waterGeo, {
@@ -2762,6 +2910,25 @@ function addLake() {
   lake.position.set(0, 0.34, NORTH_SHIFT);
   lake.name = 'crescentLake';
   lake.userData.isPlanarWater = true;
+
+  // ─── PERF: THROTTLE THE PLANAR REFLECTION ────────────────────────────────
+  // THREE.Water renders the ENTIRE scene a second time, from a mirrored camera,
+  // inside its onBeforeRender — every single frame, whether or not the detail
+  // is perceivable. On a scene this size that is close to doubling the frame
+  // cost whenever the lake is on screen.
+  // The surface is animated and distorted, so updating the reflection at half
+  // rate is imperceptible: on skipped frames the previous reflection buffer is
+  // simply reused. Rich updates every 2nd frame, Balanced every 3rd.
+  {
+    const _origOnBeforeRender = lake.onBeforeRender;
+    let _reflFrame = 0;
+    lake.onBeforeRender = function (renderer, scene, camera, geometry, material, group) {
+      const every = (PERF_MODE === 'rich') ? 2 : 3;
+      if ((_reflFrame++ % every) !== 0) return;   // reuse last reflection buffer
+      _origOnBeforeRender.call(this, renderer, scene, camera, geometry, material, group);
+    };
+  }
+
   scene.add(lake);
   waterMeshes.push(lake);
   window._xixLakeWater = lake;
@@ -3006,6 +3173,7 @@ function loadVillaGLB(){
     queue.forEach((data) => {
       if (data.placeholder) scene.remove(data.placeholder); // Remove the dummy box
       placeVillaGLBWithLOD(data.x, data.z, data.ry, data.plotKey); // Insert real GLB
+      requestShadowUpdate(2);  // new geometry → shadow map must be regenerated
     });
 
   }, null, err => {
@@ -3531,17 +3699,30 @@ export function tickScene(elapsed, camera) {
   // ── b. CAMERA-FOLLOWING SHADOW FRUSTUM (Balanced/Rich, every 30 frames) ──
   // Keeps shadows sharp around the player instead of across the whole 760m estate.
   // Uses lerp to avoid any visible shadow pop between updates.
+  // NOTE: shadowMap.autoUpdate is OFF (see initScene), so whenever this frustum
+  // actually moves we must explicitly request a regeneration — otherwise the
+  // shadows would be rendered for the old frustum and drift out of alignment.
+  // Because this runs on a 30-frame cadence and only when the frustum has
+  // genuinely shifted, shadow renders drop from ~60/sec to ~2/sec while walking
+  // and to zero while standing still — identical output, a fraction of the cost.
   if (sunLight && sunLight.castShadow && camera && _tickFrame % 30 === 0) {
     const cam  = sunLight.shadow.camera;
     const px   = camera.position.x;
     const pz   = camera.position.z;
     const half = PERF_MODE === 'rich' ? 120 : 100;
     const L = 0.06; // lerp factor — smooth drift, no snap
+    const beforeL = cam.left, beforeB = cam.bottom;
     cam.left   += (px - half - cam.left)   * L;
     cam.right  += (px + half - cam.right)  * L;
     cam.bottom += (pz - half - cam.bottom) * L;
     cam.top    += (pz + half - cam.top)    * L;
-    cam.updateProjectionMatrix();
+    // Only pay for a shadow re-render if the frustum actually shifted enough to
+    // matter. When the player is stationary the lerp converges and this stops.
+    const drift = Math.abs(cam.left - beforeL) + Math.abs(cam.bottom - beforeB);
+    if (drift > 0.05) {
+      cam.updateProjectionMatrix();
+      requestShadowUpdate(1);
+    }
   }
 
   // ── c. WET ROAD SPECULAR (every 12 frames) ──────────────────────────────
