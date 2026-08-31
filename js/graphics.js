@@ -43,7 +43,24 @@ export function initPostProcessing(renderer, scene, camera) {
   composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
 
-  try {
+  // ─── GTAO: DISCRETE GPUs ONLY ──────────────────────────────────────────────
+  // GTAO (ground-truth ambient occlusion) is the most expensive pass in this
+  // chain by a wide margin — roughly 8ms/frame at 1080p on Intel integrated
+  // graphics, which is about half of the entire 16.7ms budget for 60fps.
+  // It is also the least perceptible effect at estate viewing distance: it adds
+  // soft contact shadow in creases and corners, which barely reads when the
+  // camera is 100m up or walking a wide boulevard.
+  // On integrated GPUs we skip creating it altogether — that avoids both the
+  // per-frame cost AND the depth/normal render targets it would allocate in
+  // shared system memory, which is itself scarce on these machines.
+  // window._xixGPUTier is set by detectGPUTier() in scene.js before this runs.
+  const _gpuTier = (typeof window !== 'undefined' && window._xixGPUTier) || 'integrated';
+  const _allowGTAO = (_gpuTier === 'discrete');
+
+  if (!_allowGTAO) {
+    gtaoPass = null;
+    console.log(`[XIX] GTAO disabled (GPU tier: ${_gpuTier}) — reclaims ~8ms/frame`);
+  } else try {
     gtaoPass = new GTAOPass(scene, camera, w, h);
 
     // OUTPUT.Default composites the AO into the rendered scene.
