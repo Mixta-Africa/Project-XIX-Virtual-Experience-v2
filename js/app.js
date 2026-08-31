@@ -10,7 +10,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
-import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=32";
+import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=34";
 // villa-interior.js removed — dead file, superseded by interior.js
 import {
   initScene, getRenderer, getScene, getCamera, getClock,
@@ -20,12 +20,12 @@ import {
   setHorsePosition, getThirdPersonCameraOffset, setAerialMode,
   getSunLight, getHorseGroup, updateNightLights, updateBuildingNightGlow,
   enterVillaInterior, teleportVillaRoom, exitVillaInterior,
-} from "./scene.js?v=32";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=32";
+} from "./scene.js?v=34";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=34";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
-} from "./controls.js?v=32";
+} from "./controls.js?v=34";
 import {
   initMinimap, updateMinimap,
   buildViewpointStrip, showZonePanel, hideZonePanel,
@@ -33,7 +33,7 @@ import {
   setCaption as _setCaption_raw, showEnterPrompt, hideEnterPrompt,
   showVRButton, showJoystick, hideJoystick, isMobile,
   enableAudio, updateSpatialAudio, initAudio
-} from "./ui.js?v=32";
+} from "./ui.js?v=34";
 
 window.plotRegistry = plotRegistry;
 
@@ -418,16 +418,33 @@ function injectModeToggle() {
 }
 
 window.switchPerfMode = function(mode, auto) {
-  setPerfMode(mode);          // updates scene (shadow map, pixel ratio, fog)
+  setPerfMode(mode);          // updates scene (shadow map, pixel ratio, fog) — clamps to GPU ceiling
   setPerfModeGraphics(mode);  // updates graphics pipeline (bloom, SMAA, direct render)
+  // Reflect the tier that was ACTUALLY applied (setPerfMode may have clamped it
+  // down to the GPU ceiling), not the one that was requested.
+  const applied = PERF_MODE;
   document.querySelectorAll('.perf-btn').forEach(b =>
-    b.classList.toggle('active', b.dataset.mode === mode));
-  // When a HUMAN picks a tier (auto is falsy), record it so the adaptive
-  // governor won't override the choice for a while. The governor passes
-  // auto=true so it doesn't trip its own back-off.
+    b.classList.toggle('active', b.dataset.mode === applied));
   if (!auto) {
     window._xixManualQualityUntil = performance.now() + 30000; // 30s respect window
   }
+};
+
+// Grey out quality tiers this GPU cannot sustain, so the control is honest
+// instead of silently clamping the user's choice. Runs once after detection.
+window._xixApplyQualityCeilingUI = function() {
+  const cap = window._xixMaxTier;
+  if (!cap) return;
+  const ORDER = ['fast', 'balanced', 'rich'];
+  document.querySelectorAll('.perf-btn').forEach(b => {
+    const m = b.dataset.mode;
+    if (!m) return;
+    const tooHigh = ORDER.indexOf(m) > ORDER.indexOf(cap);
+    b.disabled = tooHigh;
+    b.style.opacity = tooHigh ? '0.35' : '';
+    b.style.cursor  = tooHigh ? 'not-allowed' : '';
+    if (tooHigh) b.title = `Not available on this GPU (${window._xixGPUTier || 'integrated'} graphics)`;
+  });
 };
 
 window.setMoveMode = function(mode) {
@@ -1115,6 +1132,11 @@ async function openWorldAt(viewKey) {
   // Bind TIME / WEATHER / QUALITY / TOUR topbar dropdowns and their sub-buttons.
   // This runs each time the world opens (sceneReady check means it's idempotent).
   _bindTopbarControls();
+  // GPU detection has run inside initScene by now — grey out unreachable tiers
+  // and mark the tier actually in use as active.
+  if (typeof window._xixApplyQualityCeilingUI === 'function') window._xixApplyQualityCeilingUI();
+  document.querySelectorAll('.perf-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.mode === PERF_MODE));
 
   // Dropdowns need no JS wiring — ui.js builds the villas menu as a body-level
   // portal, and index.html + styles.css handle the topbar via :hover/:focus-within.
@@ -2030,7 +2052,8 @@ function startRenderLoop(){
       const idx = _TIER_ORDER.indexOf(cur);
       if (idx > 0) {
         const next = _TIER_ORDER[idx - 1];
-        console.warn(`[XIX] Auto quality: ${cur} → ${next} (median ${medianFps.toFixed(0)} fps)`);
+        const gpu = window._xixGPUTier ? ` [GPU: ${window._xixGPUTier}]` : '';
+        console.warn(`[XIX] Auto quality: ${cur} → ${next} (median ${medianFps.toFixed(0)} fps)${gpu}`);
         if (typeof window.switchPerfMode === 'function') window.switchPerfMode(next, /*auto=*/true);
         _govCooldownUntil = now + 3500;   // let it settle before considering another drop
         // Reset the window so the new tier is measured fresh
