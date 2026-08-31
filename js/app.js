@@ -10,7 +10,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
-import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=36";
+import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=38";
 // villa-interior.js removed — dead file, superseded by interior.js
 import {
   initScene, getRenderer, getScene, getCamera, getClock,
@@ -20,12 +20,13 @@ import {
   setHorsePosition, getThirdPersonCameraOffset, setAerialMode,
   getSunLight, getHorseGroup, updateNightLights, updateBuildingNightGlow,
   enterVillaInterior, teleportVillaRoom, exitVillaInterior,
-} from "./scene.js?v=36";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=36";
+  setAudioMuted, isAudioMuted,
+} from "./scene.js?v=38";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=38";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
-} from "./controls.js?v=36";
+} from "./controls.js?v=38";
 import {
   initMinimap, updateMinimap,
   buildViewpointStrip, showZonePanel, hideZonePanel,
@@ -33,7 +34,7 @@ import {
   setCaption as _setCaption_raw, showEnterPrompt, hideEnterPrompt,
   showVRButton, showJoystick, hideJoystick, isMobile,
   enableAudio, updateSpatialAudio, initAudio
-} from "./ui.js?v=36";
+} from "./ui.js?v=38";
 
 window.plotRegistry = plotRegistry;
 
@@ -1341,7 +1342,10 @@ async function openWorldAt(viewKey) {
   enableAudio();
   // Sync the topbar button icon to whatever mute state was restored from
   // localStorage in initAudio(), so the button never opens in the wrong state.
-  if (typeof isAudioMuted === 'function') _syncSoundBtn(isAudioMuted());
+  // Restore the button to the mute state persisted in localStorage. This also
+  // used a typeof guard against an unimported function, so after a reload the
+  // button always showed "unmuted" even when the audio was actually muted.
+  _syncSoundBtn(isAudioMuted());
 
   // Cinematic intro: desktop only.
   // On mobile the 300m aerial descent causes a ~3s jank spike before controls
@@ -1545,14 +1549,36 @@ function _syncSoundBtn(muted) {
   if (!btn) return;
   btn.classList.toggle('active', !muted);
   btn.setAttribute('aria-label', muted ? 'Unmute sound' : 'Mute sound');
+  btn.setAttribute('aria-pressed', muted ? 'true' : 'false');
+  btn.title = muted ? 'Sound off — click to unmute' : 'Sound on — click to mute';
+  // Make the state unmistakable at a glance: muted dims the whole control and
+  // drains the gold accent, rather than relying on the small icon change alone.
+  btn.style.opacity = muted ? '0.45' : '';
   const icon = btn.querySelector('.sound-icon');
-  if (icon) icon.innerHTML = muted
-    ? '<path d="M11 5 6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>'
-    : '<path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/>';
+  if (icon) {
+    icon.style.color = muted ? '#8a8a8a' : '';
+    icon.innerHTML = muted
+      ? '<path d="M11 5 6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>'
+      : '<path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/>';
+  }
+  const label = btn.querySelector('.world-btn-label');
+  if (label) label.textContent = muted ? 'Muted' : 'Sound';
 }
 window.toggleSound = function() {
-  const nowMuted = !(typeof isAudioMuted === 'function' ? isAudioMuted() : false);
-  if (typeof setAudioMuted === 'function') setAudioMuted(nowMuted);
+  // NOTE: this previously called setAudioMuted/isAudioMuted behind
+  // `typeof x === 'function'` guards, but neither was imported from scene.js —
+  // so both guards were false, the audio was never touched, and the button
+  // only swapped its own icon. They are imported now and called directly, so
+  // any future breakage surfaces as an error instead of silently doing nothing.
+  const nowMuted = !isAudioMuted();
+  setAudioMuted(nowMuted);
+
+  // Unmuting from a click is a user gesture — a good moment to resume an
+  // AudioContext the browser suspended under its autoplay policy.
+  if (!nowMuted && typeof enableAudio === 'function') {
+    try { enableAudio(); } catch (e) {}
+  }
+
   _syncSoundBtn(nowMuted);
 };
 
@@ -2046,6 +2072,17 @@ function bindExitButton(){
 
       if(document.pointerLockElement) document.exitPointerLock();
       else closeWorld();
+    }
+
+    // M — mute / unmute. Ignored while typing in the reservation form or the
+    // property search box, and only active while the 3D world is open.
+    if ((e.key === 'm' || e.key === 'M') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const t = e.target;
+      const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+      if (typing) return;
+      if (!document.getElementById("world-overlay")?.classList.contains("open")) return;
+      e.preventDefault();
+      window.toggleSound();
     }
   });
 }
