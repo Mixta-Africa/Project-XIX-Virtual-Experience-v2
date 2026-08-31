@@ -14,7 +14,7 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=34";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=35";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
   buildPalmInstances, tickPalms,
@@ -22,7 +22,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=34";
+} from "./graphics.js?v=35";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -2911,20 +2911,34 @@ function addLake() {
   lake.name = 'crescentLake';
   lake.userData.isPlanarWater = true;
 
-  // ─── PERF: THROTTLE THE PLANAR REFLECTION ────────────────────────────────
+  // ─── PERF: THROTTLE + CULL THE PLANAR REFLECTION ─────────────────────────
   // THREE.Water renders the ENTIRE scene a second time, from a mirrored camera,
-  // inside its onBeforeRender — every single frame, whether or not the detail
-  // is perceivable. On a scene this size that is close to doubling the frame
-  // cost whenever the lake is on screen.
-  // The surface is animated and distorted, so updating the reflection at half
-  // rate is imperceptible: on skipped frames the previous reflection buffer is
-  // simply reused. Rich updates every 2nd frame, Balanced every 3rd.
+  // inside its onBeforeRender — every frame the lake is in view.
+  // Two gates now guard that:
+  //  1. CULL — skip entirely when the camera is far from the lake. At >220m the
+  //     water is a thin band near the horizon and the reflection is not legible,
+  //     so paying a full extra scene render for it is pure waste. This is what
+  //     stops the clubhouse/south-end of the estate paying for water it can
+  //     barely see.
+  //  2. THROTTLE — when it IS close enough to matter, update every 2nd frame
+  //     (Rich) or 3rd (Balanced) and reuse the previous buffer in between. The
+  //     surface is animated and distorted, so half-rate is imperceptible.
   {
     const _origOnBeforeRender = lake.onBeforeRender;
     let _reflFrame = 0;
+    const _lakeCx = 0, _lakeCz = -113 + NORTH_SHIFT;
     lake.onBeforeRender = function (renderer, scene, camera, geometry, material, group) {
+      // 1. Distance cull
+      const dx = camera.position.x - _lakeCx;
+      const dz = camera.position.z - _lakeCz;
+      const distSq = dx * dx + dz * dz;
+      const CULL = (PERF_MODE === 'rich') ? 260 : 200;
+      if (distSq > CULL * CULL) return;      // too far to read — reuse last buffer
+
+      // 2. Half/third-rate update
       const every = (PERF_MODE === 'rich') ? 2 : 3;
-      if ((_reflFrame++ % every) !== 0) return;   // reuse last reflection buffer
+      if ((_reflFrame++ % every) !== 0) return;
+
       _origOnBeforeRender.call(this, renderer, scene, camera, geometry, material, group);
     };
   }
@@ -3251,6 +3265,7 @@ function addPlotOverlayCustom(x,z,ry,plotKey,villaClone,w,d){
 
   const existingData = plotRegistry.get(plotKey) || {};
   plotRegistry.set(plotKey, { ...existingData, status: "available", overlay, villaClone, x, z, ry });
+  markPickTargetsDirty();
 }
 
 // Selection used to slam material.opacity between 0 and 0.35 the instant the
@@ -3261,14 +3276,53 @@ function addPlotOverlayCustom(x,z,ry,plotKey,villaClone,w,d){
 //   - the eased value also drives a slow pulse, so a held selection breathes
 //     instead of sitting inert
 const _plotFade = new Map();
+// Tracks which plot is currently lit so we only touch what changed, instead of
+// looping all 223 plots on every hover.
+let _litPlotKey = null;
+
 export function highlightPlot(plotKey){
-  plotRegistry.forEach((plot,key)=>{
-    if(!plot.overlay) return;
-    const target = (key===plotKey && plot.status==='available') ? 0.38
-                 : (plot.status==='reserved' ? 0.50 : 0.0);
-    plot.overlay.userData._fadeTarget = target;
-    if (!_plotFade.has(key)) _plotFade.set(key, plot.overlay.material.opacity || 0);
-    if (target > 0) plot.overlay.visible = true;
+  if (_litPlotKey === plotKey) return;      // nothing changed — do no work at all
+
+  // Un-light the previous plot (it fades out; fade-out is not perceived as lag)
+  if (_litPlotKey) {
+    const prev = plotRegistry.get(_litPlotKey);
+    if (prev && prev.overlay) {
+      prev.overlay.userData._fadeTarget = (prev.status === 'reserved') ? 0.50 : 0.0;
+    }
+  }
+
+  _litPlotKey = plotKey;
+
+  // Light the new plot INSTANTLY. The fade system eases toward _fadeTarget at
+  // ~170ms, which is exactly the delay that made hovering feel unresponsive.
+  // For the incoming plot we bypass the ease and snap opacity to full on this
+  // very frame — like a Windows icon lighting the instant the cursor touches it.
+  if (plotKey) {
+    const plot = plotRegistry.get(plotKey);
+    if (plot && plot.overlay) {
+      const target = (plot.status === 'reserved') ? 0.50
+                   : (plot.status === 'available') ? 0.38 : 0.0;
+      plot.overlay.userData._fadeTarget = target;
+      if (target > 0) {
+        plot.overlay.visible = true;
+        plot.overlay.material.opacity = target;   // SNAP — no ease-in
+        _plotFade.set(plotKey, target);           // keep the fader in sync
+      }
+    }
+  }
+}
+
+// Reserved plots must stay visible even when nothing is hovered. Called once
+// after the registry is built and whenever a plot's status changes.
+export function refreshReservedOverlays() {
+  plotRegistry.forEach((plot, key) => {
+    if (!plot.overlay) return;
+    if (plot.status === 'reserved') {
+      plot.overlay.userData._fadeTarget = 0.50;
+      plot.overlay.visible = true;
+    } else if (key !== _litPlotKey) {
+      plot.overlay.userData._fadeTarget = 0.0;
+    }
   });
 }
 
@@ -3281,6 +3335,11 @@ export function tickPlotHighlights(delta, elapsed){
     const ov = plot.overlay; if(!ov || !ov.material) return;
     const target = ov.userData._fadeTarget ?? 0;
     let cur = _plotFade.get(key) ?? ov.material.opacity ?? 0;
+    // Skip plots that have already settled — the overwhelming majority every
+    // frame. Only the one fading in and the one fading out do any work.
+    // Without this the loop wrote opacity to all 223 overlay materials, 60x/sec.
+    if (cur === target && target === 0) { if (ov.visible) ov.visible = false; return; }
+    if (cur === target && target > 0) { ov.material.opacity = target * pulse; return; }
     cur += (target - cur) * k;
     if (Math.abs(cur - target) < 0.002) cur = target;
     _plotFade.set(key, cur);
@@ -3339,32 +3398,42 @@ export function unreservePlot(plotKey) {
   return true;
 }
 
-export function getPlotAtRay(raycaster) {
-  const targets = [];
-  
+// ─── PLOT PICKING (cached) ───────────────────────────────────────────────────
+// The previous implementation rebuilt its target array on EVERY call by
+// traversing every villa clone, and wrote material.opacity to all 223 overlays
+// twice per call (0.01 then back to 0). At hover rates that was the single
+// biggest source of interaction lag. Targets are now cached and rebuilt only
+// when the registry actually changes.
+const _pickTargets = [];
+let _pickDirty = true;
+export function markPickTargetsDirty() { _pickDirty = true; }
+
+function _rebuildPickTargets() {
+  _pickTargets.length = 0;
   plotRegistry.forEach((plot, key) => {
     if (plot.overlay) {
-      plot.overlay.material.opacity = 0.01;
-      targets.push(plot.overlay);
-    }
-    if (plot.villaClone && plot.villaClone.visible) {
-      plot.villaClone.traverse(c => {
-        if (c.isMesh) {
-          c.userData.plotKey = key;
-          targets.push(c);
-        }
-      });
+      plot.overlay.userData.plotKey = key;
+      _pickTargets.push(plot.overlay);
     }
   });
-  
-  const hits = raycaster.intersectObjects(targets, false);
-  
-  plotRegistry.forEach(plot => {
-    if (plot.overlay && plot.status !== 'reserved') plot.overlay.material.opacity = 0;
-  });
-  
-  if (hits.length > 0) return hits[0].object.userData.plotKey;
-  return null;
+  _pickDirty = false;
+}
+
+// FAST PATH — used by hover. Tests only the flat overlay planes (one quad per
+// plot), never the villa geometry. Note: three.js r165 raycasts objects
+// regardless of `visible`, so hidden overlays are still pickable and we never
+// need to touch material.opacity here.
+export function pickPlotFast(raycaster) {
+  if (_pickDirty) _rebuildPickTargets();
+  if (!_pickTargets.length) return null;
+  const hits = raycaster.intersectObjects(_pickTargets, false);
+  return hits.length ? hits[0].object.userData.plotKey : null;
+}
+
+// Click path — same cached overlays. Kept as a separate export so call sites
+// don't change; there is no longer any reason for it to be slower than hover.
+export function getPlotAtRay(raycaster) {
+  return pickPlotFast(raycaster);
 }
 // ─── VILLA RING ───────────────────────────────────────────────────────────────
 const villaFootprints=[];
@@ -3496,6 +3565,7 @@ function addLoftTerraces(){
       scene.add(hitbox);
       
       plotRegistry.set(key, { x: unitX, z: unitZ, status: 'available', overlay: hitbox, type: "2 BED LOFT TERRACE", ry: ry });
+      markPickTargetsDirty();
     });
   }
 
@@ -3796,35 +3866,49 @@ export function getHorseGroup() { return null; }   // player-mount horse removed
 window._xixHoverState = null;
 
 window.setHoveredPlot = function(plotKey) {
-  if (window._aerialModeActive || window._xixHoverState === plotKey) return;
-  
+  // NOTE: the previous version began with `if (window._aerialModeActive) return;`
+  // which is precisely why the green highlight never appeared in aerial view.
+  // Hover is now supported in aerial and walkthrough alike.
+  if (window._xixHoverState === plotKey) return;
+
+  // Restore the previously hovered villa's original material
   if (window._xixHoverState) {
     const old = plotRegistry.get(window._xixHoverState);
     if (old && old.villaClone && old.status !== 'reserved') {
       old.villaClone.traverse(c => {
-        if (c.isMesh && c.userData.origMat) {
-          c.material = c.userData.origMat; 
-          c.userData.origMat = null;
-        }
+        if (c.isMesh && c.userData.origMat) c.material = c.userData.origMat;
       });
     }
   }
-  
+
   window._xixHoverState = plotKey;
-  
-  if (window._xixHoverState) {
-    const cur = plotRegistry.get(window._xixHoverState);
+
+  if (plotKey) {
+    const cur = plotRegistry.get(plotKey);
     if (cur && cur.villaClone && cur.status !== 'reserved') {
       cur.villaClone.traverse(c => {
-        if (c.isMesh) {
-          if (!c.userData.origMat) c.userData.origMat = c.material;
-          c.material = c.userData.origMat.clone();
-          c.material.emissive.setHex(0x22cc44);
-          c.material.emissiveIntensity = 0.35;
+        if (!c.isMesh) return;
+        // Cache both the original AND a pre-built highlight material the first
+        // time this villa is hovered. The old code called origMat.clone() on
+        // every mesh on every hover — allocating dozens of materials per mouse
+        // move and forcing a shader recompile each time.
+        if (!c.userData.origMat) c.userData.origMat = c.material;
+        if (!c.userData.hoverMat) {
+          const hm = c.userData.origMat.clone();
+          if (hm.emissive) {
+            hm.emissive.setHex(0x22cc44);
+            hm.emissiveIntensity = 0.35;
+          }
+          c.userData.hoverMat = hm;
         }
+        c.material = c.userData.hoverMat;
       });
     }
   }
+
+  // Drive the ground overlay highlight in the same call so the plane and the
+  // building light up on the same frame.
+  highlightPlot(plotKey);
 };
 
 // ─── PHASE 3: PROCEDURAL 3D INTERIOR ENGINE ─────────────────────────────────
