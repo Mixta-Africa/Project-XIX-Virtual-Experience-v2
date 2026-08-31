@@ -14,7 +14,8 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=35";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=36";
+import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
   buildPalmInstances, tickPalms,
@@ -22,7 +23,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=35";
+} from "./graphics.js?v=36";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -1461,15 +1462,70 @@ function buildAllVillaHedges() {
 }
 
 // ─── AO CONTACT SHADOWS ───────────────────────────────────────────────────────
+// ─── STATIC GEOMETRY MERGING (Tier 4) ────────────────────────────────────────
+// Integrated GPUs are disproportionately hurt by draw-call count: each one is a
+// CPU-side state change and a driver submission, and shared-memory graphics have
+// far less headroom for that than a discrete card. These helpers collapse large
+// numbers of identical or same-material static meshes into single submissions.
+//
+// mergeStaticMeshes(): bakes each mesh's transform into its geometry and merges
+// them into one BufferGeometry. Safe here because every source mesh is static
+// and shares one material, and because merging preserves each source geometry's
+// own UVs — so tiled textures look exactly as they did before.
+function mergeStaticMeshes(meshes, material, name) {
+  if (!meshes.length) return null;
+  const geos = [];
+  for (const m of meshes) {
+    m.updateMatrix();
+    // toNonIndexed() normalises indexed vs non-indexed sources, which
+    // mergeGeometries requires to be consistent across the whole set.
+    const g = (m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone());
+    g.applyMatrix4(m.matrix);
+    geos.push(g);
+  }
+  let merged = null;
+  try {
+    merged = BufferGeometryUtils.mergeGeometries(geos, false);
+  } catch (e) {
+    console.warn('[XIX] merge failed for', name, e.message);
+  }
+  geos.forEach(g => g.dispose());
+  if (!merged) return null;
+  const mesh = new THREE.Mesh(merged, material);
+  mesh.receiveShadow = true;
+  mesh.castShadow = false;
+  mesh.name = name;
+  return mesh;
+}
+
+// Contact shadows: previously ONE Mesh AND ONE MeshBasicMaterial per villa
+// (43 of each). Identical geometry, identical material, differing only in
+// position — the textbook case for instancing. Now 1 draw call, 1 material.
+const _contactShadowData = [];
 function addVillaContactShadow(x, z) {
+  _contactShadowData.push({ x, z });
+}
+
+function commitVillaContactShadows() {
+  if (!_contactShadowData.length) return;
   const aoMat = new THREE.MeshBasicMaterial({
     color: 0x000000, transparent: true, opacity: 0.22,
     depthWrite: false, side: THREE.FrontSide,
   });
-  const ao = new THREE.Mesh(new THREE.PlaneGeometry(18, 14), aoMat);
-  ao.rotation.x = -Math.PI / 2;
-  ao.position.set(x, 0.05, z);
-  scene.add(ao);
+  const geo = new THREE.PlaneGeometry(18, 14);
+  geo.rotateX(-Math.PI / 2);   // bake the ground orientation into the geometry
+  const inst = new THREE.InstancedMesh(geo, aoMat, _contactShadowData.length);
+  const d = new THREE.Object3D();
+  _contactShadowData.forEach((p, i) => {
+    d.position.set(p.x, 0.05, p.z);
+    d.updateMatrix();
+    inst.setMatrixAt(i, d.matrix);
+  });
+  inst.instanceMatrix.needsUpdate = true;
+  inst.frustumCulled = false;   // spread across the whole estate
+  inst.name = 'villaContactShadows';
+  scene.add(inst);
+  console.log(`[XIX] Contact shadows: ${_contactShadowData.length} meshes → 1 instanced draw call`);
 }
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
@@ -2231,20 +2287,22 @@ function addGround() {
     color: 0x2a2a2a, roughness: 0.94, metalness: 0.0, envMapIntensity: 0.08,
   });
   asphaltMat.userData.isRoadSurface = true;
-  // Rear / south car park — large central block
-  s(plane(180, 70, asphaltMat, [0,   .09,  153]));  // z 118..188
-  // Left wing car park (west of clubhouse)
-  s(plane(60,  90, asphaltMat, [-114, .09, 135]));   // x -84..-144, z 90..180
-  // Right wing car park (east of clubhouse)
-  s(plane(60,  90, asphaltMat, [ 114, .09, 135]));   // x 84..144, z 90..180
-  // Forecourt / front approach (between field road and building entrance)
-  s(plane(140,  16, asphaltMat, [0,   .09,  118]));  // z 110..126
-  // Gap-fill: ground shader shows between the wings at z≈90..118, x≈-84..+84
-  // These two strips close the remaining visible ground gaps at the clubhouse sides
-  s(plane(168,  30, asphaltMat, [0,   .09,  105]));  // z 90..120 central strip
-  // Full wrap: a ground-level asphalt base the clubhouse sits on — covers any
-  // remaining ground-shader patches at the building footprint
-  s(plane(60,   22, asphaltMat, [0,   .09,  108]));  // clubhouse base plate z 97..119
+  // TIER 4: the six car-park surfaces all share asphaltMat and never move, so
+  // they merge into a single draw call rather than six.
+  const _carParkPieces = [
+    plane(180, 70, asphaltMat, [0,   .09,  153]),   // rear / south block
+    plane(60,  90, asphaltMat, [-114, .09, 135]),   // left wing
+    plane(60,  90, asphaltMat, [ 114, .09, 135]),   // right wing
+    plane(140,  16, asphaltMat, [0,  .09,  118]),   // forecourt
+    plane(168,  30, asphaltMat, [0,  .09,  105]),   // central gap-fill
+    plane(60,   22, asphaltMat, [0,  .09,  108]),   // clubhouse base plate
+  ];
+  const mergedParks = mergeStaticMeshes(_carParkPieces, asphaltMat, 'carParksMerged');
+  if (mergedParks) {
+    scene.add(mergedParks);
+  } else {
+    _carParkPieces.forEach(m => scene.add(m));
+  }
 }
 
 function _makeMicroTexture(col1, col2, planeW, planeD) {
@@ -2786,27 +2844,35 @@ function addRoads() {
   am.userData.isRoadSurface = true;
   window._xixRoadMat = am;
   const Y = 0.13;
-  
-  s(plane(700, 30, am, [0, Y, 215])); 
-  s(plane(700, 4, MATS.grassGreen(), [0, Y + 0.01, 215])); 
-  
-  s(plane(8, 220, am, [-155, Y, 0])); 
-  s(plane(8, 220, am, [ 155, Y, 0])); 
-  s(plane(320, 8, am, [0, Y, 104]));  
-  s(plane(240, 8, am, [0, Y, -104])); 
-  
-  s(plane(8, 220, am, [-177, Y, -5])); 
-  s(plane(8, 220, am, [ 177, Y, -5])); 
-  
-  s(plane(8, 280, am, [-270, Y, 20])); 
-  s(plane(8, 200, am, [-230, Y, 10]));
-  s(plane(150, 8, am, [-310, Y, 145]));
-  
-  s(plane(8, 250, am, [ 200, Y, 10]));
-  s(plane(55, 8, am, [ 215, Y, 120]));
-  
-  s(plane(400, 8, am, [0, Y, 128])); 
-  s(plane(130, 35, am, [0, Y, 148]));
+
+  // TIER 4: all asphalt road surfaces are static and share `am`, so they are
+  // built into an array and merged into ONE mesh rather than added individually.
+  // That takes 15 separate draw calls down to 1. Merging preserves each plane's
+  // own 0-1 UVs, so the 120x tiled asphalt texture renders exactly as before.
+  const _roadPieces = [
+    plane(700, 30, am, [0, Y, 215]),
+
+    plane(8, 220, am, [-155, Y, 0]),
+    plane(8, 220, am, [ 155, Y, 0]),
+    plane(320, 8, am, [0, Y, 104]),
+    plane(240, 8, am, [0, Y, -104]),
+
+    plane(8, 220, am, [-177, Y, -5]),
+    plane(8, 220, am, [ 177, Y, -5]),
+
+    plane(8, 280, am, [-270, Y, 20]),
+    plane(8, 200, am, [-230, Y, 10]),
+    plane(150, 8, am, [-310, Y, 145]),
+
+    plane(8, 250, am, [ 200, Y, 10]),
+    plane(55, 8, am, [ 215, Y, 120]),
+
+    plane(400, 8, am, [0, Y, 128]),
+    plane(130, 35, am, [0, Y, 148]),
+  ];
+
+  // Grass median keeps its own material, so it stays a separate mesh.
+  s(plane(700, 4, MATS.grassGreen(), [0, Y + 0.01, 215]));
 
   const cShape = new THREE.Shape();
   cShape.moveTo(-160, -104); 
@@ -2823,8 +2889,17 @@ function addRoads() {
   cMesh.rotation.x = -Math.PI / 2; 
   // Crescent road serves the north villa row — shift it with the north group.
   cMesh.position.set(0, Y, NORTH_SHIFT);
-  cMesh.receiveShadow = true;
-  scene.add(cMesh);
+  _roadPieces.push(cMesh);
+
+  const mergedRoads = mergeStaticMeshes(_roadPieces, am, 'roadsMerged');
+  if (mergedRoads) {
+    scene.add(mergedRoads);
+    console.log(`[XIX] Roads: ${_roadPieces.length} meshes → 1 merged draw call`);
+  } else {
+    // Merge unavailable (CDN blocked / attribute mismatch) — fall back to the
+    // original per-mesh behaviour so the roads always render.
+    _roadPieces.forEach(m => scene.add(m));
+  }
 }
 
 function addLake() {
@@ -3532,6 +3607,7 @@ function addVillaRing(){
 
   buildInstancedCypress(cypressPositions);
   buildAllVillaHedges();
+  commitVillaContactShadows();   // 43 meshes → 1 instanced draw call
   loadLampMeshes();     // needs _hedgeInstData, so runs after hedges
 }
 
