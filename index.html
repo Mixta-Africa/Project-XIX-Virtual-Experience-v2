@@ -385,6 +385,14 @@
         <span class="world-btn-label">Aerial</span>
       </button>
 
+      <!-- Sound / mute — toggleSound() and _syncSoundBtn() already live in app.js;
+           this button is the #btn-sound element they look for. The .sound-icon
+           svg has its paths swapped by _syncSoundBtn to show muted/unmuted. -->
+      <button class="world-btn world-btn-sound active" id="btn-sound" aria-label="Mute sound" onclick="window.toggleSound && window.toggleSound()">
+        <svg class="sound-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>
+        <span class="world-btn-label">Sound</span>
+      </button>
+
       <!-- VR -->
       <button class="world-btn world-btn-vr" id="vr-btn" aria-label="Enter VR mode" style="display:none">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 8s3-2 10-2 10 2 10 2v6s-3 2-10 2-10-2-10-2V8z"/><circle cx="8" cy="11" r="2"/><circle cx="16" cy="11" r="2"/></svg>
@@ -620,14 +628,14 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 
-<script type="module" src="js/app.js?v=32"></script>
+<script type="module" src="js/app.js?v=34"></script>
 
 <!-- Interior walkthrough is now built directly into the main scene by app.js -->
 <!-- (window.stepInsideVilla, scene.js: enterVillaInterior/teleportVillaRoom/exitVillaInterior) -->
 <!-- interior.js is now a pure geometry factory only — no separate scene/camera/renderer. -->
 
 <script type="module">
-import { openProductPanel, closeProductPanel, resizePanelViewer } from "./js/product-panel.js?v=32";
+import { openProductPanel, closeProductPanel, resizePanelViewer } from "./js/product-panel.js?v=34";
 window.__moduleReady = window.__moduleReady || {};
 window.__moduleReady.showProductPanel = openProductPanel;
 window.__moduleReady.closeProductPanel = closeProductPanel;
