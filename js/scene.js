@@ -14,7 +14,7 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=36";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=38";
 import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
@@ -23,7 +23,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=36";
+} from "./graphics.js?v=38";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -1423,32 +1423,93 @@ function collectVillaHedge(x, z, ry) {
 
 function buildAllVillaHedges() {
   if (_hedgeInstData.length === 0) return;
-  const geo = new THREE.BoxGeometry(1, 1.4, 1);
+
+  // ─── PLOT-AWARE HEDGE SIZING ───────────────────────────────────────────────
+  // The old hedge was a fixed 22.1m x 18.1m box around EVERY villa
+  // (W=10.5, D=8.5, T=0.55, extending to ±(W+T)). That is wider than the gap
+  // between villas on the curved north arc, where 11 villas span 126m — about
+  // 12.6m apart. Each hedge therefore overlapped its neighbours by ~9.5m per
+  // side, which is why the bend read as one continuous green mass instead of
+  // individual plots.
+  // Each villa's hedge is now sized to its OWN nearest-neighbour distance, so
+  // the tight arc gets narrow, well-separated hedges while the generously
+  // spaced straight rows keep full-width ones. Nothing is hand-tuned per villa.
+  const GAP = 2.2;          // clear space left between adjacent plot boundaries
+  const W_MAX = 9.0;        // widest half-width (straight rows)
+  const W_CLEAR = 6.2;      // minimum half-width that still clears the villa
+                            // footprint (11.4m wide = 5.7m half-width) plus margin
+
+  // For each villa: the widest hedge that fits without touching its neighbour.
+  // Where even W_CLEAR won't fit — the tight north arc, where villas sit 12.6m
+  // apart but are themselves 11.4m wide — we do NOT shrink the hedge into the
+  // building or overlap the neighbour. We omit the side boundaries entirely for
+  // that plot (see sideOK below) and let the gap between buildings and the
+  // cypress trees provide the separation instead. An honest empty boundary
+  // reads far cleaner than two hedges ploughing through each other.
+  const fitted = _hedgeInstData.map((v, i) => {
+    let nearest = Infinity;
+    for (let j = 0; j < _hedgeInstData.length; j++) {
+      if (i === j) continue;
+      const o = _hedgeInstData[j];
+      const d = Math.hypot(o.x - v.x, o.z - v.z);
+      if (d < nearest) nearest = d;
+    }
+    if (!isFinite(nearest)) return { W: W_MAX, sideOK: true };
+    const avail = nearest / 2 - GAP / 2;
+    if (avail < W_CLEAR) return { W: W_CLEAR, sideOK: false };  // too tight — rear only
+    return { W: Math.min(W_MAX, avail), sideOK: true };
+  });
+
+  // Thinner and slightly lower than before: T 0.55 -> 0.32 and height
+  // 1.4 -> 1.05. A trimmed 1m boundary hedge reads as a crisp plot line;
+  // the old chunky 1.4m block visually fused neighbouring plots together.
+  const T = 0.32;
+  const HEDGE_H = 1.05;
+
+  const geo = new THREE.BoxGeometry(1, HEDGE_H, 1);
   const mat = new THREE.MeshStandardMaterial({
     color: 0x2d5a1e, roughness: 0.95, metalness: 0, envMapIntensity: 0.2,
   });
-  const SEGS_PER_VILLA = 6;
-  const total = _hedgeInstData.length * SEGS_PER_VILLA;
+
+  const total = _hedgeInstData.length * 5;   // upper bound; mesh.count trimmed below
   const mesh = new THREE.InstancedMesh(geo, mat, total);
   mesh.castShadow = true; mesh.receiveShadow = true; mesh.frustumCulled = false;
   const dummy = new THREE.Object3D();
   let idx = 0;
+  let tightCount = 0;
 
-  _hedgeInstData.forEach(({ x, z, ry }) => {
-    const W = 10.5, D = 8.5, H = 0.7, T = 0.55;
+  _hedgeInstData.forEach(({ x, z, ry }, i) => {
+    const { W, sideOK } = fitted[i];
+    const D = Math.min(8.0, W * 0.85);   // depth follows width so plots stay proportional
+    if (!sideOK) tightCount++;
+
+    // NO FRONT (field-facing) HEDGE.
+    // The old front segment sat at lz = -(D+T), 21m wide, pointing at the field.
+    // On the north arc that direction is the crescent lake, so those hedges ran
+    // straight into the water — the untidy lines cutting through the lake and
+    // the setback. Removing it also matches how these plots would really be
+    // landscaped: a polo-facing villa keeps an open frontage onto the field
+    // rather than screening its own view with a hedge.
     const segments = [
-      { lx: 0,          lz: -(D+T),  sx: W*2, sz: T },
-      { lx: -(W*0.5+1), lz:  D+T,   sx: W-2, sz: T },
-      { lx:  (W*0.5+1), lz:  D+T,   sx: W-2, sz: T },
-      { lx: -(W+T),     lz:  0,      sx: T,   sz: D*2 },
-      { lx:  (W+T),     lz: -D*0.3,  sx: T,   sz: D*1.4 },
-      { lx:  (W+T),     lz:  D*0.7,  sx: T,   sz: D*0.6 },
+      // Rear boundary, split either side of the driveway entrance. Always built.
+      { lx: -(W * 0.5 + 0.8), lz:  D + T,      sx: W - 1.6,  sz: T },
+      { lx:  (W * 0.5 + 0.8), lz:  D + T,      sx: W - 1.6,  sz: T },
     ];
+
+    if (sideOK) {
+      // Left side boundary (full depth)
+      segments.push({ lx: -(W + T), lz: 0,         sx: T, sz: D * 2 });
+      // Right side boundary, broken into two runs with a service gap
+      segments.push({ lx:  (W + T), lz: -D * 0.30, sx: T, sz: D * 1.25 });
+      segments.push({ lx:  (W + T), lz:  D * 0.68, sx: T, sz: D * 0.58 });
+    }
+
     const cosR = Math.cos(ry), sinR = Math.sin(ry);
     segments.forEach(seg => {
+      if (seg.sx <= 0 || seg.sz <= 0) return;
       const wx = x + seg.lx * cosR - seg.lz * sinR;
       const wz = z + seg.lx * sinR + seg.lz * cosR;
-      dummy.position.set(wx, H, wz);
+      dummy.position.set(wx, HEDGE_H / 2, wz);
       dummy.rotation.set(0, ry, 0);
       dummy.scale.set(seg.sx, 1, seg.sz);
       dummy.updateMatrix();
@@ -1458,7 +1519,11 @@ function buildAllVillaHedges() {
 
   mesh.count = idx;
   mesh.instanceMatrix.needsUpdate = true;
+  mesh.name = 'villaHedges';
   scene.add(mesh);
+
+  const ws = fitted.map(f => f.W);
+  console.log(`[XIX] Hedges: ${idx} segments, half-widths ${Math.min(...ws).toFixed(1)}–${Math.max(...ws).toFixed(1)}m; ${tightCount} tight plots use rear boundary only`);
 }
 
 // ─── AO CONTACT SHADOWS ───────────────────────────────────────────────────────
