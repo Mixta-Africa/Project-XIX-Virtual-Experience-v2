@@ -14,7 +14,7 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=39";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=40";
 import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
@@ -23,7 +23,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=39";
+} from "./graphics.js?v=40";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -644,6 +644,213 @@ export function updateSpatialAudio(worldX, worldZ) {
   _tickAmbientNeighs(worldX, worldZ);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// PROXIMITY SOUNDSCAPE — sample-based, spatially curated
+// ═══════════════════════════════════════════════════════════════════════════
+// Design principle: a sound should only exist where the thing making it exists.
+// Water is only audible near the lake. Horses only near the stables and paddock.
+// Traffic only along the OUTER perimeter roads, never across the field. Birds
+// are the one genuine exception — they belong everywhere in a nature setting,
+// but their character changes with the time of day.
+//
+// Every entry degrades gracefully: if its sample file is absent the entry is
+// simply skipped and the existing synthesised layer continues to cover it, so
+// dropping files into assets/audio/ upgrades the scene incrementally with no
+// code change.
+const AUDIO_BASE = 'assets/audio/';
+const _sampleBuffers = new Map();   // filename -> decoded AudioBuffer (or null if missing)
+
+// Ambient loops anchored to a place. `radius` is where the sound reaches zero;
+// `full` is the distance within which it plays at full level. Between the two
+// it ramps smoothly, so walking toward the lake brings the water up naturally
+// rather than switching it on.
+const AMBIENT_SOURCES = [
+  {
+    id: 'lake', file: 'water-lapping.mp3',
+    // Crescent lake centre, carried with the north group shift
+    get x() { return 0; }, get z() { return -113 + NORTH_SHIFT; },
+    full: 35, radius: 175, gain: 0.85,
+  },
+  {
+    id: 'wind-trees', file: 'wind-trees.mp3',
+    // Palm avenue along the west boundary — the densest planting on the estate
+    x: -300, z: -20, full: 60, radius: 260, gain: 0.5,
+  },
+];
+
+// One-shot events, fired by the scheduler at a position rather than globally.
+const ONESHOT_POINTS = {
+  // Stables compound and paddock — the only places horses actually are
+  horses: [
+    { x: -355, z: 90 },    // stables yard
+    { x: -330, z: 60 },    // stables paddock
+    { x: 240,  z: -30 },   // east paddock
+    { x: 240,  z: 45 },    // game park paddock
+  ],
+  // OUTER boundary roads only. Deliberately excludes the internal estate roads
+  // that ring the field: traffic noise crossing the polo ground would break the
+  // sense of a quiet, low-density estate. These are the perimeter carriageways.
+  roads: [
+    { x: -300, z: 215 }, { x: 0, z: 215 }, { x: 300, z: 215 },   // south perimeter
+    { x: -310, z: 145 },                                          // west perimeter
+    { x: 215,  z: 120 },                                          // east perimeter
+  ],
+};
+
+async function _loadSample(file) {
+  if (_sampleBuffers.has(file)) return _sampleBuffers.get(file);
+  try {
+    const res = await fetch(AUDIO_BASE + file);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const arr = await res.arrayBuffer();
+    const buf = await _audioCtx.decodeAudioData(arr);
+    _sampleBuffers.set(file, buf);
+    return buf;
+  } catch (e) {
+    // Missing or undecodable — record the miss so we don't retry every frame,
+    // and let the synthesised fallback keep covering this sound.
+    _sampleBuffers.set(file, null);
+    console.log(`[XIX] Audio: ${file} unavailable — using synthesised fallback`);
+    return null;
+  }
+}
+
+const _ambientNodes = [];   // { def, gainNode }
+
+async function _initAmbientSources() {
+  for (const def of AMBIENT_SOURCES) {
+    const buf = await _loadSample(def.file);
+    if (!buf) continue;
+    const src = _audioCtx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    const g = _audioCtx.createGain();
+    g.gain.value = 0;                      // silent until the listener approaches
+    src.connect(g); g.connect(_masterGain);
+    src.start(Math.random() * 2);          // stagger so loops don't phase-lock
+    _ambientNodes.push({ def, gainNode: g });
+    console.log(`[XIX] Audio: ${def.id} → ${def.file}`);
+    // A real sample supersedes the synthesised stand-in for the same thing.
+    if (def.id === 'lake' && window._lakeGain) window._lakeGain.gain.value = 0;
+    if (def.id === 'wind-trees' && _windGain) _windGain.gain.value = 0;
+  }
+}
+
+// Called every frame from updateAudioForMovement — pure distance maths, no
+// allocation, so it is free to run at frame rate.
+function _updateAmbientProximity(lx, lz) {
+  for (const { def, gainNode } of _ambientNodes) {
+    const dx = lx - (typeof def.x === 'number' ? def.x : def.x);
+    const dz = lz - (typeof def.z === 'number' ? def.z : def.z);
+    const d = Math.hypot(dx, dz);
+    let k;
+    if (d <= def.full) k = 1;
+    else if (d >= def.radius) k = 0;
+    else {
+      // Smoothstep between full and radius — a linear ramp reads as a fade,
+      // a smoothstep reads as walking into earshot of something.
+      const t = 1 - (d - def.full) / (def.radius - def.full);
+      k = t * t * (3 - 2 * t);
+    }
+    gainNode.gain.setTargetAtTime(k * def.gain, _audioCtx.currentTime, 0.35);
+  }
+}
+
+// ─── ONE-SHOT PLAYBACK AT A WORLD POSITION ───────────────────────────────────
+// Uses a real HRTF panner so the sound arrives from the correct direction and
+// attenuates naturally. Distance-culled before it is even created: an event
+// beyond `audible` is skipped rather than played silently.
+function _playSampleAt(file, x, z, { volume = 1, audible = 260, rate = 1, offset = 0, duration = 0 } = {}) {
+  const buf = _sampleBuffers.get(file);
+  if (!buf || !_audioCtx || _muted) return false;
+  const lp = _listenerPos;
+  if (Math.hypot(lp.x - x, lp.z - z) > audible) return false;
+
+  const src = _audioCtx.createBufferSource();
+  src.buffer = buf;
+  src.playbackRate.value = rate;
+
+  const panner = _audioCtx.createPanner();
+  panner.panningModel = 'HRTF';
+  panner.distanceModel = 'exponential';
+  panner.refDistance = 20;
+  panner.maxDistance = audible;
+  panner.rolloffFactor = 1.6;
+  if (panner.positionX) {
+    panner.positionX.value = x; panner.positionY.value = 1.6; panner.positionZ.value = z;
+  } else { panner.setPosition(x, 1.6, z); }
+
+  const g = _audioCtx.createGain();
+  g.gain.value = volume;
+
+  src.connect(g); g.connect(panner); panner.connect(_masterGain);
+  if (duration > 0) src.start(0, offset, duration); else src.start(0, offset);
+  src.onended = () => { try { src.disconnect(); g.disconnect(); panner.disconnect(); } catch (e) {} };
+  return true;
+}
+
+let _listenerPos = { x: 0, z: 0 };
+
+// ─── EVENT SCHEDULERS ────────────────────────────────────────────────────────
+// Horses: whinny/snort only from the stables and paddocks, and only when the
+// listener is close enough for it to make sense.
+let _nextHorseAt = 0;
+function _tickHorseEvents(now) {
+  if (now < _nextHorseAt) return;
+  _nextHorseAt = now + 12000 + Math.random() * 22000;   // every 12-34s
+
+  // Pick the nearest horse location within earshot — a whinny should come from
+  // the stables you can see, not from an empty paddock across the estate.
+  let best = null, bestD = 200;
+  for (const p of ONESHOT_POINTS.horses) {
+    const d = Math.hypot(_listenerPos.x - p.x, _listenerPos.z - p.z);
+    if (d < bestD) { bestD = d; best = p; }
+  }
+  if (!best) return;
+
+  // horse-whinny-123.mp3 holds several takes; playing from a random offset
+  // gives variety from a single file instead of an obvious repeat.
+  const useSnort = Math.random() < 0.4;
+  if (useSnort) {
+    _playSampleAt('horse-snort.mp3', best.x, best.z, { volume: 0.55, audible: 150 });
+  } else {
+    const wb = _sampleBuffers.get('horse-whinny-123.mp3');
+    const dur = wb ? wb.duration : 0;
+    const slot = dur > 3 ? Math.floor(Math.random() * 3) * (dur / 3) : 0;
+    _playSampleAt('horse-whinny-123.mp3', best.x, best.z, {
+      volume: 0.7, audible: 220,
+      offset: slot, duration: dur > 3 ? dur / 3 : 0,
+      rate: 0.95 + Math.random() * 0.1,      // slight pitch variation per call
+    });
+  }
+}
+
+// Vehicles: at most ~5 across a full simulated day, always on the OUTER
+// perimeter roads. Deliberately sparse — this is a low-density estate and
+// frequent traffic would undercut that.
+let _nextCarAt = 0;
+let _carsToday = 0;
+let _carDayStamp = -1;
+function _tickCarEvents(now, dayIndex) {
+  if (dayIndex !== _carDayStamp) { _carDayStamp = dayIndex; _carsToday = 0; }
+  if (_carsToday >= 5) return;
+  if (now < _nextCarAt) return;
+  _nextCarAt = now + 45000 + Math.random() * 90000;   // 45-135s between attempts
+
+  // Only the perimeter road nearest the listener, and only if they are close
+  // enough to plausibly hear a car on it.
+  let best = null, bestD = 300;
+  for (const p of ONESHOT_POINTS.roads) {
+    const d = Math.hypot(_listenerPos.x - p.x, _listenerPos.z - p.z);
+    if (d < bestD) { bestD = d; best = p; }
+  }
+  if (!best) return;
+
+  if (_playSampleAt('car-pass.mp3', best.x, best.z, { volume: 0.45, audible: 300 })) {
+    _carsToday++;
+  }
+}
+
 export function initAmbientAudio() {
   if (_audioCtx) return;
   try {
@@ -690,7 +897,14 @@ export function initAmbientAudio() {
       src.start();
       window._lakeGain = lakeGain;
     }
-    _clubPanner = _makePositionalNoise('murmur', 0, 108);  
+    _clubPanner = _makePositionalNoise('murmur', 0, 108);
+
+    // Load the real samples in the background. Each one that arrives replaces
+    // its synthesised stand-in; each one that is missing leaves the fallback in
+    // place. Nothing blocks on this, so audio starts immediately either way.
+    _initAmbientSources();
+    ['horse-whinny-123.mp3','horse-snort.mp3','car-pass.mp3','hooves-dirt.mp3']
+      .forEach(f => _loadSample(f));
   } catch(e) { console.warn('[XIX] Audio init failed:', e); }
 }
 
@@ -939,8 +1153,19 @@ export function updateAudioForMovement(isMoving, worldX, worldZ) {
     _birdsGain.gain.setTargetAtTime(isMoving ? 0 : 0.8, _audioCtx.currentTime, 0.8);
   }
 
-  // Lake water: distance-driven gain (no panner — see initAmbientAudio).
-  // Lake centre ≈ (0, -113), shifted north-group amount toward the field.
+  // Track the listener for the proximity system and the event schedulers.
+  _listenerPos.x = worldX; _listenerPos.z = worldZ;
+  _updateAmbientProximity(worldX, worldZ);
+  {
+    const _now = performance.now();
+    _tickHorseEvents(_now);
+    // Day index drives the "at most 5 cars per day" budget. The day cycle is
+    // ~8 minutes of real time, so this rolls the allowance over naturally.
+    _tickCarEvents(_now, Math.floor(_now / (8 * 60 * 1000)));
+  }
+
+  // Lake water: synthesised fallback. Silenced automatically once the real
+  // water-lapping.mp3 sample loads (see _initAmbientSources).
   if (window._lakeGain) {
     const lakeCz = -113 + (window._xixNorthShift || 0);
     const lakeDist = Math.hypot(worldX - 0, worldZ - lakeCz);
