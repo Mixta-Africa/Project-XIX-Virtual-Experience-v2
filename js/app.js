@@ -10,7 +10,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
-import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=42";
+import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=46";
 // villa-interior.js removed — dead file, superseded by interior.js
 import {
   initScene, getRenderer, getScene, getCamera, getClock,
@@ -21,12 +21,12 @@ import {
   getSunLight, getHorseGroup, updateNightLights, updateBuildingNightGlow,
   enterVillaInterior, teleportVillaRoom, exitVillaInterior,
   setAudioMuted, isAudioMuted,
-} from "./scene.js?v=42";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=42";
+} from "./scene.js?v=46";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=46";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
-} from "./controls.js?v=42";
+} from "./controls.js?v=46";
 import {
   initMinimap, updateMinimap,
   buildViewpointStrip, showZonePanel, hideZonePanel,
@@ -34,7 +34,7 @@ import {
   setCaption as _setCaption_raw, showEnterPrompt, hideEnterPrompt,
   showVRButton, showJoystick, hideJoystick, isMobile,
   enableAudio, updateSpatialAudio, initAudio
-} from "./ui.js?v=42";
+} from "./ui.js?v=46";
 
 window.plotRegistry = plotRegistry;
 
@@ -431,8 +431,9 @@ window.switchPerfMode = function(mode, auto) {
   }
 };
 
-// Grey out quality tiers this GPU cannot sustain, so the control is honest
-// instead of silently clamping the user's choice. Runs once after detection.
+// Mark tiers above the GPU's recommended default with a hint, but NEVER disable
+// them. The earlier version greyed 'Rich' out entirely, which took away a choice
+// the user is entitled to make on their own hardware.
 window._xixApplyQualityCeilingUI = function() {
   const cap = window._xixMaxTier;
   if (!cap) return;
@@ -440,11 +441,12 @@ window._xixApplyQualityCeilingUI = function() {
   document.querySelectorAll('.perf-btn').forEach(b => {
     const m = b.dataset.mode;
     if (!m) return;
-    const tooHigh = ORDER.indexOf(m) > ORDER.indexOf(cap);
-    b.disabled = tooHigh;
-    b.style.opacity = tooHigh ? '0.35' : '';
-    b.style.cursor  = tooHigh ? 'not-allowed' : '';
-    if (tooHigh) b.title = `Not available on this GPU (${window._xixGPUTier || 'integrated'} graphics)`;
+    b.disabled = false;
+    b.style.opacity = '';
+    b.style.cursor  = '';
+    b.title = ORDER.indexOf(m) > ORDER.indexOf(cap)
+      ? `Above the recommended setting for this GPU — may reduce framerate`
+      : '';
   });
 };
 
@@ -689,8 +691,32 @@ function buildVillaStatusOverlays() {
     sprite.position.set(plot.x, 7.0, plot.z); // 7m — just above roofline
     sprite.userData = { isPlotBadge: true, plotKey };
     
+    sprite.visible = false;   // distance-culled — see _tickBadgeVisibility
     sc.add(sprite);
     plot.badgeSprite = sprite; // Store reference for fast updates
+  });
+}
+
+// ─── BADGE DISTANCE CULLING ──────────────────────────────────────────────────
+// 223 AVAILABLE/RESERVED labels floating over the whole estate turned the wide
+// shot into visual noise — from aerial they read as clutter rather than
+// information, and they obscured the architecture that is meant to be the
+// subject. They now appear only within close range, where they are genuinely
+// useful, and fade out beyond it.
+// Runs on a 6-frame cadence: a label appearing 100ms late is imperceptible,
+// and this keeps 223 distance checks off the critical path.
+let _badgeTick = 0;
+function _tickBadgeVisibility(camera) {
+  if (!camera || typeof plotRegistry === 'undefined') return;
+  if ((_badgeTick++ % 6) !== 0) return;
+  const cx = camera.position.x, cz = camera.position.z;
+  // 95m: close enough that you are evaluating a specific plot, not the estate.
+  const SHOW2 = 95 * 95;
+  plotRegistry.forEach(plot => {
+    const b = plot.badgeSprite;
+    if (!b) return;
+    const dx = plot.x - cx, dz = plot.z - cz;
+    b.visible = (dx * dx + dz * dz) < SHOW2;
   });
 }
 
@@ -2097,6 +2123,14 @@ function bindExitButton(){
       e.preventDefault();
       window.toggleSound();
     }
+
+    // D — diagnostics panel (draw calls, triangles, GPU, load-time [XIX] logs)
+    if ((e.key === 'd' || e.key === 'D') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const t2 = e.target;
+      if (t2 && (t2.tagName === 'INPUT' || t2.tagName === 'TEXTAREA' || t2.isContentEditable)) return;
+      e.preventDefault();
+      _toggleDiag();
+    }
   });
 }
 
@@ -2147,6 +2181,84 @@ function _showQualityNote(tier) {
   _qualityNoteTimer = setTimeout(() => { if (_qualityNoteEl) _qualityNoteEl.style.opacity = '0'; }, 3200);
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DIAGNOSTICS PANEL  —  press D to toggle
+// ═══════════════════════════════════════════════════════════════════════════
+// Shows the numbers that actually decide performance work, so decisions are
+// made from measurement rather than estimate. Read it like this:
+//   DRAW CALLS — how many separate things the CPU asks the GPU to draw each
+//     frame. Above ~1500 on integrated graphics is where it starts to hurt.
+//   TRIANGLES  — raw geometry load. Millions here means the models are too
+//     detailed for the distance, which needs LOD, not batching.
+// Those two point at completely different fixes, which is why the number
+// matters: high calls + low triangles = batch; low calls + high triangles = LOD.
+let _diagEl = null, _diagOn = false, _diagLog = [];
+let _lastFpsForDiag = 0;
+
+// Capture every [XIX] console line so the panel can show load-time stats that
+// have already scrolled past — no need to catch them live or reload.
+(function _hookXIXLogs(){
+  const orig = console.log.bind(console);
+  console.log = function(...a){
+    try {
+      const first = a[0];
+      if (typeof first === 'string' && first.startsWith('[XIX]')) {
+        _diagLog.push(a.join(' '));
+        if (_diagLog.length > 14) _diagLog.shift();
+      }
+    } catch(e){}
+    orig(...a);
+  };
+})();
+
+function _toggleDiag() {
+  _diagOn = !_diagOn;
+  if (!_diagEl) {
+    _diagEl = document.createElement('div');
+    _diagEl.style.cssText =
+      'position:fixed;top:96px;left:16px;z-index:100001;background:rgba(6,14,8,0.94);' +
+      'border:1px solid rgba(201,168,76,0.45);border-radius:8px;padding:12px 14px;' +
+      'font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.55;' +
+      'color:#dfe8dc;white-space:pre;pointer-events:none;max-width:min(560px,80vw);' +
+      'box-shadow:0 6px 22px rgba(0,0,0,0.5);';
+    document.body.appendChild(_diagEl);
+  }
+  _diagEl.style.display = _diagOn ? 'block' : 'none';
+}
+
+let _diagFrame = 0;
+function _tickDiag(fps) {
+  if (!_diagOn || !_diagEl) return;
+  if ((_diagFrame++ % 12) !== 0) return;   // 5Hz is plenty for reading numbers
+  const r = getRenderer();
+  if (!r) return;
+  const i = r.info;
+  const calls = i.render.calls;
+  const tris  = i.render.triangles;
+  const verdict =
+    calls > 1200 ? 'DRAW CALLS are the bottleneck -> batch/merge more'
+    : tris > 3.5e6 ? 'TRIANGLES are the bottleneck -> needs real LOD'
+    : 'within budget';
+  _diagEl.textContent =
+    'PROJECT XIX — DIAGNOSTICS   (press D to hide)\n' +
+    '──────────────────────────────────────────────\n' +
+    `FPS          ${fps ? fps.toFixed(0) : '—'}\n` +
+    `QUALITY      ${PERF_MODE}\n` +
+    `GPU          ${(window._xixGPUName || 'unknown').slice(0, 46)}\n` +
+    `GPU TIER     ${window._xixGPUTier || '—'}\n` +
+    '──────────────────────────────────────────────\n' +
+    `DRAW CALLS   ${calls}\n` +
+    `TRIANGLES    ${tris.toLocaleString()}\n` +
+    `GEOMETRIES   ${i.memory.geometries}\n` +
+    `TEXTURES     ${i.memory.textures}\n` +
+    `SHADERS      ${r.info.programs ? r.info.programs.length : '—'}\n` +
+    '──────────────────────────────────────────────\n' +
+    `VERDICT      ${verdict}\n` +
+    '──────────────────────────────────────────────\n' +
+    _diagLog.join('\n');
+}
+
 function startRenderLoop(){
   if(animFrameId) cancelAnimationFrame(animFrameId);
   const clock=getClock();
@@ -2179,6 +2291,7 @@ function startRenderLoop(){
     _lastGovT = now;
     if (dt <= 0 || dt > 200) return;   // ignore first frame and post-stall spikes
     const fps = 1000 / dt;
+    _lastFpsForDiag = fps;
     _fpsSamples[_fpsIdx] = fps;
     _fpsIdx = (_fpsIdx + 1) % _fpsSamples.length;
     if (_fpsCount < _fpsSamples.length) _fpsCount++;
@@ -2260,11 +2373,13 @@ function startRenderLoop(){
     tickScene(elapsed,camera);
     if (typeof window._tickCrosshairHover === 'function') window._tickCrosshairHover();
     if (typeof window._tickPlotPulse === 'function') window._tickPlotPulse(delta);
+    _tickBadgeVisibility(camera);   // hide AVAILABLE labels beyond 95m
     tickDayCycle(elapsed);  // Auto day/night cycle
     updateMinimap(camera.position.x,camera.position.z,getYaw());
     updateSpatialAudio(camera.position.x,camera.position.z);
     renderFrame();
     _governorTick(performance.now());   // adaptive quality step-down
+    _tickDiag(_lastFpsForDiag);         // diagnostics panel (press D)
     _frameErrors = 0; // reset on successful frame
     } catch(err) {
       _frameErrors++;
