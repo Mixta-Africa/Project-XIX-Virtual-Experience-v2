@@ -44,6 +44,42 @@
   </script>
 
   <style>
+    /* ── LOADING SCREEN ──────────────────────────────────────────────────
+       showLoading() in ui.js sets this to display:flex, but the element had
+       NO CSS at all — so it rendered as an unstyled block in normal document
+       flow with no background and no z-index, and the masterplan aerial image
+       behind it showed through for a frame. That was the blurry polo-field
+       flash on load. It needs to be a genuine opaque full-screen overlay. */
+    #loading-screen {
+      position: fixed; inset: 0; z-index: 100000;
+      display: none;                 /* JS flips this to flex */
+      flex-direction: column; align-items: center; justify-content: center;
+      gap: 18px;
+      background: #061208;           /* fully opaque — nothing shows through */
+      opacity: 1; transition: opacity 0.6s ease;
+      font-family: Inter, system-ui, sans-serif;
+      /* Belt and braces: even mid-fade nothing behind can be interacted with */
+      pointer-events: all;
+    }
+    #loading-screen .loading-mark {
+      font-family: Georgia, 'Times New Roman', serif;
+      font-size: 34px; letter-spacing: 7px; color: #c9a84c;
+      border: 1px solid rgba(201,168,76,0.5); padding: 8px 16px;
+    }
+    #loading-screen .loading-title {
+      color: #f2e9d0; font-size: 14px; letter-spacing: 1.4px; text-transform: uppercase;
+    }
+    #loading-screen .loading-bar {
+      width: min(280px, 60vw); height: 2px; background: rgba(255,255,255,0.14);
+      overflow: hidden; border-radius: 2px;
+    }
+    #loading-screen #loading-bar-fill {
+      width: 0%; height: 100%; background: #c9a84c; transition: width 0.35s ease;
+    }
+    #loading-screen .loading-sub {
+      color: rgba(242,233,208,0.55); font-size: 11px; letter-spacing: 2px; text-transform: uppercase;
+    }
+
     /* ── TOPBAR DROPDOWN (inline for render-critical styles) ── */
     .topbar-dropdown { position: relative; display: inline-block; }
     .topbar-dropdown-menu {
@@ -628,14 +664,14 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 
-<script type="module" src="js/app.js?v=39"></script>
+<script type="module" src="js/app.js?v=40"></script>
 
 <!-- Interior walkthrough is now built directly into the main scene by app.js -->
 <!-- (window.stepInsideVilla, scene.js: enterVillaInterior/teleportVillaRoom/exitVillaInterior) -->
 <!-- interior.js is now a pure geometry factory only — no separate scene/camera/renderer. -->
 
 <script type="module">
-import { openProductPanel, closeProductPanel, resizePanelViewer } from "./js/product-panel.js?v=39";
+import { openProductPanel, closeProductPanel, resizePanelViewer } from "./js/product-panel.js?v=40";
 window.__moduleReady = window.__moduleReady || {};
 window.__moduleReady.showProductPanel = openProductPanel;
 window.__moduleReady.closeProductPanel = closeProductPanel;
