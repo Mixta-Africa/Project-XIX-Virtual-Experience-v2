@@ -14,7 +14,7 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=48";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=49";
 import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
@@ -23,7 +23,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=48";
+} from "./graphics.js?v=49";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -1609,30 +1609,6 @@ function _mergeSceneByMaterial(root) {
   }
 }
 
-// Far-distance villa massing proxy. Deliberately NOT the old white impostor:
-// correct proportions, roof mass, and a colour matched to the villa's palette,
-// so at 220m+ it reads as architecture rather than a placeholder box.
-let _villaProxyGeo = null, _villaProxyMat = null;
-function _makeVillaProxy() {
-  if (!_villaProxyGeo) {
-    // Body + set-back upper storey — enough silhouette to read correctly.
-    const body = new THREE.BoxGeometry(11.4, 6.2, 9.6);
-    body.translate(0, 3.1, 0);
-    const upper = new THREE.BoxGeometry(9.0, 2.6, 7.4);
-    upper.translate(0, 7.5, 0);
-    _villaProxyGeo = BufferGeometryUtils.mergeGeometries(
-      [body.toNonIndexed(), upper.toNonIndexed()], false
-    );
-    body.dispose(); upper.dispose();
-    _villaProxyMat = new THREE.MeshStandardMaterial({
-      color: 0xd8d2c6, roughness: 0.82, metalness: 0.0, envMapIntensity: 0.35,
-    });
-  }
-  const m = new THREE.Mesh(_villaProxyGeo, _villaProxyMat);
-  m.castShadow = false; m.receiveShadow = true;
-  return m;
-}
-
 function placeVillaGLBWithLOD(x, z, ry, plotKey) {
   if (!villaGLBScene) { 
     // Frame 1: Place a lightweight box immediately so the estate looks full
@@ -1654,25 +1630,14 @@ function placeVillaGLBWithLOD(x, z, ry, plotKey) {
   lod.userData.baseRotY    = ry;
   lod.userData.plotKey     = plotKey;
 
-  // THREE-LEVEL LOD. The single 400m level was the wrong shape of fix: it meant
-  // every villa inside 400m — i.e. all of them, always — drew full geometry.
-  //   0-90m    high  140K tris  (detail you can actually resolve)
-  //   90-220m  mid    74K tris  (half-res textures; silhouette still correct)
-  //   220m+    proxy  ~100 tris (a few hundred pixels on screen)
   const highDetail = villaGLBScene.clone(true);
   highDetail.rotation.y = 0;
-  lod.addLevel(highDetail, 0);
+  lod.addLevel(highDetail, 0);          
 
-  if (villaMidScene) {
-    const mid = villaMidScene.clone(true);
-    mid.rotation.y = 0;
-    lod.addLevel(mid, 90);
-  }
-
-  // Far proxy: a correctly-proportioned massing block, NOT the old bright box.
-  // Colour-matched to the villa's render and lit normally, so at 220m+ it reads
-  // as a building in the distance rather than a placeholder.
-  lod.addLevel(_makeVillaProxy(), 220); 
+  // LOD swap at 400m — well beyond walking range, prevents boxes showing inside estate
+  const lowDetail = new THREE.Mesh(_impostorGeo, _impostorMat);
+  lowDetail.position.y = 4;
+  lod.addLevel(lowDetail, 400); 
 
   scene.add(lod);
   if (plotKey) addPlotOverlay(x, z, ry, plotKey, lod);
@@ -1711,11 +1676,11 @@ export function setAerialMode(on) {
 
     // Force every villa to full detail (geometry swap only — negligible cost at
     // orbital distance since there's no character movement competing for the GPU)
-    // The aerial LOD override is REMOVED. It forced every villa to full detail
-    // (levels[1].distance = 1e6), which is why aerial rendered 33M triangles.
-    // With a proper mid level and a distance proxy, LOD now does its job in
-    // aerial too — near villas stay detailed, far ones step down, and the
-    // silhouette of the estate is unchanged.
+    scene.traverse(obj => {
+      if (obj.isLOD && obj.userData.isVillaGLB && obj.levels[1]) {
+        obj.levels[1].distance = 1e6;
+      }
+    });
     if (sun && sun.shadow) {
       const cam = sun.shadow.camera;
       _aerialSavedFrustum = { l: cam.left, r: cam.right, t: cam.top, b: cam.bottom, f: cam.far };
@@ -1727,7 +1692,11 @@ export function setAerialMode(on) {
     }
   } else {
     // Restore LOD distances
-    // Nothing to restore — LOD distances are no longer overridden in aerial.
+    scene.traverse(obj => {
+      if (obj.isLOD && obj.userData.isVillaGLB && obj.levels[1]) {
+        obj.levels[1].distance = 400;
+      }
+    });
     // Restore shadow frustum
     if (sun && sun.shadow && _aerialSavedFrustum) {
       const cam = sun.shadow.camera, f = _aerialSavedFrustum;
@@ -2259,7 +2228,6 @@ export function initScene(canvas) {
     // Load main asset first, stagger the rest using separate loaders to prevent Web Worker deadlock
     loadVillaGLB();
     addVillaRing();
-    setTimeout(() => loadVillaMidGLB(), 2200);   // after the high model settles
 
     setTimeout(() => { loadLoftGLB(); addLoftTerraces(); }, 400);
     setTimeout(() => { loadApartmentGLB(); addWestCompound(); }, 800);
@@ -3818,41 +3786,8 @@ function loadStablesGLB() {
   });
 }
 
-// Mid-detail villa (74K tris, half-res textures) used from 90m outward.
-let villaMidScene = null;
-function loadVillaMidGLB(){
-  makeDracoLoader().load("assets/models/villa-mid.glb", gltf => {
-    applyPS4Materials(gltf.scene);
-    gltf.scene.traverse(c => {
-      if (c.isMesh) { c.castShadow = false; c.receiveShadow = true; c.frustumCulled = true; }
-    });
-    const bbox = new THREE.Box3().setFromObject(gltf.scene);
-    gltf.scene.position.y = bbox.min.y < 0 ? -bbox.min.y : 0;
-    const w = new THREE.Group(); w.add(gltf.scene);
-    villaMidScene = w;
-    // Retro-fit every villa already placed with its mid level.
-    let n = 0;
-    scene.traverse(o => {
-      if (o.isLOD && o.userData.isVillaGLB && o.levels.length < 3) {
-        const mid = villaMidScene.clone(true);
-        mid.rotation.y = 0;
-        o.addLevel(mid, 90);
-        n++;
-      }
-    });
-    console.log(`[XIX] Villa mid-LOD ready (74K tris) — attached to ${n} villas at 90m`);
-    requestShadowUpdate(2);
-  }, undefined, e => console.warn('[XIX] villa-mid.glb failed:', e));
-}
-
 function loadVillaGLB(){
-  // assets/models/villa-high.glb — the original villa-mesh.glb was 979,415
-  // triangles PER VILLA. At 43 villas that is 42 MILLION triangles, roughly
-  // ten times what an Intel UHD 620 can sustain, and the measured cause of the
-  // lag (186 draw calls but 33M triangles: batching was never going to help).
-  // This is the same model decimated to 140K — a 7x reduction — with a further
-  // 74K mid-LOD loaded below for distance.
-  makeDracoLoader().load("assets/models/villa-high.glb", gltf => {
+  makeDracoLoader().load("assets/villa-mesh.glb", gltf => {
     // GFA 330m² ÷ 3 floors → 11.4m wide at scale 5.71853
     gltf.scene.scale.setScalar(5.71853);
     // villa-mesh.glb ships with baked PBR maps (albedo / normal / metal-rough)
@@ -3898,7 +3833,7 @@ function loadVillaGLB(){
     });
 
   }, null, err => {
-    console.warn('[XIX] villa-high.glb failed, using fallbacks:', err);
+    console.warn('[XIX] villa-mesh.glb failed, using fallbacks:', err);
     pendingVillas.forEach((data) => {
       if (data.placeholder) scene.remove(data.placeholder); // Clean up dummy
       const v = _createVillaFallback();
