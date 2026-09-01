@@ -14,7 +14,7 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=42";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=45";
 import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
@@ -23,7 +23,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=42";
+} from "./graphics.js?v=45";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -60,17 +60,12 @@ const PERF_SETTINGS = {
 export function setPerfMode(mode) {
   if (!PERF_SETTINGS[mode]) return;
 
-  // Enforce the hardware ceiling set by detectMobileTier()/detectGPUTier().
-  // An integrated-GPU laptop is capped at 'balanced' and a software renderer at
-  // 'fast', no matter who asks — the Quality buttons, aerial mode, or the
-  // adaptive governor. This is what stops an EliteBook landing on Rich at all.
-  const ORDER = ['fast', 'balanced', 'rich'];
-  const cap = window._xixMaxTier;
-  if (cap && ORDER.indexOf(mode) > ORDER.indexOf(cap)) {
-    console.log(`[XIX] Quality '${mode}' exceeds this GPU's ceiling — clamped to '${cap}'`);
-    mode = cap;
-  }
-
+  // The GPU tier sets a sensible DEFAULT (see detectGPUTier) but does NOT
+  // forbid a higher one. Hard-locking 'Rich' out of the menu removed a choice
+  // the user is entitled to make — if they want maximum quality and will accept
+  // the framerate, that is their call. The adaptive frame-rate governor still
+  // steps the tier down automatically if the machine genuinely cannot sustain
+  // it, so the safety net remains without the menu lying about what is possible.
   PERF_MODE = mode;
   setPerfModeGraphics(mode);
   if (!renderer) return;
@@ -669,12 +664,16 @@ const AMBIENT_SOURCES = [
     id: 'lake', file: 'water-lapping.mp3',
     // Crescent lake centre, carried with the north group shift
     get x() { return 0; }, get z() { return -113 + NORTH_SHIFT; },
-    full: 35, radius: 175, gain: 0.85,
+    // The lake centre is ~101m from the middle of the polo pitch, so a 175m
+    // radius made water clearly audible while standing on the centre spot —
+    // wrong, and it broke the whole premise of place-anchored sound.
+    // 30m full / 85m silent keeps it to the lakeside and the north villas only.
+    full: 30, radius: 85, gain: 0.85,
   },
   {
     id: 'wind-trees', file: 'wind-trees.mp3',
     // Palm avenue along the west boundary — the densest planting on the estate
-    x: -300, z: -20, full: 60, radius: 260, gain: 0.5,
+    x: -300, z: -20, full: 50, radius: 140, gain: 0.5,
   },
 ];
 
@@ -1273,7 +1272,9 @@ export function updateAudioForMovement(isMoving, worldX, worldZ) {
   if (window._lakeGain) {
     const lakeCz = -113 + (window._xixNorthShift || 0);
     const lakeDist = Math.hypot(worldX, worldZ - lakeCz);
-    const lakeVol = Math.max(0, 1 - Math.max(0, lakeDist - 30) / 130) * 0.9;
+    // Was (dist-30)/130 → still 0.41 gain at the centre spot 101m away.
+    // Now silent by 85m, matching the sampled source above.
+    const lakeVol = Math.max(0, 1 - Math.max(0, lakeDist - 30) / 55) * 0.9;
     if (Math.abs(lakeVol - _audioLast.lake) > 0.004) {
       _audioLast.lake = lakeVol;
       window._lakeGain.gain.setTargetAtTime(lakeVol, t, 0.25);
@@ -1497,6 +1498,90 @@ const _impostorMat = new THREE.MeshBasicMaterial({
   transparent: true, opacity: 0, depthWrite: false, visible: false,
 });
 const _impostorGeo = new THREE.BoxGeometry(14, 8, 12);
+
+// ─── MERGE A LOADED GLB BY MATERIAL (Option D) ───────────────────────────────
+// Collapses a model's many small meshes into one mesh per material. Draw calls
+// are per-mesh-per-material, so a villa of 30 meshes sharing 8 materials drops
+// from 30 submissions to 8 — and that saving multiplies across all 43 clones.
+//
+// Deliberately conservative. Anything that cannot be safely merged is left as
+// its own mesh and simply re-parented:
+//   • skinned or morph-target meshes (merging would destroy the rig)
+//   • glass panels (the night-glow system drives these individually)
+//   • anything whose geometry lacks the attributes of its group
+// Returns null on failure so the caller falls back to the unmerged scene.
+function _mergeSceneByMaterial(root) {
+  try {
+    root.updateMatrixWorld(true);
+    const groups = new Map();     // material -> [geometry(baked)]
+    const keepAsIs = [];
+    let meshCount = 0, matSet = new Set();
+
+    root.traverse(o => {
+      if (!o.isMesh) return;
+      meshCount++;
+      const mat = Array.isArray(o.material) ? o.material[0] : o.material;
+      if (mat) matSet.add(mat.uuid);
+
+      // Never merge these — keep them intact and re-parent them later.
+      if (o.isSkinnedMesh || o.morphTargetInfluences?.length ||
+          o.userData.isGlassPanel || Array.isArray(o.material)) {
+        keepAsIs.push(o);
+        return;
+      }
+      const g = (o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone());
+      g.applyMatrix4(o.matrixWorld);
+      // Strip attributes that aren't shared across the group, or the merge fails
+      for (const name of Object.keys(g.attributes)) {
+        if (!['position', 'normal', 'uv'].includes(name)) g.deleteAttribute(name);
+      }
+      if (!g.attributes.uv) {
+        // Merge requires a consistent attribute set — synthesise a flat UV
+        const n = g.attributes.position.count;
+        g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(n * 2), 2));
+      }
+      if (!groups.has(mat)) groups.set(mat, []);
+      groups.get(mat).push(g);
+    });
+
+    if (meshCount === 0) return null;
+
+    const out = new THREE.Group();
+    let mergedMeshes = 0;
+    groups.forEach((geos, mat) => {
+      if (geos.length === 1) {
+        const m = new THREE.Mesh(geos[0], mat);
+        m.castShadow = false; m.receiveShadow = true;
+        out.add(m); mergedMeshes++;
+        return;
+      }
+      const merged = BufferGeometryUtils.mergeGeometries(geos, false);
+      geos.forEach(g => g.dispose());
+      if (!merged) return;
+      const m = new THREE.Mesh(merged, mat);
+      m.castShadow = false; m.receiveShadow = true;
+      out.add(m); mergedMeshes++;
+    });
+
+    // Re-parent the un-mergeable meshes with their world transform preserved
+    keepAsIs.forEach(o => {
+      const c = o.clone();
+      c.matrix.copy(o.matrixWorld);
+      c.matrix.decompose(c.position, c.quaternion, c.scale);
+      out.add(c);
+    });
+
+    const after = mergedMeshes + keepAsIs.length;
+    console.log(
+      `[XIX] Villa GLB merged: ${meshCount} meshes / ${matSet.size} materials → ` +
+      `${after} draw calls each (x43 villas = ${meshCount * 43} → ${after * 43})`
+    );
+    return out;
+  } catch (e) {
+    console.warn('[XIX] Villa merge failed, using unmerged model:', e.message);
+    return null;
+  }
+}
 
 function placeVillaGLBWithLOD(x, z, ry, plotKey) {
   if (!villaGLBScene) { 
@@ -2295,7 +2380,10 @@ let   _nightLightsActive = false;
 // standing and the cost is constant however many lamps the estate grows to.
 const _lampPool = [];
 const _lampNodes = [];
-const LAMP_POOL_SIZE = { fast: 4, balanced: 8, rich: 14 };
+// Raised across the board: 8 real lights over a 700m estate left most of it
+// unlit at night. Point lights are cheap relative to the visual payoff here,
+// and they are pooled to only the nearest lamps so cost stays bounded.
+const LAMP_POOL_SIZE = { fast: 8, balanced: 18, rich: 28 };
 let _lampTargetIntensity = 0;
 
 function buildNightLights() {
@@ -2336,7 +2424,11 @@ function buildNightLights() {
 
   const poolSize = LAMP_POOL_SIZE[PERF_MODE] ?? 8;
   for (let i = 0; i < poolSize; i++) {
-    const pt = new THREE.PointLight(0xffaa44, 0, 24, 1.8);
+    // Reach raised 24m -> 55m and decay softened 1.8 -> 1.2.
+    // At 24m/1.8 each lamp lit barely a few metres of ground, so the estate
+    // read as black at night despite 94 posts being present. Warmer colour too
+    // (0xffb35c) — sodium/LED estate lighting, not a dim orange point.
+    const pt = new THREE.PointLight(0xffb35c, 0, 55, 1.2);
     pt.visible = false;
     scene.add(pt); _lampPool.push(pt); _nightLights.push({ pt });
   }
@@ -2378,7 +2470,7 @@ export function tickLampPool(camera) {
     }
   }
 
-  const R2 = 90 * 90;
+  const R2 = 150 * 150;   // was 90m — too tight to light a walk down a street
   for (let i = 0; i < _lampPool.length; i++) {
     const s = _lampScratch[i], pt = _lampPool[i];
     if (!s || s.d2 > R2) { pt.visible = false; continue; }
@@ -2396,10 +2488,13 @@ export function updateNightLights(timeName) {
 
   if (isNight || isSunset) buildNightLights();
 
-  _lampTargetIntensity = isNight ? 3.2 : isSunset ? 1.4 : 0;
+  // Raised from 3.2 — night is the signature look here and it was reading flat.
+  _lampTargetIntensity = isNight ? 6.5 : isSunset ? 2.4 : 0;
 
   // Drive emissive glow on every lamp globe (post + sconce)
-  const globeInt = isNight ? 4.0 : isSunset ? 1.4 : 0.0;   // "very bright at night" — raised from 2.8
+  // Every post glows even when no pooled PointLight is assigned to it, so the
+  // estate reads as fully lit from the air. Raised 4.0 -> 9.0.
+  const globeInt = isNight ? 9.0 : isSunset ? 2.6 : 0.0;   // "very bright at night" — raised from 2.8
   scene.traverse(o => {
     if (o.isMesh && o.userData.isLampGlobe) {
       const m = Array.isArray(o.material) ? o.material[0] : o.material;
@@ -2645,8 +2740,15 @@ const MATS = {
   railWhite:  () => new THREE.MeshStandardMaterial({color:0xfcfaf8,roughness:.5}),
   // depthTest:false so the highlight is never hidden by a taller roof above
   // it — this is what made hover invisible from the aerial/top-down camera.
-  plotAvail:  () => new THREE.MeshStandardMaterial({color:0x00ff88,transparent:true,opacity:0,depthWrite:false,depthTest:false}),
-  plotReserved:()=> new THREE.MeshStandardMaterial({color:0xff4444,transparent:true,opacity:0,depthWrite:false,depthTest:false}),
+  // Plot highlights are UI, not scene geometry, so they use MeshBasicMaterial
+  // (UNLIT). Previously these were MeshStandardMaterial, which meant the
+  // highlight was lit by the sun — it dimmed in shadow and almost disappeared
+  // at night, exactly when a highlight most needs to read. Unlit gives the same
+  // brightness at any time of day and is cheaper to shade.
+  // depthTest:false + renderOrder 999 means it always draws OVER the building,
+  // so the highlight is never hidden by the roof at aerial angles.
+  plotAvail:  () => new THREE.MeshBasicMaterial({color:0x2bff88,transparent:true,opacity:0,depthWrite:false,depthTest:false,side:THREE.DoubleSide}),
+  plotReserved:()=> new THREE.MeshBasicMaterial({color:0xff4444,transparent:true,opacity:0,depthWrite:false,depthTest:false,side:THREE.DoubleSide}),
 };
 
 function addGround() {
@@ -3675,14 +3777,25 @@ function loadVillaGLB(){
     });
     const bbox = new THREE.Box3().setFromObject(gltf.scene);
     gltf.scene.position.y = bbox.min.y < 0 ? -bbox.min.y : 0;
-    const wrapper = new THREE.Group(); 
-    wrapper.add(gltf.scene); 
-    villaGLBScene = wrapper;
 
-    // Cache glass meshes for fast night-glow updates
+    // Cache glass meshes BEFORE merging — merging collapses meshes together and
+    // would lose the per-mesh isGlassPanel tagging the night-glow system needs.
     gltf.scene.traverse(c => {
       if (c.isMesh && c.userData.isGlassPanel) registerGlassMesh(c);
     });
+
+    // ─── OPTION D: MERGE BY MATERIAL, ONCE ─────────────────────────────────
+    // Every villa is a clone of this one source, so merging the SOURCE means
+    // the work happens exactly once and all 43 clones inherit the reduced mesh
+    // count for free. Merging per-clone would do the same job 43 times.
+    // A villa GLB is typically 15-40 separate meshes; at 43 villas that is
+    // several hundred to well over a thousand draw calls, all submitted every
+    // frame in aerial where nothing is LOD'd out.
+    const merged = _mergeSceneByMaterial(gltf.scene);
+
+    const wrapper = new THREE.Group(); 
+    wrapper.add(merged || gltf.scene); 
+    villaGLBScene = wrapper;
 
     // Swap placeholders for real houses
     const queue = [...pendingVillas];
@@ -3779,6 +3892,32 @@ function addPlotOverlayCustom(x,z,ry,plotKey,villaClone,w,d){
 //   - the eased value also drives a slow pulse, so a held selection breathes
 //     instead of sitting inert
 const _plotFade = new Map();
+// ─── SHARED SELECTION RING ───────────────────────────────────────────────────
+// A filled rectangle alone reads as a soft patch from aerial distance. A hard
+// bright border is what makes a selection look deliberate rather than a stain.
+// ONE ring is created and moved to whichever plot is hovered, so this costs a
+// single extra draw call in total — not one per plot.
+let _selRing = null;
+function _ensureSelectionRing() {
+  if (_selRing) return _selRing;
+  const g = new THREE.RingGeometry(0.5, 0.5, 4);   // replaced below by an edge box
+  // Use a thin outlined rectangle built from a plane with only its border drawn.
+  // EdgesGeometry on a plane gives a clean 4-line border that scales cleanly.
+  const plane = new THREE.PlaneGeometry(1, 1);
+  const edges = new THREE.EdgesGeometry(plane);
+  const mat = new THREE.LineBasicMaterial({
+    color: 0x9dffc4, transparent: true, opacity: 0, depthTest: false, depthWrite: false,
+  });
+  _selRing = new THREE.LineSegments(edges, mat);
+  _selRing.rotation.x = -Math.PI / 2;
+  _selRing.renderOrder = 1000;    // above the fill
+  _selRing.visible = false;
+  _selRing.frustumCulled = false;
+  scene.add(_selRing);
+  plane.dispose(); g.dispose();
+  return _selRing;
+}
+
 // Tracks which plot is currently lit so we only touch what changed, instead of
 // looping all 223 plots on every hover.
 let _litPlotKey = null;
@@ -3790,11 +3929,12 @@ export function highlightPlot(plotKey){
   if (_litPlotKey) {
     const prev = plotRegistry.get(_litPlotKey);
     if (prev && prev.overlay) {
-      prev.overlay.userData._fadeTarget = (prev.status === 'reserved') ? 0.50 : 0.0;
+      prev.overlay.userData._fadeTarget = (prev.status === 'reserved') ? 0.45 : 0.0;
     }
   }
 
   _litPlotKey = plotKey;
+  if (!plotKey && _selRing) _selRing.visible = false;
 
   // Light the new plot INSTANTLY. The fade system eases toward _fadeTarget at
   // ~170ms, which is exactly the delay that made hovering feel unresponsive.
@@ -3803,13 +3943,27 @@ export function highlightPlot(plotKey){
   if (plotKey) {
     const plot = plotRegistry.get(plotKey);
     if (plot && plot.overlay) {
-      const target = (plot.status === 'reserved') ? 0.50
-                   : (plot.status === 'available') ? 0.38 : 0.0;
+      // Opacity raised from 0.38 to 0.62. At aerial distance a plot is small on
+      // screen, and 0.38 of an unlit green read as a faint wash rather than a
+      // selection. 0.62 is unmistakable at a glance while still letting the
+      // ground read through, so it looks like a highlight and not a solid slab.
+      const target = (plot.status === 'reserved') ? 0.68
+                   : (plot.status === 'available') ? 0.62 : 0.0;
       plot.overlay.userData._fadeTarget = target;
       if (target > 0) {
         plot.overlay.visible = true;
         plot.overlay.material.opacity = target;   // SNAP — no ease-in
         _plotFade.set(plotKey, target);           // keep the fader in sync
+
+        // Snap the shared selection ring onto this plot, sized to its overlay.
+        const ring = _ensureSelectionRing();
+        const gp = plot.overlay.geometry.parameters || { width: 20, height: 18 };
+        ring.scale.set(gp.width, gp.height, 1);
+        ring.position.set(plot.overlay.position.x, plot.overlay.position.y + 0.02, plot.overlay.position.z);
+        ring.rotation.z = -(plot.ry || 0);
+        ring.material.color.setHex(plot.status === 'reserved' ? 0xffb0b0 : 0x9dffc4);
+        ring.material.opacity = 0.95;
+        ring.visible = true;
       }
     }
   }
@@ -3821,7 +3975,7 @@ export function refreshReservedOverlays() {
   plotRegistry.forEach((plot, key) => {
     if (!plot.overlay) return;
     if (plot.status === 'reserved') {
-      plot.overlay.userData._fadeTarget = 0.50;
+      plot.overlay.userData._fadeTarget = 0.45;   // idle reserved marker
       plot.overlay.visible = true;
     } else if (key !== _litPlotKey) {
       plot.overlay.userData._fadeTarget = 0.0;
@@ -4370,48 +4524,25 @@ export function getHorseGroup() { return null; }   // player-mount horse removed
 window._xixHoverState = null;
 
 window.setHoveredPlot = function(plotKey) {
-  // NOTE: the previous version began with `if (window._aerialModeActive) return;`
-  // which is precisely why the green highlight never appeared in aerial view.
-  // Hover is now supported in aerial and walkthrough alike.
+  // OPTION A — the highlight is the GREEN GROUND OVERLAY, nothing else.
+  //
+  // This used to also tint the building itself by cloning each mesh's material
+  // and setting an emissive green. That was the direct cause of the pointer
+  // becoming unresponsive once the villas loaded: a cloned material is a NEW
+  // SHADER PROGRAM, and the GPU must compile it — tens of milliseconds of stall
+  // each time. In aerial the camera orbits continuously, so the hovered plot
+  // changes constantly and we hit "first hover" on villa after villa in quick
+  // succession, producing a burst of compile stalls exactly when the user is
+  // trying to move the cursor.
+  //
+  // It also traversed two full villa GLB hierarchies on every hover change (the
+  // one being left and the one being entered) to swap materials mesh by mesh.
+  //
+  // Dropping it costs nothing that was asked for — the specified behaviour is a
+  // green overlay highlight, which highlightPlot() delivers on the same frame
+  // with a single opacity write. Hover is now O(1) instead of O(meshes).
   if (window._xixHoverState === plotKey) return;
-
-  // Restore the previously hovered villa's original material
-  if (window._xixHoverState) {
-    const old = plotRegistry.get(window._xixHoverState);
-    if (old && old.villaClone && old.status !== 'reserved') {
-      old.villaClone.traverse(c => {
-        if (c.isMesh && c.userData.origMat) c.material = c.userData.origMat;
-      });
-    }
-  }
-
   window._xixHoverState = plotKey;
-
-  if (plotKey) {
-    const cur = plotRegistry.get(plotKey);
-    if (cur && cur.villaClone && cur.status !== 'reserved') {
-      cur.villaClone.traverse(c => {
-        if (!c.isMesh) return;
-        // Cache both the original AND a pre-built highlight material the first
-        // time this villa is hovered. The old code called origMat.clone() on
-        // every mesh on every hover — allocating dozens of materials per mouse
-        // move and forcing a shader recompile each time.
-        if (!c.userData.origMat) c.userData.origMat = c.material;
-        if (!c.userData.hoverMat) {
-          const hm = c.userData.origMat.clone();
-          if (hm.emissive) {
-            hm.emissive.setHex(0x22cc44);
-            hm.emissiveIntensity = 0.35;
-          }
-          c.userData.hoverMat = hm;
-        }
-        c.material = c.userData.hoverMat;
-      });
-    }
-  }
-
-  // Drive the ground overlay highlight in the same call so the plane and the
-  // building light up on the same frame.
   highlightPlot(plotKey);
 };
 
