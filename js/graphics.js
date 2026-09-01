@@ -111,9 +111,30 @@ export function initPostProcessing(renderer, scene, camera) {
 
   try {
     lutPass = new LUTPass();
-    lutPass.enabled = false;
-    /* Temporarily disabled until xix_signature.cube is on the server */
+    lutPass.enabled = false;   // stays off until the .cube actually decodes
     composer.addPass(lutPass);
+
+    // FGCineWarm.cube — warm cinematic grade. This is the film-emulation step
+    // that was missing: previously the pass existed but no LUT was ever loaded,
+    // so the render only ever got raw ACES tonemapping, which is neutral and
+    // reads as untreated CG. `intensity` is deliberately below 1 so the grade
+    // shapes the image without stamping a heavy look over the brand colours.
+    new LUTCubeLoader().load(
+      'assets/luts/FGCineWarm.cube',
+      (result) => {
+        lutPass.lut = result.texture3D || result.texture;
+        lutPass.intensity = 0.72;
+        lutPass.enabled = true;
+        console.log('[XIX] LUT: FGCineWarm applied (intensity 0.72)');
+      },
+      undefined,
+      (err) => {
+        // Missing or malformed — leave the pass disabled and carry on ungraded
+        // rather than failing the whole composer chain.
+        lutPass.enabled = false;
+        console.log('[XIX] LUT: FGCineWarm.cube not loaded — rendering ungraded');
+      }
+    );
   } catch(e) { 
     console.warn('[XIX] LUT pass init:', e.message); 
   }
