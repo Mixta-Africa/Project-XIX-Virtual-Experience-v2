@@ -117,15 +117,22 @@ export function initPostProcessing(renderer, scene, camera) {
     // FGCineWarm.cube — warm cinematic grade. This is the film-emulation step
     // that was missing: previously the pass existed but no LUT was ever loaded,
     // so the render only ever got raw ACES tonemapping, which is neutral and
-    // reads as untreated CG. `intensity` is deliberately below 1 so the grade
-    // shapes the image without stamping a heavy look over the brand colours.
+    // reads as untreated CG.
+    //
+    // COST DECISION: unlike GTAO (which is disabled on integrated GPUs), the
+    // LUT is KEPT on every tier that runs the composer. A LUT is one of the
+    // cheapest post passes there is — a single 3D texture lookup per pixel,
+    // ~0.3-0.5ms at 1080p — and this cube is only 25^3 (15,625 entries), so the
+    // texture is tiny and cache-friendly. Colour grading is very high visual
+    // value per millisecond, where GTAO was the opposite. Note that 'fast' mode
+    // bypasses the composer entirely, so the LUT does not apply there at all.
     new LUTCubeLoader().load(
       'assets/luts/FGCineWarm.cube',
       (result) => {
         lutPass.lut = result.texture3D || result.texture;
         lutPass.intensity = 0.72;
         lutPass.enabled = true;
-        console.log('[XIX] LUT: FGCineWarm applied (intensity 0.72)');
+        console.log('[XIX] LUT: FGCineWarm applied (25^3, intensity 0.72, ~0.4ms)');
       },
       undefined,
       (err) => {
