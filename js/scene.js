@@ -14,7 +14,7 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=46";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=48";
 import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
@@ -23,7 +23,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=46";
+} from "./graphics.js?v=48";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -631,12 +631,36 @@ export function enableAudio() {
 // its first argument, so movement is derived here from the position delta
 // since the previous call rather than requiring app.js to pass anything new.
 let _lastAudioX = null, _lastAudioZ = null;
-export function updateSpatialAudio(worldX, worldZ) {
+// worldY matters. The previous signature took only X and Z, so the listener was
+// treated as standing on the ground no matter where the camera actually was.
+// In AERIAL that is badly wrong: you orbit ~120m up, but panning horizontally
+// over the lake registered as standing at the water's edge, so place-anchored
+// sounds fired for elements you were nowhere near.
+// Using true 3D distance fixes this without special-casing aerial — height is
+// simply part of how far away something is. Birds and the time-of-day beds are
+// unaffected because they are global by design, which is exactly the intent:
+// from the air you hear the landscape, and you only pick up the lake, the
+// stables or a passing car once you have descended close enough to them.
+export function updateSpatialAudio(worldX, worldZ, worldY = 1.72) {
   const isMoving = _lastAudioX !== null &&
     (Math.abs(worldX - _lastAudioX) > 0.01 || Math.abs(worldZ - _lastAudioZ) > 0.01);
   _lastAudioX = worldX; _lastAudioZ = worldZ;
+  _listenerY = worldY;
   updateAudioForMovement(isMoving, worldX, worldZ);
   _tickAmbientNeighs(worldX, worldZ);
+}
+
+// Listener height above ground, fed into every proximity calculation below.
+let _listenerY = 1.72;
+
+// True 3D distance from the listener to a point on the ground. At walking
+// height the vertical term is negligible; from an aerial orbit it dominates,
+// which is precisely the behaviour we want.
+function _dist3(px, pz) {
+  const dy = _listenerY - 1.6;
+  return Math.sqrt(
+    (_listenerPos.x - px) ** 2 + (_listenerPos.z - pz) ** 2 + dy * dy
+  );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -673,7 +697,7 @@ const AMBIENT_SOURCES = [
   {
     id: 'wind-trees', file: 'wind-trees.mp3',
     // Palm avenue along the west boundary — the densest planting on the estate
-    x: -300, z: -20, full: 50, radius: 140, gain: 0.5,
+    x: -300, z: -20, full: 45, radius: 100, gain: 0.5,
   },
 ];
 
@@ -819,7 +843,9 @@ function _updateAmbientProximity(lx, lz) {
 
   for (const node of _ambientNodes) {
     const def = node.def;
-    const d = Math.hypot(lx - def.x, lz - def.z);
+    // 3D: includes camera height, so an aerial pass overhead stays silent.
+    const dy = _listenerY - 1.6;
+    const d = Math.sqrt((lx - def.x) ** 2 + (lz - def.z) ** 2 + dy * dy);
     let k;
     if (d <= def.full) k = 1;
     else if (d >= def.radius) k = 0;
@@ -846,8 +872,7 @@ function _updateAmbientProximity(lx, lz) {
 function _playSampleAt(file, x, z, { volume = 1, audible = 260, rate = 1, offset = 0, duration = 0 } = {}) {
   const buf = _sampleBuffers.get(file);
   if (!buf || !_audioCtx || _muted) return false;
-  const lp = _listenerPos;
-  if (Math.hypot(lp.x - x, lp.z - z) > audible) return false;
+  if (_dist3(x, z) > audible) return false;
 
   const src = _audioCtx.createBufferSource();
   src.buffer = buf;
@@ -884,9 +909,9 @@ function _tickHorseEvents(now) {
 
   // Pick the nearest horse location within earshot — a whinny should come from
   // the stables you can see, not from an empty paddock across the estate.
-  let best = null, bestD = 200;
+  let best = null, bestD = 105;   // local event — aerial height (118m) excludes it
   for (const p of ONESHOT_POINTS.horses) {
-    const d = Math.hypot(_listenerPos.x - p.x, _listenerPos.z - p.z);
+    const d = _dist3(p.x, p.z);
     if (d < bestD) { bestD = d; best = p; }
   }
   if (!best) return;
@@ -895,13 +920,13 @@ function _tickHorseEvents(now) {
   // gives variety from a single file instead of an obvious repeat.
   const useSnort = Math.random() < 0.4;
   if (useSnort) {
-    _playSampleAt('horse-snort.mp3', best.x, best.z, { volume: 0.55, audible: 150 });
+    _playSampleAt('horse-snort.mp3', best.x, best.z, { volume: 0.55, audible: 110 });
   } else {
     const wb = _sampleBuffers.get('horse-whinny-123.mp3');
     const dur = wb ? wb.duration : 0;
     const slot = dur > 3 ? Math.floor(Math.random() * 3) * (dur / 3) : 0;
     _playSampleAt('horse-whinny-123.mp3', best.x, best.z, {
-      volume: 0.7, audible: 220,
+      volume: 0.7, audible: 130,
       offset: slot, duration: dur > 3 ? dur / 3 : 0,
       rate: 0.95 + Math.random() * 0.1,      // slight pitch variation per call
     });
@@ -922,14 +947,14 @@ function _tickCarEvents(now, dayIndex) {
 
   // Only the perimeter road nearest the listener, and only if they are close
   // enough to plausibly hear a car on it.
-  let best = null, bestD = 300;
+  let best = null, bestD = 105;   // local event — aerial height (118m) excludes it
   for (const p of ONESHOT_POINTS.roads) {
-    const d = Math.hypot(_listenerPos.x - p.x, _listenerPos.z - p.z);
+    const d = _dist3(p.x, p.z);
     if (d < bestD) { bestD = d; best = p; }
   }
   if (!best) return;
 
-  if (_playSampleAt('car-pass.mp3', best.x, best.z, { volume: 0.45, audible: 300 })) {
+  if (_playSampleAt('car-pass.mp3', best.x, best.z, { volume: 0.45, audible: 120 })) {
     _carsToday++;
   }
 }
@@ -1150,9 +1175,9 @@ function _tickAmbientNeighs(listenerX, listenerZ) {
   }
 
   // Fallback: pick the nearest fixed position within 180m (always fires on mobile)
-  let best = null, bestD = 180;
+  let best = null, bestD = 105;
   for (const p of _NEIGH_POSITIONS) {
-    const d = Math.hypot(p.x - listenerX, p.z - listenerZ);
+    const d = _dist3(p.x, p.z);
     if (d < bestD) { bestD = d; best = p; }
   }
   if (best) { _makeNeighAt(best.x, best.z); _lastNeigh = now; }
@@ -1271,7 +1296,8 @@ export function updateAudioForMovement(isMoving, worldX, worldZ) {
   // water-lapping.mp3 sample loads (see _initAmbientSources).
   if (window._lakeGain) {
     const lakeCz = -113 + (window._xixNorthShift || 0);
-    const lakeDist = Math.hypot(worldX, worldZ - lakeCz);
+    const _dy = _listenerY - 1.6;
+    const lakeDist = Math.sqrt(worldX ** 2 + (worldZ - lakeCz) ** 2 + _dy * _dy);
     // Was (dist-30)/130 → still 0.41 gain at the centre spot 101m away.
     // Now silent by 85m, matching the sampled source above.
     const lakeVol = Math.max(0, 1 - Math.max(0, lakeDist - 30) / 55) * 0.9;
@@ -1583,6 +1609,30 @@ function _mergeSceneByMaterial(root) {
   }
 }
 
+// Far-distance villa massing proxy. Deliberately NOT the old white impostor:
+// correct proportions, roof mass, and a colour matched to the villa's palette,
+// so at 220m+ it reads as architecture rather than a placeholder box.
+let _villaProxyGeo = null, _villaProxyMat = null;
+function _makeVillaProxy() {
+  if (!_villaProxyGeo) {
+    // Body + set-back upper storey — enough silhouette to read correctly.
+    const body = new THREE.BoxGeometry(11.4, 6.2, 9.6);
+    body.translate(0, 3.1, 0);
+    const upper = new THREE.BoxGeometry(9.0, 2.6, 7.4);
+    upper.translate(0, 7.5, 0);
+    _villaProxyGeo = BufferGeometryUtils.mergeGeometries(
+      [body.toNonIndexed(), upper.toNonIndexed()], false
+    );
+    body.dispose(); upper.dispose();
+    _villaProxyMat = new THREE.MeshStandardMaterial({
+      color: 0xd8d2c6, roughness: 0.82, metalness: 0.0, envMapIntensity: 0.35,
+    });
+  }
+  const m = new THREE.Mesh(_villaProxyGeo, _villaProxyMat);
+  m.castShadow = false; m.receiveShadow = true;
+  return m;
+}
+
 function placeVillaGLBWithLOD(x, z, ry, plotKey) {
   if (!villaGLBScene) { 
     // Frame 1: Place a lightweight box immediately so the estate looks full
@@ -1604,14 +1654,25 @@ function placeVillaGLBWithLOD(x, z, ry, plotKey) {
   lod.userData.baseRotY    = ry;
   lod.userData.plotKey     = plotKey;
 
+  // THREE-LEVEL LOD. The single 400m level was the wrong shape of fix: it meant
+  // every villa inside 400m — i.e. all of them, always — drew full geometry.
+  //   0-90m    high  140K tris  (detail you can actually resolve)
+  //   90-220m  mid    74K tris  (half-res textures; silhouette still correct)
+  //   220m+    proxy  ~100 tris (a few hundred pixels on screen)
   const highDetail = villaGLBScene.clone(true);
   highDetail.rotation.y = 0;
-  lod.addLevel(highDetail, 0);          
-  
-  // LOD swap at 400m — well beyond walking range, prevents boxes showing inside estate
-  const lowDetail = new THREE.Mesh(_impostorGeo, _impostorMat);
-  lowDetail.position.y = 4;
-  lod.addLevel(lowDetail, 400); 
+  lod.addLevel(highDetail, 0);
+
+  if (villaMidScene) {
+    const mid = villaMidScene.clone(true);
+    mid.rotation.y = 0;
+    lod.addLevel(mid, 90);
+  }
+
+  // Far proxy: a correctly-proportioned massing block, NOT the old bright box.
+  // Colour-matched to the villa's render and lit normally, so at 220m+ it reads
+  // as a building in the distance rather than a placeholder.
+  lod.addLevel(_makeVillaProxy(), 220); 
 
   scene.add(lod);
   if (plotKey) addPlotOverlay(x, z, ry, plotKey, lod);
@@ -1650,11 +1711,11 @@ export function setAerialMode(on) {
 
     // Force every villa to full detail (geometry swap only — negligible cost at
     // orbital distance since there's no character movement competing for the GPU)
-    scene.traverse(obj => {
-      if (obj.isLOD && obj.userData.isVillaGLB && obj.levels[1]) {
-        obj.levels[1].distance = 1e6;
-      }
-    });
+    // The aerial LOD override is REMOVED. It forced every villa to full detail
+    // (levels[1].distance = 1e6), which is why aerial rendered 33M triangles.
+    // With a proper mid level and a distance proxy, LOD now does its job in
+    // aerial too — near villas stay detailed, far ones step down, and the
+    // silhouette of the estate is unchanged.
     if (sun && sun.shadow) {
       const cam = sun.shadow.camera;
       _aerialSavedFrustum = { l: cam.left, r: cam.right, t: cam.top, b: cam.bottom, f: cam.far };
@@ -1666,11 +1727,7 @@ export function setAerialMode(on) {
     }
   } else {
     // Restore LOD distances
-    scene.traverse(obj => {
-      if (obj.isLOD && obj.userData.isVillaGLB && obj.levels[1]) {
-        obj.levels[1].distance = 400;
-      }
-    });
+    // Nothing to restore — LOD distances are no longer overridden in aerial.
     // Restore shadow frustum
     if (sun && sun.shadow && _aerialSavedFrustum) {
       const cam = sun.shadow.camera, f = _aerialSavedFrustum;
@@ -2202,6 +2259,7 @@ export function initScene(canvas) {
     // Load main asset first, stagger the rest using separate loaders to prevent Web Worker deadlock
     loadVillaGLB();
     addVillaRing();
+    setTimeout(() => loadVillaMidGLB(), 2200);   // after the high model settles
 
     setTimeout(() => { loadLoftGLB(); addLoftTerraces(); }, 400);
     setTimeout(() => { loadApartmentGLB(); addWestCompound(); }, 800);
@@ -3760,8 +3818,41 @@ function loadStablesGLB() {
   });
 }
 
+// Mid-detail villa (74K tris, half-res textures) used from 90m outward.
+let villaMidScene = null;
+function loadVillaMidGLB(){
+  makeDracoLoader().load("assets/models/villa-mid.glb", gltf => {
+    applyPS4Materials(gltf.scene);
+    gltf.scene.traverse(c => {
+      if (c.isMesh) { c.castShadow = false; c.receiveShadow = true; c.frustumCulled = true; }
+    });
+    const bbox = new THREE.Box3().setFromObject(gltf.scene);
+    gltf.scene.position.y = bbox.min.y < 0 ? -bbox.min.y : 0;
+    const w = new THREE.Group(); w.add(gltf.scene);
+    villaMidScene = w;
+    // Retro-fit every villa already placed with its mid level.
+    let n = 0;
+    scene.traverse(o => {
+      if (o.isLOD && o.userData.isVillaGLB && o.levels.length < 3) {
+        const mid = villaMidScene.clone(true);
+        mid.rotation.y = 0;
+        o.addLevel(mid, 90);
+        n++;
+      }
+    });
+    console.log(`[XIX] Villa mid-LOD ready (74K tris) — attached to ${n} villas at 90m`);
+    requestShadowUpdate(2);
+  }, undefined, e => console.warn('[XIX] villa-mid.glb failed:', e));
+}
+
 function loadVillaGLB(){
-  makeDracoLoader().load("assets/villa-mesh.glb", gltf => {
+  // assets/models/villa-high.glb — the original villa-mesh.glb was 979,415
+  // triangles PER VILLA. At 43 villas that is 42 MILLION triangles, roughly
+  // ten times what an Intel UHD 620 can sustain, and the measured cause of the
+  // lag (186 draw calls but 33M triangles: batching was never going to help).
+  // This is the same model decimated to 140K — a 7x reduction — with a further
+  // 74K mid-LOD loaded below for distance.
+  makeDracoLoader().load("assets/models/villa-high.glb", gltf => {
     // GFA 330m² ÷ 3 floors → 11.4m wide at scale 5.71853
     gltf.scene.scale.setScalar(5.71853);
     // villa-mesh.glb ships with baked PBR maps (albedo / normal / metal-rough)
@@ -3807,7 +3898,7 @@ function loadVillaGLB(){
     });
 
   }, null, err => {
-    console.warn('[XIX] villa-mesh.glb failed, using fallbacks:', err);
+    console.warn('[XIX] villa-high.glb failed, using fallbacks:', err);
     pendingVillas.forEach((data) => {
       if (data.placeholder) scene.remove(data.placeholder); // Clean up dummy
       const v = _createVillaFallback();
