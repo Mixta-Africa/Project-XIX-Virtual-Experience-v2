@@ -114,34 +114,28 @@ export function initPostProcessing(renderer, scene, camera) {
     lutPass.enabled = false;   // stays off until the .cube actually decodes
     composer.addPass(lutPass);
 
-    // FGCineWarm.cube — warm cinematic grade. This is the film-emulation step
-    // that was missing: previously the pass existed but no LUT was ever loaded,
-    // so the render only ever got raw ACES tonemapping, which is neutral and
-    // reads as untreated CG.
-    //
-    // COST DECISION: unlike GTAO (which is disabled on integrated GPUs), the
-    // LUT is KEPT on every tier that runs the composer. A LUT is one of the
-    // cheapest post passes there is — a single 3D texture lookup per pixel,
-    // ~0.3-0.5ms at 1080p — and this cube is only 25^3 (15,625 entries), so the
-    // texture is tiny and cache-friendly. Colour grading is very high visual
-    // value per millisecond, where GTAO was the opposite. Note that 'fast' mode
-    // bypasses the composer entirely, so the LUT does not apply there at all.
-    new LUTCubeLoader().load(
-      'assets/luts/FGCineWarm.cube',
-      (result) => {
-        lutPass.lut = result.texture3D || result.texture;
-        lutPass.intensity = 0.72;
+    // COLOUR GRADING — OFF BY DEFAULT.
+    // FGCineWarm at 0.72 washed the image out and lost the contrast of the
+    // previous ungraded Balanced/Rich look, which was preferred. The pass and
+    // loader are kept so a grade can be dialled in later, but nothing loads or
+    // applies unless explicitly switched on.
+    // To experiment at runtime:  window.setLUT(true, 0.2)
+    // Start low — a LUT this warm needs roughly a quarter of the strength it
+    // was given, and should be judged against the ungraded image side by side.
+    window.setLUT = function (on, intensity = 0.2) {
+      if (!lutPass) return;
+      if (!on) { lutPass.enabled = false; console.log('[XIX] LUT off'); return; }
+      const apply = () => {
+        lutPass.intensity = intensity;
         lutPass.enabled = true;
-        console.log('[XIX] LUT: FGCineWarm applied (25^3, intensity 0.72, ~0.4ms)');
-      },
-      undefined,
-      (err) => {
-        // Missing or malformed — leave the pass disabled and carry on ungraded
-        // rather than failing the whole composer chain.
-        lutPass.enabled = false;
-        console.log('[XIX] LUT: FGCineWarm.cube not loaded — rendering ungraded');
-      }
-    );
+        console.log('[XIX] LUT on at ' + intensity);
+      };
+      if (lutPass.lut) return apply();
+      new LUTCubeLoader().load('assets/luts/FGCineWarm.cube',
+        (r) => { lutPass.lut = r.texture3D || r.texture; apply(); },
+        undefined,
+        () => console.log('[XIX] LUT: cube failed to load'));
+    };
   } catch(e) { 
     console.warn('[XIX] LUT pass init:', e.message); 
   }
