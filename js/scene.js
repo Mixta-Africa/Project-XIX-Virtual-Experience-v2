@@ -14,7 +14,7 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=38";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=39";
 import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
@@ -23,7 +23,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=38";
+} from "./graphics.js?v=39";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -41,12 +41,20 @@ if (typeof window !== 'undefined') window._xixNorthShift = NORTH_SHIFT;
 const PERF_SETTINGS = {
   // 'balanced' is now the CEILING for integrated-GPU laptops (see detectGPUTier),
   // so it is tuned for that hardware rather than for a mid-range discrete card.
-  // shadowMapSize 2048 and pixelRatio 1.25 keep fill-rate and shadow cost within
-  // what shared-memory graphics can sustain; 1.75 DPR on a scaled laptop display
-  // was rendering ~3x the pixels of native for no perceptible sharpness gain.
-  fast:     { shadowMapSize: 1024, pixelRatio: 1.25, fogDensity: 0.00002, palmTickDiv: 6 },
-  balanced: { shadowMapSize: 2048, pixelRatio: 1.25, fogDensity: 0.00002, palmTickDiv: 3 },
-  rich:     { shadowMapSize: 4096, pixelRatio: 2.0,  fogDensity: 0.00002, palmTickDiv: 1 },
+  //
+  // fogDensity — ATMOSPHERIC PERSPECTIVE.
+  // This was 0.00002, which with FogExp2 gives under 1% haze even 800m away:
+  // the atmosphere was effectively switched off. That is the single biggest
+  // reason the aerial view read as CG rather than photography — in real aerial
+  // imagery, distance desaturates and lightens everything through haze, and
+  // here the far corner of the estate had identical contrast to the foreground.
+  // 0.0011 gives ~20% haze at 400m and ~60% at 800m — a natural falloff across
+  // the 760m estate. Because FogExp2 is distance-SQUARED, close-range
+  // walkthrough is barely touched (0.4% at 50m), so this costs nothing at
+  // ground level while transforming the wide shot.
+  fast:     { shadowMapSize: 1024, pixelRatio: 1.25, fogDensity: 0.00105, palmTickDiv: 6 },
+  balanced: { shadowMapSize: 2048, pixelRatio: 1.25, fogDensity: 0.00110, palmTickDiv: 3 },
+  rich:     { shadowMapSize: 4096, pixelRatio: 2.0,  fogDensity: 0.00115, palmTickDiv: 1 },
 };
 
 export function setPerfMode(mode) {
@@ -82,8 +90,13 @@ export function setPerfMode(mode) {
   }
   
   if (scene && scene.fog) {
+    // Clear weather means LESS haze, not none. The old value (0.000008) removed
+    // atmospheric perspective entirely on clear days — but even on a genuinely
+    // clear day, 800m of air visibly lightens and desaturates distance. That
+    // falloff is what separates a photograph from a render, so clear weather
+    // keeps ~70% of the base density rather than switching it off.
     const isClear = (window._currentWeather === 'clear');
-    scene.fog.density = isClear ? 0.000008 : s.fogDensity;
+    scene.fog.density = isClear ? s.fogDensity * 0.7 : s.fogDensity;
   }
 }
 
@@ -1716,7 +1729,9 @@ export function initScene(canvas) {
   detectMobileTier(); // Auto-lock PERF_MODE for mobile/low-end GPU
 
   scene  = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(0x8ab8cc, perfS.fogDensity);
+  // Initial fog matches the 'afternoon' preset the scene starts in (see
+  // updateSkyForTime) so the first frames don't render with a stale colour.
+  scene.fog = new THREE.FogExp2(0xb8ccd6, perfS.fogDensity);
 
   camera = new THREE.PerspectiveCamera(50, 1, 0.5, 1200);
 
@@ -1811,8 +1826,21 @@ export function updateSkyForTime(timeName) {
   // moments it genuinely needs regenerating (see initScene autoUpdate note).
   requestShadowUpdate(2);
   if (scene && scene.fog) {
-    const fogColors = { morning:0x8ab8cc, afternoon:0x8ab8cc, sunset:0xc06040, night:0x020810 };
-    scene.fog.color.set(fogColors[timeName] || 0x8ab8cc);
+    // Haze colour is scattered horizon light, so it must be noticeably LIGHTER
+    // than the sky above and shift with the sun. The old single blue (0x8ab8cc)
+    // for both morning and afternoon read as a flat blue wash once the density
+    // was raised to a visible level.
+    // Morning carries the warm dusty cast typical of the harmattan-influenced
+    // Lagos coast; afternoon is a brighter, cooler humid haze; sunset picks up
+    // the low warm sun; night is deep blue rather than pure black so distant
+    // geometry recedes into atmosphere instead of disappearing.
+    const fogColors = {
+      morning:   0xc4bda8,   // warm, dusty — low sun through humid air
+      afternoon: 0xb8ccd6,   // bright humid haze
+      sunset:    0xd08a5a,   // warm scattered low-angle light
+      night:     0x0a1420,   // deep blue, not black
+    };
+    scene.fog.color.set(fogColors[timeName] || 0xb8ccd6);
   }
   setBloomForTime(timeName);
   updateNightLights(timeName);
