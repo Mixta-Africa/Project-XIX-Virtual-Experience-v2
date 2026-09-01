@@ -14,7 +14,7 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=49";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=51";
 import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
@@ -23,7 +23,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=49";
+} from "./graphics.js?v=51";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -102,6 +102,13 @@ let _palmTickCount = 0;
 
 let villaGLBScene = null, pendingVillas = [];
 const VILLA_SCALE = 12.56;
+// Distance at which a villa swaps from the full 979K model to the verified
+// 97,941-tri low-poly. Villas sit ~28m apart on the ring, so at 90m you'd have
+// 6-8 of them at full detail while walking — around 7M triangles on its own.
+// 60m keeps 2-3 at full detail, which is what you can actually resolve, and
+// puts everything else on the low model.
+// Raise it if close-range villas look soft; lower it if walking is still heavy.
+const VILLA_LOD_SWAP = 60;
 
 // ── OUTDOOR LAMP MESHES ────────────────────────────────────────────────────
 // Post security lamp: 4 m tall, placed either side of every villa frontage.
@@ -1634,10 +1641,17 @@ function placeVillaGLBWithLOD(x, z, ry, plotKey) {
   highDetail.rotation.y = 0;
   lod.addLevel(highDetail, 0);          
 
-  // LOD swap at 400m — well beyond walking range, prevents boxes showing inside estate
-  const lowDetail = new THREE.Mesh(_impostorGeo, _impostorMat);
-  lowDetail.position.y = 4;
-  lod.addLevel(lowDetail, 400); 
+  // Real low-poly level at VILLA_LOD_SWAP (see loadVillaLowGLB). Until it loads, fall back
+  // to the invisible impostor at 400m so nothing pops in as a box.
+  if (villaLowScene) {
+    const low = villaLowScene.clone(true);
+    low.rotation.y = 0;
+    lod.addLevel(low, VILLA_LOD_SWAP);
+  } else {
+    const lowDetail = new THREE.Mesh(_impostorGeo, _impostorMat);
+    lowDetail.position.y = 4;
+    lod.addLevel(lowDetail, 400);
+  }
 
   scene.add(lod);
   if (plotKey) addPlotOverlay(x, z, ry, plotKey, lod);
@@ -1676,11 +1690,10 @@ export function setAerialMode(on) {
 
     // Force every villa to full detail (geometry swap only — negligible cost at
     // orbital distance since there's no character movement competing for the GPU)
-    scene.traverse(obj => {
-      if (obj.isLOD && obj.userData.isVillaGLB && obj.levels[1]) {
-        obj.levels[1].distance = 1e6;
-      }
-    });
+    // Aerial keeps normal LOD now. The old override forced every villa to full
+    // detail (levels[1].distance = 1e6) purely because the fallback level was
+    // invisible — with a real low-poly level there is nothing to hide, and this
+    // is what was rendering 33M triangles from the air.
     if (sun && sun.shadow) {
       const cam = sun.shadow.camera;
       _aerialSavedFrustum = { l: cam.left, r: cam.right, t: cam.top, b: cam.bottom, f: cam.far };
@@ -1692,11 +1705,7 @@ export function setAerialMode(on) {
     }
   } else {
     // Restore LOD distances
-    scene.traverse(obj => {
-      if (obj.isLOD && obj.userData.isVillaGLB && obj.levels[1]) {
-        obj.levels[1].distance = 400;
-      }
-    });
+    // Nothing to restore — aerial no longer overrides LOD distances.
     // Restore shadow frustum
     if (sun && sun.shadow && _aerialSavedFrustum) {
       const cam = sun.shadow.camera, f = _aerialSavedFrustum;
@@ -2228,6 +2237,7 @@ export function initScene(canvas) {
     // Load main asset first, stagger the rest using separate loaders to prevent Web Worker deadlock
     loadVillaGLB();
     addVillaRing();
+    setTimeout(() => loadVillaLowGLB(), 2500);
 
     setTimeout(() => { loadLoftGLB(); addLoftTerraces(); }, 400);
     setTimeout(() => { loadApartmentGLB(); addWestCompound(); }, 800);
@@ -3784,6 +3794,43 @@ function loadStablesGLB() {
     g.add(tmpl.clone(true)); 
     scene.add(g);
   });
+}
+
+// ─── LOW-POLY VILLA (verified) ───────────────────────────────────────────────
+// assets/villa-low.glb — 97,941 tris vs 979,415 in the original: a 10x cut with
+// the bounding box verified identical (X 0.005%, Z 0.003%, Y 0.134% deviation),
+// so the 330 sqm footprint and VILLA_SCALE are unaffected.
+// This is used from VILLA_LOD_SWAP metres outward. Inside 90m the full original still renders, so
+// nothing you can actually resolve is lost.
+let villaLowScene = null;
+function loadVillaLowGLB(){
+  makeDracoLoader().load("assets/villa-low.glb", gltf => {
+    applyPS4Materials(gltf.scene);
+    gltf.scene.traverse(c => {
+      if (c.isMesh) { c.castShadow = false; c.receiveShadow = true; c.frustumCulled = true; }
+    });
+    // Ground it exactly like the high model so the two levels sit at the same
+    // height — any mismatch here shows as a visible pop at the swap distance.
+    const bbox = new THREE.Box3().setFromObject(gltf.scene);
+    gltf.scene.position.y = bbox.min.y < 0 ? -bbox.min.y : 0;
+    const w = new THREE.Group(); w.add(gltf.scene);
+    villaLowScene = w;
+
+    // Attach to every villa already placed.
+    let n = 0;
+    scene.traverse(o => {
+      if (o.isLOD && o.userData.isVillaGLB) {
+        // Drop the old invisible impostor level if present, then add the real one.
+        o.levels = o.levels.filter(l => !(l.object && l.object.material === _impostorMat));
+        const low = villaLowScene.clone(true);
+        low.rotation.y = 0;
+        o.addLevel(low, VILLA_LOD_SWAP);
+        n++;
+      }
+    });
+    console.log(`[XIX] Villa low-LOD ready (97,941 tris) — attached to ${n} villas, swaps at ${VILLA_LOD_SWAP}m`);
+    requestShadowUpdate(2);
+  }, undefined, e => console.warn('[XIX] villa-low.glb failed:', e));
 }
 
 function loadVillaGLB(){
