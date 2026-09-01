@@ -14,7 +14,7 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=40";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=41";
 import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
@@ -23,7 +23,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=40";
+} from "./graphics.js?v=41";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -703,7 +703,25 @@ async function _loadSample(file) {
     const res = await fetch(AUDIO_BASE + file);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const arr = await res.arrayBuffer();
-    const buf = await _audioCtx.decodeAudioData(arr);
+    let buf = await _audioCtx.decodeAudioData(arr);
+
+    // ─── FORCE MONO ────────────────────────────────────────────────────────
+    // A PannerNode fed a STEREO buffer does not spatialise correctly: the
+    // baked-in stereo image fights the 3D placement, so a horse positioned at
+    // the stables still bleeds across both ears regardless of where you stand.
+    // Several of the supplied files are stereo, so rather than require them to
+    // be re-sourced we downmix here. This also halves the decoded memory —
+    // these buffers are 32-bit float PCM, so a long stereo clip is expensive.
+    if (buf.numberOfChannels > 1) {
+      const L = buf.getChannelData(0), R = buf.getChannelData(1);
+      const mono = _audioCtx.createBuffer(1, buf.length, buf.sampleRate);
+      const out = mono.getChannelData(0);
+      for (let i = 0; i < buf.length; i++) out[i] = (L[i] + R[i]) * 0.5;
+      const mb = (buf.length * 4 / 1048576).toFixed(1);
+      console.log(`[XIX] Audio: ${file} downmixed stereo→mono (saved ~${mb}MB, enables true 3D panning)`);
+      buf = mono;
+    }
+
     _sampleBuffers.set(file, buf);
     return buf;
   } catch (e) {
@@ -736,13 +754,23 @@ async function _initAmbientSources() {
   }
 }
 
-// Called every frame from updateAudioForMovement — pure distance maths, no
-// allocation, so it is free to run at frame rate.
+// Called from updateAudioForMovement. THROTTLED to ~12Hz and change-gated:
+// the previous version ran at frame rate and called setTargetAtTime on every
+// source every frame, which schedules a fresh automation event on the
+// AudioParam timeline 60x/second per source. Those events accumulate and cost
+// real work in the audio thread, for zero benefit — setTargetAtTime already
+// ramps smoothly between calls, and hearing cannot resolve gain changes faster
+// than a few times a second anyway.
+let _proxLastRun = 0;
 function _updateAmbientProximity(lx, lz) {
-  for (const { def, gainNode } of _ambientNodes) {
-    const dx = lx - (typeof def.x === 'number' ? def.x : def.x);
-    const dz = lz - (typeof def.z === 'number' ? def.z : def.z);
-    const d = Math.hypot(dx, dz);
+  if (!_ambientNodes.length) return;
+  const now = performance.now();
+  if (now - _proxLastRun < 84) return;   // ~12Hz
+  _proxLastRun = now;
+
+  for (const node of _ambientNodes) {
+    const def = node.def;
+    const d = Math.hypot(lx - def.x, lz - def.z);
     let k;
     if (d <= def.full) k = 1;
     else if (d >= def.radius) k = 0;
@@ -752,7 +780,13 @@ function _updateAmbientProximity(lx, lz) {
       const t = 1 - (d - def.full) / (def.radius - def.full);
       k = t * t * (3 - 2 * t);
     }
-    gainNode.gain.setTargetAtTime(k * def.gain, _audioCtx.currentTime, 0.35);
+    const target = k * def.gain;
+    // Only touch the AudioParam when the value has actually moved enough to
+    // be audible. Standing still schedules nothing at all.
+    if (node._last === undefined || Math.abs(target - node._last) > 0.004) {
+      node._last = target;
+      node.gainNode.gain.setTargetAtTime(target, _audioCtx.currentTime, 0.35);
+    }
   }
 }
 
@@ -1124,53 +1158,75 @@ function _makeHooves() {
   return { panner, gain };
 }
 
+// Cached last-written values so we only touch an AudioParam when its target has
+// actually changed. The previous version issued NINE setTargetAtTime calls every
+// frame — 540 automation events per second — even when standing perfectly still
+// with nothing changing. Each one schedules work on the audio thread.
+const _audioLast = { lx: NaN, lz: NaN, wind: NaN, hooves: NaN, birds: NaN, lake: NaN };
+
 export function updateAudioForMovement(isMoving, worldX, worldZ) {
   if (!_audioCtx) return;
+  const t = _audioCtx.currentTime;
 
-  const listener = _audioCtx.listener;
-  if (listener.positionX) {
-    listener.positionX.setTargetAtTime(worldX, _audioCtx.currentTime, 0.1);
-    listener.positionY.setTargetAtTime(1.72, _audioCtx.currentTime, 0.1);
-    listener.positionZ.setTargetAtTime(worldZ, _audioCtx.currentTime, 0.1);
-  }
-
-  if (_hoovesPanner) {
-    _hoovesPanner.positionX.setTargetAtTime(worldX, _audioCtx.currentTime, 0.1);
-    _hoovesPanner.positionZ.setTargetAtTime(worldZ, _audioCtx.currentTime, 0.1);
+  // Listener + hooves panner: only reposition when the camera has genuinely
+  // moved. Sub-10cm jitter is inaudible and not worth an automation event.
+  const movedEnough = !(Math.abs(worldX - _audioLast.lx) < 0.1 && Math.abs(worldZ - _audioLast.lz) < 0.1);
+  if (movedEnough) {
+    _audioLast.lx = worldX; _audioLast.lz = worldZ;
+    const listener = _audioCtx.listener;
+    if (listener.positionX) {
+      listener.positionX.setTargetAtTime(worldX, t, 0.1);
+      listener.positionY.setTargetAtTime(1.72, t, 0.1);
+      listener.positionZ.setTargetAtTime(worldZ, t, 0.1);
+    }
+    if (_hoovesPanner && _hoovesPanner.positionX) {
+      _hoovesPanner.positionX.setTargetAtTime(worldX, t, 0.1);
+      _hoovesPanner.positionZ.setTargetAtTime(worldZ, t, 0.1);
+    }
   }
 
   if (_windGain) {
     const edge = Math.min(Math.abs(worldZ + 220), Math.abs(worldZ - 215));
     const windVal = 0.008 + (1 - Math.min(edge / 80, 1)) * 0.018;
-    _windGain.gain.setTargetAtTime(windVal, _audioCtx.currentTime, 0.4);
+    if (Math.abs(windVal - _audioLast.wind) > 0.0004) {
+      _audioLast.wind = windVal;
+      _windGain.gain.setTargetAtTime(windVal, t, 0.4);
+    }
   }
-  
+
+  // These two are binary on/off — they change only when you start or stop
+  // moving, so writing them every frame was pure waste.
   if (_hoovesGain) {
-    _hoovesGain.gain.setTargetAtTime(isMoving ? 0.6 : 0, _audioCtx.currentTime, 0.3);
+    const hv = isMoving ? 0.6 : 0;
+    if (hv !== _audioLast.hooves) { _audioLast.hooves = hv; _hoovesGain.gain.setTargetAtTime(hv, t, 0.3); }
   }
-  
   if (_birdsGain) {
-    _birdsGain.gain.setTargetAtTime(isMoving ? 0 : 0.8, _audioCtx.currentTime, 0.8);
+    const bv = isMoving ? 0 : 0.8;
+    if (bv !== _audioLast.birds) { _audioLast.birds = bv; _birdsGain.gain.setTargetAtTime(bv, t, 0.8); }
   }
 
   // Track the listener for the proximity system and the event schedulers.
   _listenerPos.x = worldX; _listenerPos.z = worldZ;
-  _updateAmbientProximity(worldX, worldZ);
-  {
-    const _now = performance.now();
-    _tickHorseEvents(_now);
-    // Day index drives the "at most 5 cars per day" budget. The day cycle is
-    // ~8 minutes of real time, so this rolls the allowance over naturally.
-    _tickCarEvents(_now, Math.floor(_now / (8 * 60 * 1000)));
-  }
+  _updateAmbientProximity(worldX, worldZ);   // internally throttled to ~12Hz
+
+  // Event schedulers: both early-return on a timestamp compare, so running them
+  // per frame costs two integer comparisons.
+  const _now = performance.now();
+  _tickHorseEvents(_now);
+  // Day index drives the "at most 5 cars per day" budget. The day cycle is
+  // ~8 minutes of real time, so this rolls the allowance over naturally.
+  _tickCarEvents(_now, Math.floor(_now / (8 * 60 * 1000)));
 
   // Lake water: synthesised fallback. Silenced automatically once the real
   // water-lapping.mp3 sample loads (see _initAmbientSources).
   if (window._lakeGain) {
     const lakeCz = -113 + (window._xixNorthShift || 0);
-    const lakeDist = Math.hypot(worldX - 0, worldZ - lakeCz);
+    const lakeDist = Math.hypot(worldX, worldZ - lakeCz);
     const lakeVol = Math.max(0, 1 - Math.max(0, lakeDist - 30) / 130) * 0.9;
-    window._lakeGain.gain.setTargetAtTime(lakeVol, _audioCtx.currentTime, 0.25);
+    if (Math.abs(lakeVol - _audioLast.lake) > 0.004) {
+      _audioLast.lake = lakeVol;
+      window._lakeGain.gain.setTargetAtTime(lakeVol, t, 0.25);
+    }
   }
 }
 
