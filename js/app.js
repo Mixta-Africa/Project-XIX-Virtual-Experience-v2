@@ -10,7 +10,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
-import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=39";
+import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=40";
 // villa-interior.js removed — dead file, superseded by interior.js
 import {
   initScene, getRenderer, getScene, getCamera, getClock,
@@ -21,12 +21,12 @@ import {
   getSunLight, getHorseGroup, updateNightLights, updateBuildingNightGlow,
   enterVillaInterior, teleportVillaRoom, exitVillaInterior,
   setAudioMuted, isAudioMuted,
-} from "./scene.js?v=39";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=39";
+} from "./scene.js?v=40";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=40";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
-} from "./controls.js?v=39";
+} from "./controls.js?v=40";
 import {
   initMinimap, updateMinimap,
   buildViewpointStrip, showZonePanel, hideZonePanel,
@@ -34,7 +34,7 @@ import {
   setCaption as _setCaption_raw, showEnterPrompt, hideEnterPrompt,
   showVRButton, showJoystick, hideJoystick, isMobile,
   enableAudio, updateSpatialAudio, initAudio
-} from "./ui.js?v=39";
+} from "./ui.js?v=40";
 
 window.plotRegistry = plotRegistry;
 
@@ -832,9 +832,22 @@ function bindPlotSystem() {
   // In pointer-locked walkthrough the mouse doesn't emit position changes the
   // same way, and the camera itself moves — so re-pick every frame from centre.
   // This is cheap now (one raycast against cached quads, no allocations).
+  // Re-pick every frame in BOTH modes, from the last known cursor position.
+  //  • Pointer-locked walkthrough: the camera moves as you walk, so the plot
+  //    under the fixed centre crosshair changes constantly.
+  //  • Aerial: the camera ORBITS, so the estate rotates beneath a stationary
+  //    cursor and the plot under it changes every frame. The earlier version
+  //    bailed out unless the pointer was locked, so in aerial the highlight
+  //    only updated when the mouse physically moved — it drifted out of sync
+  //    with the scene the moment you stopped moving. That is the opposite of
+  //    the desktop-cursor immediacy this is meant to have.
+  // The pick itself is one raycast against cached quads with no allocation, so
+  // running it per frame is cheap; _queueHoverPick coalesces to one per frame.
   window._tickCrosshairHover = function() {
-    if (!document.pointerLockElement) return;
-    _hoverPointerLocked = true;
+    const locked = !!document.pointerLockElement;
+    const aerial = !!window._aerialModeActive;
+    if (!locked && !aerial) return;   // idle, unlocked, non-aerial: mousemove drives it
+    _hoverPointerLocked = locked;
     _queueHoverPick();
   };
 
