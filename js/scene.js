@@ -14,7 +14,7 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=41";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=42";
 import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
@@ -23,7 +23,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=41";
+} from "./graphics.js?v=42";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -735,6 +735,56 @@ async function _loadSample(file) {
 
 const _ambientNodes = [];   // { def, gainNode }
 
+// ─── TIME-OF-DAY AMBIENCE BEDS ───────────────────────────────────────────────
+// Birds are the one sound that belongs EVERYWHERE, so unlike the lake and the
+// palms these are not proximity-gated. Instead the four beds crossfade as the
+// day cycle advances: a dense dawn chorus, a sparser midday with insects,
+// evening calls, then night crickets and frogs. Only one is audible at a time;
+// the others sit at zero gain but keep playing, so a time change crossfades
+// rather than restarting mid-phrase.
+const TIME_BEDS = {
+  morning:   'birds-dawn.mp3',
+  afternoon: 'birds-day.mp3',
+  sunset:    'birds-evening.mp3',
+  night:     'night-ambience.mp3',
+};
+const _timeBedNodes = new Map();   // timeName -> GainNode
+let _activeTimeBed = null;
+
+async function _initTimeBeds() {
+  for (const [timeName, file] of Object.entries(TIME_BEDS)) {
+    const buf = await _loadSample(file);
+    if (!buf) continue;
+    const src = _audioCtx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    const g = _audioCtx.createGain();
+    g.gain.value = 0;
+    src.connect(g); g.connect(_masterGain);
+    src.start(Math.random() * 3);   // stagger phase between beds
+    _timeBedNodes.set(timeName, g);
+  }
+  if (_timeBedNodes.size) {
+    console.log(`[XIX] Audio: ${_timeBedNodes.size} time-of-day beds loaded`);
+    // Silence the synthesised bird generator — the real beds supersede it.
+    if (_birdsGain) _birdsGain.gain.value = 0;
+    setTimeBed(window._currentTimeName || 'afternoon');
+  }
+}
+
+// Crossfade to the bed for a given time of day. Called from updateSkyForTime,
+// so the soundscape and the lighting change together.
+export function setTimeBed(timeName) {
+  if (!_timeBedNodes.size || !_audioCtx) return;
+  if (_activeTimeBed === timeName) return;
+  _activeTimeBed = timeName;
+  const t = _audioCtx.currentTime;
+  // 4s crossfade — long enough that the transition is felt rather than heard.
+  _timeBedNodes.forEach((g, name) => {
+    g.gain.setTargetAtTime(name === timeName ? 0.55 : 0, t, 1.4);
+  });
+}
+
 async function _initAmbientSources() {
   for (const def of AMBIENT_SOURCES) {
     const buf = await _loadSample(def.file);
@@ -937,6 +987,7 @@ export function initAmbientAudio() {
     // its synthesised stand-in; each one that is missing leaves the fallback in
     // place. Nothing blocks on this, so audio starts immediately either way.
     _initAmbientSources();
+    _initTimeBeds();
     ['horse-whinny-123.mp3','horse-snort.mp3','car-pass.mp3','hooves-dirt.mp3']
       .forEach(f => _loadSample(f));
   } catch(e) { console.warn('[XIX] Audio init failed:', e); }
@@ -2123,6 +2174,9 @@ export function updateSkyForTime(timeName) {
     };
     scene.fog.color.set(fogColors[timeName] || 0xb8ccd6);
   }
+  // Soundscape follows the light: crossfade to this time's ambience bed.
+  window._currentTimeName = timeName;
+  setTimeBed(timeName);
   setBloomForTime(timeName);
   updateNightLights(timeName);
   updateBuildingNightGlow(timeName);
