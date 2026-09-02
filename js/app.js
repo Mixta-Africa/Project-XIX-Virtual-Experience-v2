@@ -10,7 +10,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
-import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=55";
+import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=56";
 // villa-interior.js removed — dead file, superseded by interior.js
 import {
   initScene, getRenderer, getScene, getCamera, getClock,
@@ -21,12 +21,12 @@ import {
   getSunLight, getHorseGroup, updateNightLights, updateBuildingNightGlow,
   enterVillaInterior, teleportVillaRoom, exitVillaInterior,
   setAudioMuted, isAudioMuted, setMixLevel, getMixLevels, getMixDefaults, resetMixLevels,
-} from "./scene.js?v=55";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=55";
+} from "./scene.js?v=56";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=56";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
-} from "./controls.js?v=55";
+} from "./controls.js?v=56";
 import {
   initMinimap, updateMinimap,
   buildViewpointStrip, showZonePanel, hideZonePanel,
@@ -34,7 +34,7 @@ import {
   setCaption as _setCaption_raw, showEnterPrompt, hideEnterPrompt,
   showVRButton, showJoystick, hideJoystick, isMobile,
   enableAudio, updateSpatialAudio, initAudio
-} from "./ui.js?v=55";
+} from "./ui.js?v=56";
 
 window.plotRegistry = plotRegistry;
 
@@ -1424,6 +1424,9 @@ async function openWorldAt(viewKey) {
 
   // Initialize the searchable property directory
   injectPropertyDirectory();
+
+  // Chrome settles back while exploring so the estate reads full-screen.
+  initAutoFadingChrome();
   
   // Always open at field_centre — walk mode, ground level, facing north
   const _fieldVp = VIEWPOINTS['field_centre'];
@@ -1727,6 +1730,130 @@ window.toggleAerial=toggleAerial;
 // ─── SOUND TOGGLE ───────────────────────────────────────────────────────────
 
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AUTO-FADING CHROME  —  full-screen presence without hiding the controls
+// ═══════════════════════════════════════════════════════════════════════════
+// Goal: the estate fills the frame and the interface recedes, without a
+// first-time viewer ever feeling lost.
+//
+// DESIGN NOTE — one deliberate deviation from "reveal on hover over that area":
+// hover-zone-only reveal is how good interfaces become frustrating. The user
+// has to already know the controls are there AND aim at the right strip. Every
+// mature full-screen interface (video players, map tools, game HUDs) instead
+// treats ANY intentional input as a request for the interface: move the mouse
+// and the chrome returns wherever the cursor is. The edge hot-zones are kept as
+// an additional affordance for the instinctive "sweep to the edge" gesture, and
+// hovering a strip directly PINS it open for as long as the cursor stays there.
+//
+// Safeguards that matter more than the effect itself:
+//   • It never fully disappears — idle is 0.28 opacity, not 0. A new user can
+//     always see that controls exist.
+//   • Clicks work at any opacity; pointer-events are never disabled.
+//   • It never fades while a panel is open, or during the opening grace period.
+//   • A pin locks it permanently visible, and that choice is remembered.
+//   • A one-time hint explains the behaviour on first visit.
+const CHROME_IDLE_MS = 3800;   // inactivity before the interface settles back
+let _chromeIdleTimer = null;
+let _chromeLocked = false;
+let _chromeHoverHold = false;
+
+function _chromePanelOpen() {
+  const ids = ['sound-mixer', 'controls-panel', 'reservation-modal'];
+  if (ids.some(id => {
+    const el = document.getElementById(id);
+    return el && el.style.display && el.style.display !== 'none';
+  })) return true;
+  return !!document.querySelector('.plot-panel, #xix-plot-panel');
+}
+
+function _chromeWake() {
+  if (_chromeLocked) return;
+  document.body.classList.remove('chrome-idle');
+  if (_chromeIdleTimer) clearTimeout(_chromeIdleTimer);
+  _chromeIdleTimer = setTimeout(() => {
+    // Hold the interface up while the cursor rests on it, while a panel is
+    // open, or while the user is typing — fading mid-task is hostile.
+    if (_chromeLocked || _chromeHoverHold || _chromePanelOpen()) { _chromeWake(); return; }
+    const a = document.activeElement;
+    if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA')) { _chromeWake(); return; }
+    document.body.classList.add('chrome-idle');
+  }, CHROME_IDLE_MS);
+}
+
+function _setChromeLocked(locked) {
+  _chromeLocked = locked;
+  document.body.classList.toggle('chrome-locked', locked);
+  const pin = document.getElementById('chrome-pin');
+  if (pin) {
+    pin.classList.toggle('active', locked);
+    pin.title = locked ? 'Controls pinned — click to auto-hide' : 'Auto-hiding — click to keep controls visible';
+    pin.setAttribute('aria-pressed', locked ? 'true' : 'false');
+  }
+  try { localStorage.setItem('xix_chrome_locked', locked ? '1' : '0'); } catch (e) {}
+  if (locked) document.body.classList.remove('chrome-idle');
+  else _chromeWake();
+}
+
+function initAutoFadingChrome() {
+  if (document.getElementById('chrome-pin')) return;
+
+  // Edge hot-zones: sweeping toward the top or bottom edge restores the chrome
+  // before the cursor arrives, and holds it while the cursor stays there.
+  ['top', 'bottom'].forEach(side => {
+    const z = document.createElement('div');
+    z.className = 'chrome-hotzone';
+    z.id = 'chrome-hotzone-' + side;
+    z.addEventListener('mouseenter', () => { _chromeHoverHold = true;  _chromeWake(); });
+    z.addEventListener('mouseleave', () => { _chromeHoverHold = false; _chromeWake(); });
+    document.body.appendChild(z);
+  });
+
+  // Pin
+  const pin = document.createElement('button');
+  pin.id = 'chrome-pin';
+  pin.setAttribute('aria-label', 'Keep controls visible');
+  pin.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14l-1.5-4.5V6a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v6.5L5 17z"/></svg>';
+  pin.addEventListener('click', () => _setChromeLocked(!_chromeLocked));
+  document.body.appendChild(pin);
+
+  // Any intentional input counts as "show me the interface".
+  ['mousemove', 'pointerdown', 'wheel', 'keydown', 'touchstart'].forEach(ev =>
+    window.addEventListener(ev, _chromeWake, { passive: true }));
+
+  // Restore the user's pin choice.
+  let saved = '0';
+  try { saved = localStorage.getItem('xix_chrome_locked') || '0'; } catch (e) {}
+  _setChromeLocked(saved === '1');
+
+  // GRACE PERIOD — never fade in the first few seconds. A viewer arriving for
+  // the first time should see the full interface, read it, and only then have
+  // it settle back once they have started exploring.
+  if (!_chromeLocked) {
+    document.body.classList.remove('chrome-idle');
+    setTimeout(() => _chromeWake(), 6000);
+  }
+
+  _showChromeHintOnce();
+}
+
+// One-time explanation. Without it, auto-hiding chrome is a surprise; with it,
+// it reads as intentional design. Shown once ever, per browser.
+function _showChromeHintOnce() {
+  let seen = '0';
+  try { seen = localStorage.getItem('xix_chrome_hint') || '0'; } catch (e) {}
+  if (seen === '1') return;
+  const hint = document.createElement('div');
+  hint.id = 'chrome-hint';
+  hint.innerHTML =
+    'The controls dim while you explore — <strong>move your mouse</strong> to bring them back, ' +
+    'or use the <strong>pin</strong> on the right to keep them visible.';
+  document.body.appendChild(hint);
+  setTimeout(() => { hint.style.display = 'block'; }, 6500);
+  setTimeout(() => { hint.style.display = 'none'; }, 14000);
+  try { localStorage.setItem('xix_chrome_hint', '1'); } catch (e) {}
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // CONTROLS PANEL  —  everything you need to move and interact, in one place
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1761,6 +1888,10 @@ const CONTROL_SECTIONS = [
     ['WEATHER',                'Clear, overcast, rain'],
     ['QUALITY',                'Fast, Balanced, Rich — lower it if movement feels heavy'],
     ['SOUND',                  'Per-element mixer and mute'],
+  ]},
+  { title: 'The interface', items: [
+    ['Controls dim when idle', 'Keeps the estate full-screen — move the mouse to bring them back'],
+    ['Pin (right edge)',       'Keeps the controls visible at all times'],
   ]},
   { title: 'Shortcuts', items: [
     ['M',                      'Mute / unmute'],
