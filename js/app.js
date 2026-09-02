@@ -10,7 +10,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
-import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=56";
+import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=57";
 // villa-interior.js removed — dead file, superseded by interior.js
 import {
   initScene, getRenderer, getScene, getCamera, getClock,
@@ -21,12 +21,12 @@ import {
   getSunLight, getHorseGroup, updateNightLights, updateBuildingNightGlow,
   enterVillaInterior, teleportVillaRoom, exitVillaInterior,
   setAudioMuted, isAudioMuted, setMixLevel, getMixLevels, getMixDefaults, resetMixLevels,
-} from "./scene.js?v=56";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=56";
+} from "./scene.js?v=57";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=57";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
-} from "./controls.js?v=56";
+} from "./controls.js?v=57";
 import {
   initMinimap, updateMinimap,
   buildViewpointStrip, showZonePanel, hideZonePanel,
@@ -34,7 +34,7 @@ import {
   setCaption as _setCaption_raw, showEnterPrompt, hideEnterPrompt,
   showVRButton, showJoystick, hideJoystick, isMobile,
   enableAudio, updateSpatialAudio, initAudio
-} from "./ui.js?v=56";
+} from "./ui.js?v=57";
 
 window.plotRegistry = plotRegistry;
 
@@ -1393,12 +1393,21 @@ async function openWorldAt(viewKey) {
     sceneReady = true; setLoadingProgress(100);
   }
 
-  await new Promise(r => setTimeout(r, 300));
-  hideLoading();
   const overlay = document.getElementById("world-overlay");
   overlay.classList.add("open");
   document.body.style.overflow = "hidden";
-  resizeWorld();
+
+  // Size the buffers BEFORE anything is shown, then render one correct frame
+  // while the loading screen is still up. Previously the overlay opened, the
+  // debounced resize lagged 150ms behind, and the first frames were drawn at
+  // the wrong buffer size and upscaled — the blurry flash.
+  resizeWorldNow();
+  await new Promise(r => requestAnimationFrame(r));
+  resizeWorldNow();                     // second pass: layout has settled
+  try { renderFrame(); } catch (e) {}   // one correct frame, still behind the loader
+  await new Promise(r => requestAnimationFrame(r));
+
+  hideLoading();
   window.addEventListener("resize", resizeWorld);
 
   // Phase 4: Mount persistent sales badges once the world opens
@@ -2905,6 +2914,24 @@ function startRenderLoop(){
 // as the address bar shows/hides during scroll (up to 60× per second). Each
 // call to renderer.setSize() is expensive; debouncing to 150ms means at most
 // one real resize per scroll gesture.
+// Un-debounced resize. The debounced resizeWorld() below is right for live
+// window dragging, but WRONG for the first paint: the canvas rendered at its
+// default buffer size for up to 150ms and was then stretched to fit, which is
+// the blurry pixelated frame that flashes just before the aerial view appears.
+// Called directly when the world opens so frame one is already correct.
+function resizeWorldNow(){
+  const renderer = getRenderer(), camera = getCamera();
+  if (!renderer || !camera) return;
+  const canvas = document.getElementById("world-canvas");
+  if (!canvas || !canvas.parentElement) return;
+  const w = canvas.parentElement.clientWidth, h = canvas.parentElement.clientHeight;
+  if (!w || !h) return;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  resizeComposer(w, h);
+}
+
 let _resizeTimer = null;
 function resizeWorld(){
   if (_resizeTimer) return;
