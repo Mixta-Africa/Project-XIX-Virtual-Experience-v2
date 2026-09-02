@@ -82,6 +82,18 @@
       opacity: 1 !important; transform: none !important;
     }
 
+    /* TOUR MODE — the interface gets out of the way entirely. The tour is meant
+       to be watched, not operated, so every control hides for its duration.
+       Fades rather than cuts so the transition into the film is not jarring. */
+    body.tour-running .world-topbar,
+    body.tour-running #viewpoint-strip,
+    body.tour-running #minimap,
+    body.tour-running #xix-property-directory,
+    body.tour-running #chrome-pin {
+      opacity: 0 !important; pointer-events: none !important;
+      transition: opacity 0.7s ease;
+    }
+
     /* NO .chrome-hotzone RULE — and none should be added.
        Invisible fixed overlays at the top and bottom sat directly over the
        topbar and viewpoint strip and swallowed every click, making the controls
@@ -740,14 +752,14 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 
-<script type="module" src="js/app.js?v=61"></script>
+<script type="module" src="js/app.js?v=62"></script>
 
 <!-- Interior walkthrough is now built directly into the main scene by app.js -->
 <!-- (window.stepInsideVilla, scene.js: enterVillaInterior/teleportVillaRoom/exitVillaInterior) -->
 <!-- interior.js is now a pure geometry factory only — no separate scene/camera/renderer. -->
 
 <script type="module">
-import { openProductPanel, closeProductPanel, resizePanelViewer } from "./js/product-panel.js?v=61";
+import { openProductPanel, closeProductPanel, resizePanelViewer } from "./js/product-panel.js?v=62";
 window.__moduleReady = window.__moduleReady || {};
 window.__moduleReady.showProductPanel = openProductPanel;
 window.__moduleReady.closeProductPanel = closeProductPanel;
