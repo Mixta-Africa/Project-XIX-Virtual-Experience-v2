@@ -14,7 +14,7 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=56";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=57";
 import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
@@ -23,7 +23,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=56";
+} from "./graphics.js?v=57";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -101,7 +101,11 @@ let waterMeshes = [], palmBillboards = [];
 let _palmTickCount = 0;
 
 let villaGLBScene = null, pendingVillas = [];
+// NOTE: 12.56 is the legacy plot-footprint figure and is NOT the model scalar.
+// The model scalar below is what every villa LOD must use — see loadVillaGLB
+// and loadVillaLowGLB. They must always match.
 const VILLA_SCALE = 12.56;
+const VILLA_MODEL_SCALAR = 5.71853;   // GFA 330m² / 3 floors -> 11.4m wide
 // Distance at which a villa swaps from the full 979K model to the verified
 // 97,941-tri low-poly. Villas sit ~28m apart on the ring, so at 90m you'd have
 // 6-8 of them at full detail while walking — around 7M triangles on its own.
@@ -840,7 +844,15 @@ const _timeBedNodes = new Map();   // timeName -> GainNode
 let _activeTimeBed = null;
 
 async function _initTimeBeds() {
-  for (const [timeName, file] of Object.entries(TIME_BEDS)) {
+  // On iOS the four ambience beds decode to ~20MB of 32-bit float PCM, which is
+  // a meaningful share of a tab's memory ceiling. Load only the bed for the
+  // CURRENT time of day there; the others load on demand when the time changes.
+  // Desktop keeps all four resident so crossfades are instant.
+  const iosLite = _isTabletOrIOS();
+  const wanted = iosLite ? [window._currentTimeName || 'afternoon'] : Object.keys(TIME_BEDS);
+  for (const timeName of wanted) {
+    const file = TIME_BEDS[timeName];
+    if (!file) continue;
     const buf = await _loadSample(file);
     if (!buf) continue;
     const src = _audioCtx.createBufferSource();
@@ -863,8 +875,24 @@ async function _initTimeBeds() {
 // Crossfade to the bed for a given time of day. Called from updateSkyForTime,
 // so the soundscape and the lighting change together.
 export function setTimeBed(timeName) {
-  if (!_timeBedNodes.size || !_audioCtx) return;
+  if (!_audioCtx) return;
   if (_activeTimeBed === timeName) return;
+  // iOS lazy path: the bed for this time may not be resident yet.
+  if (!_timeBedNodes.has(timeName) && TIME_BEDS[timeName]) {
+    _loadSample(TIME_BEDS[timeName]).then(buf => {
+      if (!buf || _timeBedNodes.has(timeName)) return;
+      const src = _audioCtx.createBufferSource();
+      src.buffer = buf; src.loop = true;
+      const g = _audioCtx.createGain(); g.gain.value = 0;
+      src.connect(g); g.connect(_bus('birds'));
+      src.start();
+      _timeBedNodes.set(timeName, g);
+      _activeTimeBed = null;      // force the crossfade to run now it exists
+      setTimeBed(timeName);
+    });
+    return;
+  }
+  if (!_timeBedNodes.size) return;
   _activeTimeBed = timeName;
   const t = _audioCtx.currentTime;
   // 4s crossfade — long enough that the transition is felt rather than heard.
@@ -2250,8 +2278,19 @@ function detectGPUTier() {
   return 'integrated';   // unknown → assume integrated; safer to under-promise
 }
 
+// iPad reports as Macintosh in modern iPadOS Safari, so UA alone misses it.
+// Touch support plus no mouse is the reliable signal.
+function _isTabletOrIOS() {
+  const ua = navigator.userAgent;
+  if (/iPad|iPhone|iPod/.test(ua)) return true;
+  // iPadOS 13+ desktop-mode Safari
+  if (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) return true;
+  if (/Android/.test(ua) && !/Mobile/.test(ua)) return true;   // Android tablet
+  return false;
+}
+
 function detectMobileTier() {
-  const isMobile = /iPhone|iPad|Android|Mobile/i.test(navigator.userAgent);
+  const isMobile = /iPhone|iPad|Android|Mobile/i.test(navigator.userAgent) || _isTabletOrIOS();
   if (isMobile) {
     PERF_MODE = 'fast';
     if (typeof setPerfModeGraphics === 'function') setPerfModeGraphics('fast');
@@ -3962,6 +4001,14 @@ function loadStablesGLB() {
 let villaLowScene = null;
 function loadVillaLowGLB(){
   makeDracoLoader().load("assets/villa-low.glb", gltf => {
+    // CRITICAL — must match the high model exactly.
+    // loadVillaGLB() applies scale.setScalar(5.71853) (GFA 330m² over 3 floors
+    // = 11.4m wide). This loader originally omitted it, so the low LOD rendered
+    // at raw GLB size — about 2 units instead of 11.4m. On iPhone, where 'fast'
+    // mode and camera height put nearly every villa past the 60m swap, that
+    // meant almost the whole estate drew at a fraction of proper size.
+    // Any future LOD level MUST apply this same scalar.
+    gltf.scene.scale.setScalar(VILLA_MODEL_SCALAR);
     applyPS4Materials(gltf.scene);
     gltf.scene.traverse(c => {
       if (c.isMesh) { c.castShadow = false; c.receiveShadow = true; c.frustumCulled = true; }
@@ -3991,9 +4038,37 @@ function loadVillaLowGLB(){
 }
 
 function loadVillaGLB(){
+  // ── iOS / TABLET MEMORY GUARD ────────────────────────────────────────────
+  // iOS Safari enforces a hard per-tab memory ceiling and kills the tab when it
+  // is exceeded — which is the crash-on-pan being seen on iPad and iPhone.
+  // The full villa is 979K triangles and a 10MB GLB; 43 instances of its
+  // geometry plus textures is the single largest allocation in the scene.
+  // On iOS we skip the high model ENTIRELY and use the verified 98K low model
+  // at every distance. Desktop is completely unaffected — this branch never
+  // runs there, so no asset is degraded for the laptop build.
+  if (_isTabletOrIOS()) {
+    console.log('[XIX] iOS/tablet: using low-poly villa at all distances (memory guard)');
+    makeDracoLoader().load("assets/villa-low.glb", gltf => {
+      gltf.scene.scale.setScalar(VILLA_MODEL_SCALAR);
+      applyPS4Materials(gltf.scene);
+      gltf.scene.traverse(c => {
+        if (c.isMesh) { c.castShadow = false; c.receiveShadow = true; c.frustumCulled = true; }
+      });
+      const bb = new THREE.Box3().setFromObject(gltf.scene);
+      gltf.scene.position.y = bb.min.y < 0 ? -bb.min.y : 0;
+      const w = new THREE.Group(); w.add(gltf.scene);
+      villaGLBScene = w;
+      villaLowScene = w;              // same model at both levels — no swap cost
+      const queue = [...pendingVillas]; pendingVillas = [];
+      queue.forEach(d => placeVillaGLBWithLOD(d.x, d.z, d.ry, d.plotKey));
+      requestShadowUpdate(2);
+    }, undefined, e => console.warn('[XIX] villa-low.glb (iOS path) failed:', e));
+    return;
+  }
+
   makeDracoLoader().load("assets/villa-mesh.glb", gltf => {
     // GFA 330m² ÷ 3 floors → 11.4m wide at scale 5.71853
-    gltf.scene.scale.setScalar(5.71853);
+    gltf.scene.scale.setScalar(VILLA_MODEL_SCALAR);
     // villa-mesh.glb ships with baked PBR maps (albedo / normal / metal-rough)
     // generated from its own atlas, so applyPS4Materials must NOT overwrite them
     // with procedural substitutes. It only tunes envMap and shadow flags here.
