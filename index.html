@@ -60,10 +60,12 @@
     }
     /* Idle: dimmed but legible. 0.28 is deliberately not lower — below that the
        controls read as disabled rather than resting. */
-    body.chrome-idle .world-topbar        { opacity: 0.28; transform: translateY(-4px); }
-    body.chrome-idle #viewpoint-strip     { opacity: 0.28; transform: translateY(4px); }
-    body.chrome-idle #minimap             { opacity: 0.34; }
-    body.chrome-idle #xix-property-directory { opacity: 0.30; }
+    /* !important because css/styles.css also styles these; without it an
+       equal-specificity rule there can win and the fade silently does nothing. */
+    body.chrome-idle .world-topbar        { opacity: 0.22 !important; transform: translateY(-4px); }
+    body.chrome-idle #viewpoint-strip     { opacity: 0.22 !important; transform: translateY(4px); }
+    body.chrome-idle #minimap             { opacity: 0.30 !important; }
+    body.chrome-idle #xix-property-directory { opacity: 0.24 !important; }
 
     /* Locked: the pin overrides idle entirely. */
     body.chrome-locked .world-topbar,
@@ -735,14 +737,14 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 
-<script type="module" src="js/app.js?v=57"></script>
+<script type="module" src="js/app.js?v=58"></script>
 
 <!-- Interior walkthrough is now built directly into the main scene by app.js -->
 <!-- (window.stepInsideVilla, scene.js: enterVillaInterior/teleportVillaRoom/exitVillaInterior) -->
 <!-- interior.js is now a pure geometry factory only — no separate scene/camera/renderer. -->
 
 <script type="module">
-import { openProductPanel, closeProductPanel, resizePanelViewer } from "./js/product-panel.js?v=57";
+import { openProductPanel, closeProductPanel, resizePanelViewer } from "./js/product-panel.js?v=58";
 window.__moduleReady = window.__moduleReady || {};
 window.__moduleReady.showProductPanel = openProductPanel;
 window.__moduleReady.closeProductPanel = closeProductPanel;
