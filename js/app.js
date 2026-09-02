@@ -10,7 +10,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
-import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=52";
+import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=53";
 // villa-interior.js removed — dead file, superseded by interior.js
 import {
   initScene, getRenderer, getScene, getCamera, getClock,
@@ -21,12 +21,12 @@ import {
   getSunLight, getHorseGroup, updateNightLights, updateBuildingNightGlow,
   enterVillaInterior, teleportVillaRoom, exitVillaInterior,
   setAudioMuted, isAudioMuted,
-} from "./scene.js?v=52";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=52";
+} from "./scene.js?v=53";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=53";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
-} from "./controls.js?v=52";
+} from "./controls.js?v=53";
 import {
   initMinimap, updateMinimap,
   buildViewpointStrip, showZonePanel, hideZonePanel,
@@ -34,7 +34,7 @@ import {
   setCaption as _setCaption_raw, showEnterPrompt, hideEnterPrompt,
   showVRButton, showJoystick, hideJoystick, isMobile,
   enableAudio, updateSpatialAudio, initAudio
-} from "./ui.js?v=52";
+} from "./ui.js?v=53";
 
 window.plotRegistry = plotRegistry;
 
@@ -979,9 +979,40 @@ function bindPlotSystem() {
         : (typeof getPlotAtRay === 'function' ? getPlotAtRay(raycaster) : null);
 
       if (plotKey) {
-        if (document.pointerLockElement) document.exitPointerLock();
         const plot = typeof plotRegistry !== 'undefined' ? plotRegistry.get(plotKey) : null;
-        
+
+        // ── DISTANCE-GATED SELECTION ──────────────────────────────────────
+        // Near a building (within SELECT_NEAR) a single click opens it — you
+        // are clearly standing at the thing you mean.
+        // Far away, the ray crosses dozens of plots and a single click is
+        // usually an accident while panning, so selection needs a DELIBERATE
+        // double-click. The first click arms the plot and tells the user what
+        // to do; a second click on the SAME plot within the window opens it.
+        let far = false;
+        if (plot) {
+          const cam2 = getCamera();
+          const dx = plot.x - cam2.position.x, dz = plot.z - cam2.position.z;
+          const dy = cam2.position.y - 1.6;
+          far = Math.sqrt(dx*dx + dz*dz + dy*dy) > SELECT_NEAR;
+        }
+
+        if (far) {
+          const now = performance.now();
+          const same = (_armedPlot === plotKey) && (now - _armedAt < DBL_WINDOW);
+          if (!same) {
+            // First click at distance — arm it, don't open.
+            _armedPlot = plotKey; _armedAt = now;
+            if (typeof window.setHoveredPlot === 'function') window.setHoveredPlot(plotKey);
+            if (typeof showNotification === 'function') {
+              showNotification(`Plot ${plotKey} — click again to open, or walk closer`);
+            }
+            _isDragging = false;
+            return;
+          }
+          _armedPlot = null;   // second click landed — fall through and open
+        }
+
+        if (document.pointerLockElement) document.exitPointerLock();
         if (plot && plot.status === "reserved") {
           if (typeof showNotification === 'function') showNotification("This has been Reserved, please choose another property.");
         } else {
@@ -1141,6 +1172,13 @@ function showNotification(msg) {
 }
 
 // ─── RESERVATION MODAL LOGIC ──────────────────────────────────────────────────
+// Selection distance model. Inside SELECT_NEAR one click opens a plot; beyond
+// it, two clicks on the same plot within DBL_WINDOW are required so that
+// panning across the estate never opens a property by accident.
+const SELECT_NEAR = 70;      // matches HOVER_RANGE — highlight and 1-click agree
+const DBL_WINDOW  = 900;     // ms between the arming click and the confirming one
+let _armedPlot = null, _armedAt = 0;
+
 const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwR4JKertI953T1GDB90RGgCwNNZvh2CCruaR4MAb_ViViVZ3Pd4OZG3qEmwjA-axSf/exec";
 
 // ═══════════════════════════════════════════════════════════════════════════
