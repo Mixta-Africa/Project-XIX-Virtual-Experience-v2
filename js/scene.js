@@ -14,7 +14,7 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=51";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=52";
 import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
@@ -23,7 +23,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=51";
+} from "./graphics.js?v=52";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -3609,16 +3609,23 @@ function addLakeBanks(northShift) {
   // Sample points along the lake's crescent edge
   const edge = [];
   const N = PERF_MODE === 'fast' ? 40 : PERF_MODE === 'balanced' ? 80 : 130;
+  // ─── COORDINATE FIX ──────────────────────────────────────────────────────
+  // These edge points were authored at POSITIVE z (92..135) and used directly
+  // as world coordinates, but the lake water sits at NEGATIVE z (-99..-128):
+  // its shape is built in +y and then rotated -PI/2 about X, which maps shape-y
+  // to world -z. So the entire shoreline — graded banks, reeds, boulders and
+  // shrubs — was rendering around the CLUBHOUSE (z=108) instead of around the
+  // lake. That is the untidy greenery under the clubhouse roads.
+  // Negating z puts the shoreline where the water actually is.
   for (let i = 0; i <= N; i++) {
     const t = i / N;
-    // Outer curve: quadratic through (-80,102) -> (0,135) -> (80,102)
     const x = -80 + 160 * t;
-    const z = 102 + 33 * Math.sin(Math.PI * t);
+    const z = -(102 + 33 * Math.sin(Math.PI * t));
     edge.push([x, z]);
   }
-  // Straight south shore
+  // Straight shore on the field side of the lake
   for (let i = 0; i <= Math.floor(N * 0.7); i++) {
-    edge.push([-75 + 150 * (i / Math.floor(N * 0.7)), 92]);
+    edge.push([-75 + 150 * (i / Math.floor(N * 0.7)), -92]);
   }
 
   const rnd = (a, b) => a + Math.random() * (b - a);
@@ -4033,7 +4040,12 @@ export function highlightPlot(plotKey){
         const gp = plot.overlay.geometry.parameters || { width: 20, height: 18 };
         ring.scale.set(gp.width, gp.height, 1);
         ring.position.set(plot.overlay.position.x, plot.overlay.position.y + 0.02, plot.overlay.position.z);
-        ring.rotation.z = -(plot.ry || 0);
+        // MUST match the overlay, which is axis-aligned (rotation.x only, no
+        // Y rotation). Rotating the ring by plot.ry made it sit skewed against
+        // the square on the north arc, where ry is an arbitrary atan2 angle —
+        // which is exactly the "two squares" artefact. Axis-aligned plots hid
+        // the bug because a rectangle rotated 0 or PI looks identical.
+        ring.rotation.z = 0;
         ring.material.color.setHex(plot.status === 'reserved' ? 0xffb0b0 : 0x9dffc4);
         ring.material.opacity = 0.95;
         ring.visible = true;
