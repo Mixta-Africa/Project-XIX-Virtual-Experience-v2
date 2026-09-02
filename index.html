@@ -44,6 +44,13 @@
   </script>
 
   <style>
+    /* Billboard CTA is a PRE-ENTRY prompt. It lives inside the world overlay,
+       so once the estate is open it must be gone — on a large touchscreen it was
+       sitting on top of the 3D view telling the user to enter something they had
+       already entered. Hidden by CSS as well as JS so it can never reappear. */
+    #world-overlay.open #billboard-cta,
+    body.in-estate #billboard-cta { display: none !important; }
+
     /* ── AUTO-FADING CHROME ───────────────────────────────────────────────
        The estate is the product; the controls are scaffolding around it. They
        settle back to a low opacity when idle so the view reads full-screen,
@@ -737,14 +744,14 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 
-<script type="module" src="js/app.js?v=58"></script>
+<script type="module" src="js/app.js?v=59"></script>
 
 <!-- Interior walkthrough is now built directly into the main scene by app.js -->
 <!-- (window.stepInsideVilla, scene.js: enterVillaInterior/teleportVillaRoom/exitVillaInterior) -->
 <!-- interior.js is now a pure geometry factory only — no separate scene/camera/renderer. -->
 
 <script type="module">
-import { openProductPanel, closeProductPanel, resizePanelViewer } from "./js/product-panel.js?v=58";
+import { openProductPanel, closeProductPanel, resizePanelViewer } from "./js/product-panel.js?v=59";
 window.__moduleReady = window.__moduleReady || {};
 window.__moduleReady.showProductPanel = openProductPanel;
 window.__moduleReady.closeProductPanel = closeProductPanel;
