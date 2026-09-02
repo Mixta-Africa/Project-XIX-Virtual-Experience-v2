@@ -14,7 +14,7 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=54";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=55";
 import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
@@ -23,7 +23,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=54";
+} from "./graphics.js?v=55";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -848,7 +848,7 @@ async function _initTimeBeds() {
     src.loop = true;
     const g = _audioCtx.createGain();
     g.gain.value = 0;
-    src.connect(g); g.connect(_masterGain);
+    src.connect(g); g.connect(_bus('birds'));
     src.start(Math.random() * 3);   // stagger phase between beds
     _timeBedNodes.set(timeName, g);
   }
@@ -882,7 +882,7 @@ async function _initAmbientSources() {
     src.loop = true;
     const g = _audioCtx.createGain();
     g.gain.value = 0;                      // silent until the listener approaches
-    src.connect(g); g.connect(_masterGain);
+    src.connect(g); g.connect(_bus(def.id === 'lake' ? 'water' : 'wind'));
     src.start(Math.random() * 2);          // stagger so loops don't phase-lock
     _ambientNodes.push({ def, gainNode: g });
     console.log(`[XIX] Audio: ${def.id} → ${def.file}`);
@@ -956,7 +956,9 @@ function _playSampleAt(file, x, z, { volume = 1, audible = 260, rate = 1, offset
   const g = _audioCtx.createGain();
   g.gain.value = volume;
 
-  src.connect(g); g.connect(panner); panner.connect(_masterGain);
+  // Route to the bus that matches the sound so the mixer can balance it.
+  const busName = /car/i.test(file) ? 'traffic' : /horse|hoof|hooves|whinny|snort/i.test(file) ? 'horses' : 'birds';
+  src.connect(g); g.connect(panner); panner.connect(_bus(busName));
   if (duration > 0) src.start(0, offset, duration); else src.start(0, offset);
   src.onended = () => { try { src.disconnect(); g.disconnect(); panner.disconnect(); } catch (e) {} };
   return true;
@@ -1032,6 +1034,73 @@ function _tickCarEvents(now, dayIndex) {
   }
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SOUND MIXER  —  per-element buses
+// ═══════════════════════════════════════════════════════════════════════════
+// Every sound routes through a named bus so each element can be balanced
+// independently. Mute alone was too blunt: a viewing might want the birds up
+// and the traffic gone, or the water prominent while standing at the lake.
+// Buses sit between each source and _masterGain, so proximity and time-of-day
+// logic keep working untouched — the bus is a multiplier on top of them.
+const MIX_DEFAULTS = {
+  master:  1.00,
+  birds:   1.00,   // time-of-day ambience beds (global)
+  water:   1.00,   // crescent lake
+  wind:    1.00,   // palm avenue
+  horses:  1.00,   // whinny, snort, hooves
+  traffic: 1.00,   // perimeter road vehicles
+};
+const _mixBuses = {};        // name -> GainNode
+const _mixLevels = { ...MIX_DEFAULTS };
+
+function _buildMixBuses() {
+  if (!_audioCtx || !_masterGain) return;
+  Object.keys(MIX_DEFAULTS).forEach(name => {
+    if (name === 'master' || _mixBuses[name]) return;
+    const g = _audioCtx.createGain();
+    g.gain.value = _mixLevels[name];
+    g.connect(_masterGain);
+    _mixBuses[name] = g;
+  });
+}
+
+// Destination for a source. Falls back to _masterGain if the bus is missing so
+// a sound is never silently lost.
+function _bus(name) {
+  return _mixBuses[name] || _masterGain;
+}
+
+export function setMixLevel(name, value) {
+  const v = Math.max(0, Math.min(1.5, Number(value) || 0));
+  _mixLevels[name] = v;
+  if (!_audioCtx) return;
+  if (name === 'master') {
+    // Respect mute: never unmute by moving the master slider.
+    if (_masterGain && !_muted) _masterGain.gain.setTargetAtTime(v, _audioCtx.currentTime, 0.05);
+  } else if (_mixBuses[name]) {
+    _mixBuses[name].gain.setTargetAtTime(v, _audioCtx.currentTime, 0.05);
+  }
+  try { localStorage.setItem('xix_mix', JSON.stringify(_mixLevels)); } catch (e) {}
+}
+
+export function getMixLevels() { return { ..._mixLevels }; }
+export function getMixDefaults() { return { ...MIX_DEFAULTS }; }
+
+// Restore every element to its load-time value in one action.
+export function resetMixLevels() {
+  Object.keys(MIX_DEFAULTS).forEach(k => setMixLevel(k, MIX_DEFAULTS[k]));
+  try { localStorage.removeItem('xix_mix'); } catch (e) {}
+  console.log('[XIX] Mixer reset to defaults');
+}
+
+function _restoreMixLevels() {
+  // Deliberately NOT restored from storage on load — the brief is that the
+  // experience always opens at its designed default balance. Saved levels are
+  // kept only so a slider survives an in-session re-render.
+  Object.assign(_mixLevels, MIX_DEFAULTS);
+}
+
 export function initAmbientAudio() {
   if (_audioCtx) return;
   try {
@@ -1074,7 +1143,7 @@ export function initAmbientAudio() {
       filt.type = 'lowpass'; filt.frequency.value = 320; filt.Q.value = 0.7;
       const lakeGain = _audioCtx.createGain();
       lakeGain.gain.value = 0;
-      src.connect(filt); filt.connect(lakeGain); lakeGain.connect(_masterGain);
+      src.connect(filt); filt.connect(lakeGain); lakeGain.connect(_bus('water'));
       src.start();
       window._lakeGain = lakeGain;
     }
@@ -1083,6 +1152,8 @@ export function initAmbientAudio() {
     // Load the real samples in the background. Each one that arrives replaces
     // its synthesised stand-in; each one that is missing leaves the fallback in
     // place. Nothing blocks on this, so audio starts immediately either way.
+    _restoreMixLevels();
+    _buildMixBuses();
     _initAmbientSources();
     _initTimeBeds();
     ['horse-whinny-123.mp3','horse-snort.mp3','car-pass.mp3','hooves-dirt.mp3']
@@ -1133,7 +1204,7 @@ function _makePositionalNoise(type, x, z) {
   source.connect(filter); 
   filter.connect(gain); 
   gain.connect(panner); 
-  panner.connect(_masterGain);
+  panner.connect(_bus(type === 'water' ? 'water' : 'birds'));
   source.start();
   return panner;
 }
@@ -1156,7 +1227,7 @@ function _makeNoise(type, vol) {
   const gain = _audioCtx.createGain();
   gain.gain.value = vol;
 
-  source.connect(filter); filter.connect(gain); gain.connect(_masterGain);
+  source.connect(filter); filter.connect(gain); gain.connect(_bus('wind'));
   source.start();
   return gain;
 }
@@ -1165,7 +1236,7 @@ function _makeBirds() {
   if (!_audioCtx) return null;
   const gain = _audioCtx.createGain();
   gain.gain.value = 0.0;
-  gain.connect(_masterGain);
+  gain.connect(_bus('birds'));
   function chirp() {
     if (!_audioCtx) return;
     const osc = _audioCtx.createOscillator();
@@ -1176,7 +1247,7 @@ function _makeBirds() {
     g.gain.setValueAtTime(0, _audioCtx.currentTime);
     g.gain.linearRampToValueAtTime(0.02, _audioCtx.currentTime + 0.02);
     g.gain.exponentialRampToValueAtTime(0.0001, _audioCtx.currentTime + 0.12);
-    osc.connect(g); g.connect(_masterGain);
+    osc.connect(g); g.connect(_bus('birds'));
     osc.start(); osc.stop(_audioCtx.currentTime + 0.15);
     setTimeout(chirp, 1500 + Math.random() * 3000);
   }
@@ -1192,7 +1263,7 @@ function _makeBirds() {
 function _makeNeighAt(x, z) {
   if (!_audioCtx) return;
   const panner = _createPanner(x, z, 15, 90);
-  panner.connect(_masterGain);
+  panner.connect(_bus('horses'));
   const t0 = _audioCtx.currentTime;
 
   const osc = _audioCtx.createOscillator();
@@ -1276,7 +1347,7 @@ function _makeHooves() {
   
   const panner = _createPanner(0, 0, 5, 50);
   gain.connect(panner);
-  panner.connect(_masterGain);
+  panner.connect(_bus('horses'));
 
   // A single triangle-wave oscillator at 120-160 Hz sounds exactly like a
   // hollow wooden block being struck — a marimba, not a hoofbeat. Real hoof
