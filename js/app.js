@@ -10,7 +10,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
-import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=60";
+import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=61";
 // villa-interior.js removed — dead file, superseded by interior.js
 import {
   initScene, getRenderer, getScene, getCamera, getClock,
@@ -21,12 +21,12 @@ import {
   getSunLight, getHorseGroup, updateNightLights, updateBuildingNightGlow,
   enterVillaInterior, teleportVillaRoom, exitVillaInterior,
   setAudioMuted, isAudioMuted, setMixLevel, getMixLevels, getMixDefaults, resetMixLevels,
-} from "./scene.js?v=60";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=60";
+} from "./scene.js?v=61";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=61";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
-} from "./controls.js?v=60";
+} from "./controls.js?v=61";
 import {
   initMinimap, updateMinimap,
   buildViewpointStrip, showZonePanel, hideZonePanel,
@@ -34,7 +34,7 @@ import {
   setCaption as _setCaption_raw, showEnterPrompt, hideEnterPrompt,
   showVRButton, showJoystick, hideJoystick, isMobile,
   enableAudio, updateSpatialAudio, initAudio
-} from "./ui.js?v=60";
+} from "./ui.js?v=61";
 
 window.plotRegistry = plotRegistry;
 
@@ -1833,16 +1833,16 @@ function _setChromeLocked(locked) {
 function initAutoFadingChrome() {
   if (document.getElementById('chrome-pin')) return;
 
-  // Edge hot-zones: sweeping toward the top or bottom edge restores the chrome
-  // before the cursor arrives, and holds it while the cursor stays there.
-  ['top', 'bottom'].forEach(side => {
-    const z = document.createElement('div');
-    z.className = 'chrome-hotzone';
-    z.id = 'chrome-hotzone-' + side;
-    z.addEventListener('mouseenter', () => { _chromeHoverHold = true;  _chromeWake(); });
-    z.addEventListener('mouseleave', () => { _chromeHoverHold = false; _chromeWake(); });
-    document.body.appendChild(z);
-  });
+  // NOTE: there are deliberately NO hot-zone ELEMENTS here.
+  // A previous version created two invisible full-width divs (92px tall, fixed
+  // top and bottom) to catch mouseenter. They sat directly over the topbar and
+  // the viewpoint strip and — because their z-index was above the controls —
+  // they swallowed every click. The controls became completely unresponsive.
+  // `pointer-events: none` is not an option either, because that also kills the
+  // mouseenter they exist for.
+  // The edge behaviour needs no DOM at all: the global mousemove handler below
+  // already knows the cursor position, so proximity to the top/bottom edge is a
+  // simple coordinate check. Nothing overlays the interface.
 
   // Pin
   const pin = document.createElement('button');
@@ -1853,8 +1853,16 @@ function initAutoFadingChrome() {
   document.body.appendChild(pin);
 
   // Any intentional input counts as "show me the interface".
-  ['mousemove', 'pointerdown', 'wheel', 'keydown', 'touchstart'].forEach(ev =>
+  ['pointerdown', 'wheel', 'keydown', 'touchstart'].forEach(ev =>
     window.addEventListener(ev, _chromeWake, { passive: true }));
+
+  // Mousemove additionally does the edge check that the old overlay divs did —
+  // purely from coordinates, so nothing is layered over the controls.
+  const EDGE = 96;
+  window.addEventListener('mousemove', (e) => {
+    _chromeHoverHold = (e.clientY < EDGE) || (e.clientY > window.innerHeight - EDGE);
+    _chromeWake();
+  }, { passive: true });
 
   // Restore the user's pin choice.
   let saved = '0';
