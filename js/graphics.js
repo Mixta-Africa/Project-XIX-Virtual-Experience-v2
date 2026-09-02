@@ -326,6 +326,31 @@ export function resizeComposer(w, h) {
   if (bokehPass && bokehPass.setSize) bokehPass.setSize(w, h);
 }
 
+
+// ─── LOOK CONSISTENCY CONTROLS ───────────────────────────────────────────────
+// Why two machines can look different at the same nominal quality:
+// 'fast' BYPASSES the composer entirely (see renderFrame) — no bloom, no
+// vignette, no SMAA — so it renders punchier and more contrasty. 'balanced' and
+// 'rich' run the full chain, where bloom lifts highlights and the vignette
+// darkens edges. That is a real difference in the image, not a hardware one.
+// Tone mapping is NOT double-applied: three.js disables it when rendering to a
+// render target, and OutputPass applies it once at the end.
+// These let the look be matched by eye without a rebuild:
+//   window.setExposure(0.62)   default; lower = deeper blacks, less washed out
+//   window.setBloom(0.10)      default; lower = less highlight lift
+if (typeof window !== 'undefined') {
+  window.setExposure = function (v) {
+    if (!_renderer) return;
+    _renderer.toneMappingExposure = Number(v);
+    console.log('[XIX] exposure =', v);
+  };
+  window.setBloom = function (v) {
+    if (!bloomPass) return;
+    bloomPass.strength = Number(v);
+    console.log('[XIX] bloom strength =', v);
+  };
+}
+
 export function renderFrame() {
   if (_perfMode === 'fast') {
     // Fast: bypass the entire composer pipeline — saves ~5ms/frame on mobile.
