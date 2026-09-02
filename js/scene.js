@@ -14,7 +14,7 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=59";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=60";
 import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
@@ -23,7 +23,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=59";
+} from "./graphics.js?v=60";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -2424,20 +2424,27 @@ export function initScene(canvas) {
     addLandmarkHotspots();
 
     // Load main asset first, stagger the rest using separate loaders to prevent Web Worker deadlock
-    // PROGRESSIVE LOAD — low model FIRST, full model behind it.
-    // Previously the 10MB full villa loaded first and nothing appeared until it
-    // finished, then the 8MB low model downloaded on top: an 18MB wait staring
-    // at empty ground. Loading the low model first puts every building on
-    // screen early at correct scale and silhouette, then the full model streams
-    // in and upgrades the near villas.
-    loadVillaLowGLB();
+    // LOAD ORDER — RESTORED TO THE PROVEN SEQUENCE. Do not reorder.
+    // The comment above this block is the original author's and it is correct:
+    // the main asset loads FIRST and everything else is staggered to avoid a
+    // Draco Web Worker collision.
+    //
+    // I broke this by loading the low model first and moving loadVillaGLB() to
+    // a 1200ms timer — which put it on the SAME tick as loadClubhouseGLB().
+    // The resulting worker contention made villa-mesh.glb fail, and its error
+    // handler falls back to _createVillaFallback() — the big drawn boxes.
+    // The load-time gain was not worth breaking the primary asset.
+    loadVillaGLB();
     addVillaRing();
-    setTimeout(() => loadVillaGLB(), 1200);
 
     setTimeout(() => { loadLoftGLB(); addLoftTerraces(); }, 400);
     setTimeout(() => { loadApartmentGLB(); addWestCompound(); }, 800);
     setTimeout(() => { loadClubhouseGLB(); }, 1200);
     setTimeout(() => { loadStablesGLB(); }, 1600);
+    // Low-poly LOD loads LAST, on its own slot, well clear of everything else.
+    // It is an enhancement: if it never arrives the estate still renders
+    // correctly using the full model at every distance.
+    setTimeout(() => loadVillaLowGLB(), 2600);
 
     // LOAD-PHASE SHADOW SAFETY NET ─────────────────────────────────────────
     // Models stream in asynchronously over several seconds. Rather than leave
@@ -3889,16 +3896,10 @@ function loadVillaLowGLB(){
     const w = new THREE.Group(); w.add(gltf.scene);
     villaLowScene = w;
 
-    // If the full model has not arrived yet, stand in for it so buildings are
-    // on screen immediately at correct scale. loadVillaGLB() upgrades them when
-    // it lands — this is what makes the estate usable in seconds rather than
-    // after an 18MB wait.
-    if (!villaGLBScene) {
-      villaGLBScene = w;
-      const queue = [...pendingVillas]; pendingVillas = [];
-      queue.forEach(d => placeVillaGLBWithLOD(d.x, d.z, d.ry, d.plotKey));
-      console.log(`[XIX] Low-poly villas placed early (${queue.length}) — full model streaming`);
-    }
+    // DELIBERATELY does NOT stand in for villaGLBScene.
+    // An earlier version did, which drained pendingVillas before the full model
+    // arrived — so loadVillaGLB() then found an empty queue and never placed a
+    // single detailed villa. The low model is strictly a secondary LOD level.
 
     // Attach to every villa already placed.
     let n = 0;
@@ -3913,6 +3914,7 @@ function loadVillaLowGLB(){
       }
     });
     console.log(`[XIX] Villa low-LOD ready (97,941 tris) — attached to ${n} villas, swaps at ${VILLA_LOD_SWAP}m`);
+    window._xixVillaLowActive = true;
     requestShadowUpdate(2);
   }, undefined, e => console.warn('[XIX] villa-low.glb failed:', e));
 }
@@ -3992,7 +3994,19 @@ function loadVillaGLB(){
     });
 
   }, null, err => {
-    console.warn('[XIX] villa-mesh.glb failed, using fallbacks:', err);
+    // LOUD failure. Boxes appearing instead of the real villas means THIS ran.
+    // It is a hard error, not a cosmetic fallback — the primary asset did not
+    // load, and the estate is showing placeholder geometry. Anything that
+    // reorders asset loading must be checked against this message.
+    console.error(
+      '[XIX] ==================================================\n' +
+      '[XIX] villa-mesh.glb FAILED TO LOAD — showing box placeholders.\n' +
+      '[XIX] Check: is assets/villa-mesh.glb deployed and reachable?\n' +
+      '[XIX] Check: Draco worker contention from concurrent GLB loads?\n' +
+      '[XIX] =================================================='
+    );
+    console.warn('[XIX] villa-mesh.glb error detail:', err);
+    window._xixVillaFallbackActive = true;
     pendingVillas.forEach((data) => {
       if (data.placeholder) scene.remove(data.placeholder); // Clean up dummy
       const v = _createVillaFallback();
