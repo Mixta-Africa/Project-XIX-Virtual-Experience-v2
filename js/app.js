@@ -10,7 +10,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
-import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=61";
+import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=62";
 // villa-interior.js removed — dead file, superseded by interior.js
 import {
   initScene, getRenderer, getScene, getCamera, getClock,
@@ -21,12 +21,12 @@ import {
   getSunLight, getHorseGroup, updateNightLights, updateBuildingNightGlow,
   enterVillaInterior, teleportVillaRoom, exitVillaInterior,
   setAudioMuted, isAudioMuted, setMixLevel, getMixLevels, getMixDefaults, resetMixLevels,
-} from "./scene.js?v=61";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=61";
+} from "./scene.js?v=62";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=62";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
-} from "./controls.js?v=61";
+} from "./controls.js?v=62";
 import {
   initMinimap, updateMinimap,
   buildViewpointStrip, showZonePanel, hideZonePanel,
@@ -34,7 +34,7 @@ import {
   setCaption as _setCaption_raw, showEnterPrompt, hideEnterPrompt,
   showVRButton, showJoystick, hideJoystick, isMobile,
   enableAudio, updateSpatialAudio, initAudio
-} from "./ui.js?v=61";
+} from "./ui.js?v=62";
 
 window.plotRegistry = plotRegistry;
 
@@ -1023,6 +1023,11 @@ function bindPlotSystem() {
         }
 
         if (document.pointerLockElement) document.exitPointerLock();
+
+        // From the air, travel to the unit as well as opening the pane, so the
+        // buyer sees the actual property rather than just a form.
+        if (window._aerialModeActive) { try { flyToUnit(plotKey); } catch (e) {} }
+
         if (plot && plot.status === "reserved") {
           if (typeof showNotification === 'function') showNotification("This has been Reserved, please choose another property.");
         } else {
@@ -1379,6 +1384,7 @@ async function openWorldAt(viewKey) {
     composer = initPostProcessing(getRenderer(), getScene(), getCamera());
     setPerfModeGraphics('fast');
     setLoadingProgress(90);
+    _injectInteriorViewpoints();   // must run before the strip is built
     buildViewpointStrip(document.getElementById("viewpoint-strip"), (key, vp) => teleportTo(key, vp));
 
     // ── VIEWPOINTS PRECISION OVERRIDE ──────────────────────────────────────────
@@ -1755,6 +1761,294 @@ window.toggleAerial=toggleAerial;
 
 
 
+
+
+
+// ── INTERIOR VIEWPOINTS — injected into the VILLAS dropdown ──────────────────
+// These were previously written into PROPERTY_DATA[...].interior, which only
+// gates a gallery button — they were never reachable as camera positions, so
+// "step inside a unit" did not actually exist for east, north or south.
+// The viewpoint strip builds its dropdown from `vp.subViews`, and teleportTo
+// falls back to `vp.pos` for any key it does not recognise, so sub-views that
+// carry their own pos/yaw/pitch work without touching data.js.
+//
+// Yaw convention verified against the working 'villas' viewpoint:
+//   +PI/2 faces +X (east) · -PI/2 faces -X · PI faces -Z (north) · 0 faces +Z
+// Floor heights: ground 2.0m · first 5.5m · roof terrace 9.0m.
+function _injectInteriorViewpoints() {
+  if (typeof VIEWPOINTS === 'undefined' || !VIEWPOINTS.villas) return;
+  const V = [
+    { key:'int_w_g', label:'West · Ground',   pos:[-162,2.0,0],   yaw: Math.PI/2, pitch: 0,     caption:'West villa · ground floor — polo field ahead' },
+    { key:'int_w_1', label:'West · First',    pos:[-162,5.5,0],   yaw: Math.PI/2, pitch:-0.10,  caption:'West villa · first floor — elevated polo view' },
+    { key:'int_w_r', label:'West · Roof',     pos:[-162,9.0,0],   yaw: Math.PI/2, pitch:-0.15,  caption:'West villa · roof terrace — estate panorama' },
+    { key:'int_e_g', label:'East · Ground',   pos:[162,2.0,0],    yaw:-Math.PI/2, pitch: 0,     caption:'East villa · ground floor — polo field ahead' },
+    { key:'int_e_1', label:'East · First',    pos:[162,5.5,0],    yaw:-Math.PI/2, pitch:-0.10,  caption:'East villa · first floor — elevated polo view' },
+    { key:'int_e_r', label:'East · Roof',     pos:[162,9.0,0],    yaw:-Math.PI/2, pitch:-0.15,  caption:'East villa · roof terrace — clubhouse and field' },
+    { key:'int_n_g', label:'North · Ground',  pos:[0,2.0,-108],   yaw: Math.PI,   pitch: 0,     caption:'North arc · ground floor — lake in the foreground' },
+    { key:'int_n_1', label:'North · First',   pos:[0,5.5,-108],   yaw: Math.PI,   pitch:-0.10,  caption:'North arc · first floor — over the lake to the field' },
+    { key:'int_n_r', label:'North · Roof',    pos:[0,9.0,-108],   yaw: Math.PI,   pitch:-0.16,  caption:'North arc · roof terrace — lake and full estate' },
+    { key:'int_s_g', label:'South · Ground',  pos:[-65,2.0,88],   yaw: 0,         pitch: 0,     caption:'South villa · ground floor — field and lake beyond' },
+    { key:'int_s_1', label:'South · First',   pos:[-65,5.5,88],   yaw: 0,         pitch:-0.10,  caption:'South villa · first floor — full field length' },
+    { key:'int_s_r', label:'South · Roof',    pos:[-65,9.0,88],   yaw: 0,         pitch:-0.16,  caption:'South villa · roof terrace — estate panorama' },
+  ];
+  const existing = VIEWPOINTS.villas.subViews || [];
+  // Keep whatever data.js already defines; append ours if not already present.
+  const have = new Set(existing.map(x => x.key));
+  VIEWPOINTS.villas.subViews = existing.concat(V.filter(x => !have.has(x.key)));
+  console.log(`[XIX] Interior viewpoints: ${VIEWPOINTS.villas.subViews.length} available under VILLAS`);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GUIDED TOUR  —  cinematic, hands-off
+// ═══════════════════════════════════════════════════════════════════════════
+// window.startTour was referenced by the TOUR button but NEVER DEFINED, which
+// is why the tour did nothing at all.
+//
+// Shape of it: five stops. Each one arrives at a fixed vantage point, then pans
+// slowly across the subject to reveal it and its surroundings, holds a beat,
+// fades to black, and cuts to the next. No controls, no input required — it
+// plays like a film. Any click or key press exits immediately.
+// Dolly is deliberately slight: a gentle push while panning reads as a camera
+// move rather than a turntable, and keeps the frame alive without drawing
+// attention to itself.
+const TOUR_STOPS = [
+  {
+    name: 'The Polo Field',
+    sub:  'Regulation 274 × 146m · the heart of the estate',
+    pos:  [0, 2.6, 62],  yaw: Math.PI,      pitch: -0.02,
+    panTo: Math.PI + 0.85,                 // sweep across the pitch
+    dolly: [0, 2.6, 46],
+    hold: 8500,
+  },
+  {
+    name: 'The Clubhouse',
+    sub:  '3,490m² · three floors · rooftop terrace',
+    pos:  [-46, 3.4, 132], yaw: -0.55,      pitch: -0.02,
+    panTo: 0.55,                            // reveal the full facade
+    dolly: [-14, 3.4, 128],
+    hold: 8000,
+  },
+  {
+    name: 'Crescent Lake',
+    sub:  '200m waterfront · premium north plots',
+    pos:  [-72, 2.4, -70], yaw: -0.35,      pitch: 0.01,
+    panTo: 0.75,                            // across the water to the arc
+    dolly: [-30, 2.4, -76],
+    hold: 8500,
+  },
+  {
+    name: 'Premium Villas',
+    sub:  '330m² · polo-facing · 43 units',
+    pos:  [-140, 3.0, 34], yaw: Math.PI / 2, pitch: -0.03,
+    panTo: Math.PI / 2 - 0.9,               // down the villa run
+    dolly: [-140, 3.0, -6],
+    hold: 8000,
+  },
+  {
+    name: 'Stables & Training Field',
+    sub:  'Polo academy · 5,000m² training ground',
+    pos:  [-300, 3.2, 30], yaw: -1.15,      pitch: -0.02,
+    panTo: -0.15,                           // stables across to the field
+    dolly: [-284, 3.2, 6],
+    hold: 7500,
+  },
+];
+
+window.__tourActive = false;
+let _tourIdx = 0, _tourRAF = null, _tourTimer = null, _tourFadeEl = null, _tourCardEl = null;
+
+function _tourFade() {
+  if (_tourFadeEl) return _tourFadeEl;
+  const f = document.createElement('div');
+  f.id = 'tour-fade';
+  f.style.cssText =
+    'position:fixed;inset:0;z-index:10050;background:#050c07;opacity:0;' +
+    'pointer-events:none;transition:opacity 0.75s ease;';
+  document.body.appendChild(f);
+  _tourFadeEl = f;
+  return f;
+}
+
+function _tourCard() {
+  if (_tourCardEl) return _tourCardEl;
+  const c = document.createElement('div');
+  c.id = 'tour-card';
+  c.style.cssText =
+    'position:fixed;left:50%;bottom:14%;transform:translateX(-50%);z-index:10051;' +
+    'text-align:center;pointer-events:none;opacity:0;transition:opacity 0.9s ease;' +
+    'font-family:Inter,system-ui,sans-serif;text-shadow:0 2px 14px rgba(0,0,0,0.85);';
+  document.body.appendChild(c);
+  _tourCardEl = c;
+  return c;
+}
+
+function _tourShowCard(stop) {
+  const c = _tourCard();
+  c.innerHTML =
+    '<div style="color:#c9a84c;font-size:11px;letter-spacing:3.5px;margin-bottom:7px;">PROJECT XIX</div>' +
+    '<div style="color:#fff;font-size:27px;font-weight:300;letter-spacing:0.6px;">' + stop.name + '</div>' +
+    '<div style="color:rgba(255,255,255,0.68);font-size:12.5px;margin-top:6px;letter-spacing:0.4px;">' + stop.sub + '</div>';
+  c.style.opacity = '1';
+  setTimeout(() => { if (window.__tourActive) c.style.opacity = '0'; }, 4200);
+}
+
+// One stop: arrive, then pan + dolly across the subject for the hold duration.
+function _tourRunStop(i) {
+  if (!window.__tourActive) return;
+  const stop = TOUR_STOPS[i];
+  const fade = _tourFade();
+
+  setView(stop.pos, stop.yaw, stop.pitch);
+  setCaption(stop.name + ' — ' + stop.sub);
+  fade.style.opacity = '0';
+  _tourShowCard(stop);
+
+  const t0 = performance.now();
+  const from = stop.pos, to = stop.dolly || stop.pos;
+  // Linear on purpose. Easing a reveal pan makes it feel like it is starting
+  // and stopping; a constant rate reads as a locked-off camera move.
+  (function pan(now) {
+    if (!window.__tourActive) return;
+    const t = Math.min(1, (now - t0) / stop.hold);
+    setView(
+      [ from[0] + (to[0]-from[0])*t, from[1] + (to[1]-from[1])*t, from[2] + (to[2]-from[2])*t ],
+      stop.yaw + (stop.panTo - stop.yaw) * t,
+      stop.pitch
+    );
+    if (t < 1) _tourRAF = requestAnimationFrame(pan);
+  })(t0);
+
+  // Fade out just before the pan ends, so the cut lands on black.
+  _tourTimer = setTimeout(() => {
+    if (!window.__tourActive) return;
+    fade.style.opacity = '1';
+    if (_tourCardEl) _tourCardEl.style.opacity = '0';
+    setTimeout(() => {
+      if (!window.__tourActive) return;
+      _tourIdx = (i + 1) % TOUR_STOPS.length;
+      if (_tourIdx === 0) { window.__tourStop(); return; }   // one full pass
+      _tourRunStop(_tourIdx);
+    }, 800);
+  }, stop.hold - 400);
+}
+
+window.startTour = function() {
+  if (window.__tourActive) return;
+  window.__tourActive = true;
+  _tourIdx = 0;
+
+  if (aerialOrbit) toggleAerial(document.getElementById('btn-aerial'));
+  if (document.pointerLockElement) document.exitPointerLock();
+
+  // Hide the interface — the tour is the film, not the tool.
+  document.body.classList.add('tour-running');
+  const btn = document.getElementById('btn-tour');
+  if (btn) btn.classList.add('active');
+
+  // Any input exits. Registered on the next tick so the click that STARTED the
+  // tour does not immediately stop it.
+  setTimeout(() => {
+    if (window.__tourActive) {
+      window.addEventListener('pointerdown', window.__tourStop, { once: true });
+      window.addEventListener('keydown',     window.__tourStop, { once: true });
+    }
+  }, 400);
+
+  _tourRunStop(0);
+};
+
+window.__tourStop = function() {
+  if (!window.__tourActive) return;
+  window.__tourActive = false;
+  if (_tourRAF)   cancelAnimationFrame(_tourRAF);
+  if (_tourTimer) clearTimeout(_tourTimer);
+  _tourRAF = null; _tourTimer = null;
+  if (_tourFadeEl) _tourFadeEl.style.opacity = '0';
+  if (_tourCardEl) _tourCardEl.style.opacity = '0';
+  document.body.classList.remove('tour-running');
+  const btn = document.getElementById('btn-tour');
+  if (btn) btn.classList.remove('active');
+  setCaption('');
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FLY TO UNIT  —  aerial click takes you to the property
+// ═══════════════════════════════════════════════════════════════════════════
+// Selecting a plot from the air used to only open the reservation pane, which
+// left the buyer looking at a form with no idea where that unit actually sits.
+// Now the camera travels to a standing position in front of the unit, facing
+// it, so the pane and the property are on screen together.
+// Position is derived from the plot's own rotation: every unit stores `ry`, and
+// its frontage is the direction it faces, so we stand off along that vector.
+function flyToUnit(plotKey, opts = {}) {
+  const plot = plotRegistry.get(String(plotKey));
+  if (!plot) return false;
+  const camera = getCamera();
+  if (!camera) return false;
+
+  const standOff = opts.distance || 26;   // metres in front of the facade
+  const eyeY     = opts.height   || 6.5;  // slightly raised — reads the whole unit
+
+  // A villa placed with rotation ry faces -Z rotated by ry. Standing in front
+  // means stepping out along that facing vector, then looking back at the unit.
+  const ry = plot.ry || 0;
+  const fx = Math.sin(ry), fz = -Math.cos(ry);   // unit's forward vector
+  const camX = plot.x + fx * standOff;
+  const camZ = plot.z + fz * standOff;
+
+  // Yaw so the camera looks from its position back toward the unit.
+  const yaw = Math.atan2(plot.x - camX, -(plot.z - camZ));
+
+  if (aerialOrbit) toggleAerial(document.getElementById('btn-aerial'));
+
+  _cinematicFlyTo(
+    { x: camX, y: eyeY, z: camZ },
+    yaw, -0.06,
+    `Plot ${plotKey} — ${plot.type || 'Villa'}`,
+    opts.duration || 1500
+  );
+  return true;
+}
+window.flyToUnit = flyToUnit;
+
+// Smooth camera move built on setView(pos, yaw, pitch) — the same call
+// teleportTo uses, so this behaves identically to a viewpoint jump except that
+// it is interpolated rather than instant.
+let _flyRAF = null;
+function _cinematicFlyTo(toPos, toYaw, toPitch, caption, ms = 1500) {
+  const camera = getCamera();
+  if (!camera) return;
+  if (_flyRAF) cancelAnimationFrame(_flyRAF);
+
+  const fromPos = camera.position.clone();
+  const fromYaw = (typeof getYaw === 'function') ? getYaw() : 0;
+
+  // Shortest angular path — without this the camera can spin the long way round.
+  let dYaw = toYaw - fromYaw;
+  while (dYaw >  Math.PI) dYaw -= Math.PI * 2;
+  while (dYaw < -Math.PI) dYaw += Math.PI * 2;
+
+  const t0 = performance.now();
+  const ease = t => (t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3) / 2);  // easeInOutCubic
+
+  (function step(now) {
+    const t = Math.min(1, (now - t0) / ms);
+    const k = ease(t);
+    setView(
+      [ fromPos.x + (toPos.x - fromPos.x) * k,
+        fromPos.y + (toPos.y - fromPos.y) * k,
+        fromPos.z + (toPos.z - fromPos.z) * k ],
+      fromYaw + dYaw * k,
+      toPitch * k
+    );
+    if (t < 1) _flyRAF = requestAnimationFrame(step);
+    else {
+      _flyRAF = null;
+      if (caption) setCaption(caption);
+    }
+  })(t0);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // AUTO-FADING CHROME  —  full-screen presence without hiding the controls
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1803,6 +2097,10 @@ function _chromePanelOpen() {
 }
 
 function _chromeWake() {
+  // During the tour the interface stays hidden regardless of input — otherwise
+  // the pan itself would keep waking it and the chrome would flicker on screen
+  // through the whole film.
+  if (window.__tourActive) return;
   if (_chromeLocked) return;
   document.body.classList.remove('chrome-idle');
   if (_chromeIdleTimer) clearTimeout(_chromeIdleTimer);
