@@ -10,7 +10,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
-import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=63";
+import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=64";
 // villa-interior.js removed — dead file, superseded by interior.js
 import {
   initScene, getRenderer, getScene, getCamera, getClock,
@@ -21,12 +21,12 @@ import {
   getSunLight, getHorseGroup, updateNightLights, updateBuildingNightGlow,
   enterVillaInterior, teleportVillaRoom, exitVillaInterior,
   setAudioMuted, isAudioMuted, setMixLevel, getMixLevels, getMixDefaults, resetMixLevels,
-} from "./scene.js?v=63";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=63";
+} from "./scene.js?v=64";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=64";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
-} from "./controls.js?v=63";
+} from "./controls.js?v=64";
 import {
   initMinimap, updateMinimap,
   buildViewpointStrip, showZonePanel, hideZonePanel,
@@ -34,7 +34,7 @@ import {
   setCaption as _setCaption_raw, showEnterPrompt, hideEnterPrompt,
   showVRButton, showJoystick, hideJoystick, isMobile,
   enableAudio, updateSpatialAudio, initAudio
-} from "./ui.js?v=63";
+} from "./ui.js?v=64";
 
 window.plotRegistry = plotRegistry;
 
@@ -1398,8 +1398,14 @@ async function openWorldAt(viewKey) {
       // the lake to z -87..-116 — the camera was submerged. Now on the field-side
       // shore at z=-80, looking north across the water to the villa arc.
       'lake_north':   { pos:[0,    1.72,  -80],   yaw: Math.PI,     pitch: -0.02, caption: 'Crescent Lake — across the water to the north arc' },
-      'stables':      { pos:[-280, 1.72, 80],     yaw: Math.PI/2,   pitch: 0,     caption: 'Equestrian quarter — 56 stalls' },
-      'training':     { pos:[-260, 1.72, -40],    yaw: Math.PI/2,   pitch: 0,     caption: 'Training field — polo academy' },
+      // Was (-280,80): 135m short of the compound, facing +X at empty ground.
+      // Stables GLB is at (-320,120) with its cobble yard at (-355,90). Now
+      // standing in the yard looking north-east at the blocks. yaw=atan2(25,25).
+      'stables':      { pos:[-345, 1.72,  95],   yaw: Math.PI/4,   pitch: 0,     caption: 'Stables — cobbled yard, blocks ahead' },
+      // Was (-175,0): 85m east of the field, facing +X across empty laterite.
+      // Training field spans x -352..-168, z -97..21, oriented north-south.
+      // Now standing at its south end looking down the full length. yaw=PI (-Z).
+      'training':     { pos:[-260, 1.72,   12],  yaw: Math.PI,     pitch: -0.02, caption: 'Training Field — polo academy, looking north' },
       'lofts':        { pos:[-218, 1.72, -5],     yaw: -Math.PI/2,  pitch: 0,     caption: 'Loft terraces — south precinct' },
       'paddock':      { pos:[155,  1.72, -60],    yaw: -Math.PI/2,  pitch: 0,     caption: 'Paddock — east precinct' },
     };
@@ -2002,12 +2008,18 @@ function flyToUnit(plotKey, opts = {}) {
   // A villa placed with rotation ry faces -Z rotated by ry. Standing in front
   // means stepping out along that facing vector, then looking back at the unit.
   const ry = plot.ry || 0;
-  const fx = Math.sin(ry), fz = -Math.cos(ry);   // unit's forward vector
+  const fx = Math.sin(ry), fz = Math.cos(ry);    // unit's facing vector, same convention
   const camX = plot.x + fx * standOff;
   const camZ = plot.z + fz * standOff;
 
   // Yaw so the camera looks from its position back toward the unit.
-  const yaw = Math.atan2(plot.x - camX, -(plot.z - camZ));
+  // CONVENTION (derived from the two viewpoints known to be correct — 'villas'
+  // at yaw +PI/2 facing +X, and 'clubhouse' at yaw PI facing -Z):
+  //     direction = (sin yaw, cos yaw)   =>   yaw = atan2(dx, dz)
+  // This previously used atan2(dx, -dz), which flips the Z component and would
+  // have pointed the camera away from the unit on any non-axis-aligned plot —
+  // i.e. the whole north arc and all four corners.
+  const yaw = Math.atan2(plot.x - camX, plot.z - camZ);
 
   if (aerialOrbit) toggleAerial(document.getElementById('btn-aerial'));
 
@@ -2846,9 +2858,15 @@ function teleportTo(key, vp){
       // Lake
       'lake_north':   { pos:[0,    1.72,   -80], yaw: Math.PI,     pitch:-0.02,  caption: 'Crescent Lake — across the water to the north arc' },
       // Stables
-      'stables':      { pos:[-280, 1.72,  80],   yaw: Math.PI/2,   pitch: 0,     caption: 'Equestrian quarter — 56 stalls' },
+      // Was (-280,80): 135m short of the compound, facing +X at empty ground.
+      // Stables GLB is at (-320,120) with its cobble yard at (-355,90). Now
+      // standing in the yard looking north-east at the blocks. yaw=atan2(25,25).
+      'stables':      { pos:[-345, 1.72,  95],   yaw: Math.PI/4,   pitch: 0,     caption: 'Stables — cobbled yard, blocks ahead' },
       // Training
-      'training':     { pos:[-260, 1.72,  -40],  yaw: Math.PI/2,   pitch: 0,     caption: 'Training field — polo academy' },
+      // Was (-175,0): 85m east of the field, facing +X across empty laterite.
+      // Training field spans x -352..-168, z -97..21, oriented north-south.
+      // Now standing at its south end looking down the full length. yaw=PI (-Z).
+      'training':     { pos:[-260, 1.72,   12],  yaw: Math.PI,     pitch: -0.02, caption: 'Training Field — polo academy, looking north' },
       // Lofts
       'lofts':        { pos:[-218, 1.72,  -5],   yaw: -Math.PI/2,  pitch: 0,     caption: 'Loft terraces — south precinct' },
       // Paddock
