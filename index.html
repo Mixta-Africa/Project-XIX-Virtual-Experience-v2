@@ -44,6 +44,69 @@
   </script>
 
   <style>
+    /* ── AUTO-FADING CHROME ───────────────────────────────────────────────
+       The estate is the product; the controls are scaffolding around it. They
+       settle back to a low opacity when idle so the view reads full-screen,
+       and return the moment the user shows intent.
+       They FADE, never disappear — a first-time viewer must always be able to
+       see that controls exist, or the interface becomes a guessing game.
+       Pointer-events stay live at every opacity, so a click never misses. */
+    .world-topbar,
+    #viewpoint-strip,
+    #minimap,
+    #xix-property-directory {
+      transition: opacity 0.45s ease, transform 0.45s ease;
+      will-change: opacity;
+    }
+    /* Idle: dimmed but legible. 0.28 is deliberately not lower — below that the
+       controls read as disabled rather than resting. */
+    body.chrome-idle .world-topbar        { opacity: 0.28; transform: translateY(-4px); }
+    body.chrome-idle #viewpoint-strip     { opacity: 0.28; transform: translateY(4px); }
+    body.chrome-idle #minimap             { opacity: 0.34; }
+    body.chrome-idle #xix-property-directory { opacity: 0.30; }
+
+    /* Locked: the pin overrides idle entirely. */
+    body.chrome-locked .world-topbar,
+    body.chrome-locked #viewpoint-strip,
+    body.chrome-locked #minimap,
+    body.chrome-locked #xix-property-directory {
+      opacity: 1 !important; transform: none !important;
+    }
+
+    /* Invisible hover zones at the very top and bottom. Sweeping toward the
+       edge — the instinctive gesture for "where did the menu go" — brings the
+       chrome back before the cursor even reaches it. */
+    .chrome-hotzone {
+      position: fixed; left: 0; right: 0; height: 92px;
+      /* BELOW the real controls (which sit at z-index 10000+) so a click always
+         reaches the button, never the invisible zone. The zone only needs to
+         receive mouseenter, which it still does wherever no control covers it. */
+      z-index: 500; background: transparent;
+    }
+    #chrome-hotzone-top    { top: 0; }
+    #chrome-hotzone-bottom { bottom: 0; }
+
+    /* Pin toggle */
+    #chrome-pin {
+      position: fixed; top: 50%; right: 10px; transform: translateY(-50%);
+      z-index: 10002; width: 34px; height: 34px; border-radius: 50%;
+      background: rgba(8,18,10,0.82); border: 1px solid rgba(201,168,76,0.38);
+      color: #c9a84c; cursor: pointer; display: flex; align-items: center;
+      justify-content: center; opacity: 0.32; transition: opacity 0.25s ease;
+    }
+    #chrome-pin:hover { opacity: 1; }
+    #chrome-pin.active { opacity: 1; background: rgba(201,168,76,0.2); }
+
+    /* First-run hint */
+    #chrome-hint {
+      position: fixed; bottom: 120px; left: 50%; transform: translateX(-50%);
+      z-index: 10003; background: rgba(8,18,10,0.95);
+      border: 1px solid rgba(201,168,76,0.45); border-radius: 8px;
+      padding: 11px 16px; font-family: Inter, system-ui, sans-serif;
+      font-size: 12.5px; color: #f2e9d0; display: none;
+      box-shadow: 0 8px 26px rgba(0,0,0,0.5); max-width: 90vw; text-align: center;
+    }
+
     /* ── LOADING SCREEN ──────────────────────────────────────────────────
        showLoading() in ui.js sets this to display:flex, but the element had
        NO CSS at all — so it rendered as an unstyled block in normal document
@@ -672,14 +735,14 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 
-<script type="module" src="js/app.js?v=55"></script>
+<script type="module" src="js/app.js?v=56"></script>
 
 <!-- Interior walkthrough is now built directly into the main scene by app.js -->
 <!-- (window.stepInsideVilla, scene.js: enterVillaInterior/teleportVillaRoom/exitVillaInterior) -->
 <!-- interior.js is now a pure geometry factory only — no separate scene/camera/renderer. -->
 
 <script type="module">
-import { openProductPanel, closeProductPanel, resizePanelViewer } from "./js/product-panel.js?v=55";
+import { openProductPanel, closeProductPanel, resizePanelViewer } from "./js/product-panel.js?v=56";
 window.__moduleReady = window.__moduleReady || {};
 window.__moduleReady.showProductPanel = openProductPanel;
 window.__moduleReady.closeProductPanel = closeProductPanel;
