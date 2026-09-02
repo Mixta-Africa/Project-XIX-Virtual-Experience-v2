@@ -421,10 +421,18 @@
         <span class="world-btn-label">Aerial</span>
       </button>
 
+      <!-- Controls: expandable help panel -->
+      <button class="world-btn" id="btn-controls" aria-label="Controls help" onclick="window.toggleControlsPanel && window.toggleControlsPanel()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <span class="world-btn-label">Controls</span>
+      </button>
+
       <!-- Sound / mute — toggleSound() and _syncSoundBtn() already live in app.js;
            this button is the #btn-sound element they look for. The .sound-icon
            svg has its paths swapped by _syncSoundBtn to show muted/unmuted. -->
-      <button class="world-btn world-btn-sound active" id="btn-sound" aria-label="Mute sound" onclick="window.toggleSound && window.toggleSound()">
+      <!-- Click opens the mixer; the small speaker icon is a quick mute toggle.
+           Keeps one-tap mute available while giving access to per-element levels. -->
+      <button class="world-btn world-btn-sound active" id="btn-sound" aria-label="Sound settings" onclick="window.toggleSoundMixer && window.toggleSoundMixer()">
         <svg class="sound-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>
         <span class="world-btn-label">Sound</span>
       </button>
@@ -664,14 +672,14 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 
-<script type="module" src="js/app.js?v=54"></script>
+<script type="module" src="js/app.js?v=55"></script>
 
 <!-- Interior walkthrough is now built directly into the main scene by app.js -->
 <!-- (window.stepInsideVilla, scene.js: enterVillaInterior/teleportVillaRoom/exitVillaInterior) -->
 <!-- interior.js is now a pure geometry factory only — no separate scene/camera/renderer. -->
 
 <script type="module">
-import { openProductPanel, closeProductPanel, resizePanelViewer } from "./js/product-panel.js?v=54";
+import { openProductPanel, closeProductPanel, resizePanelViewer } from "./js/product-panel.js?v=55";
 window.__moduleReady = window.__moduleReady || {};
 window.__moduleReady.showProductPanel = openProductPanel;
 window.__moduleReady.closeProductPanel = closeProductPanel;
