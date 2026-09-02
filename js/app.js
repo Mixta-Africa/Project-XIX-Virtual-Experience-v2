@@ -10,7 +10,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
-import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=62";
+import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=63";
 // villa-interior.js removed — dead file, superseded by interior.js
 import {
   initScene, getRenderer, getScene, getCamera, getClock,
@@ -21,12 +21,12 @@ import {
   getSunLight, getHorseGroup, updateNightLights, updateBuildingNightGlow,
   enterVillaInterior, teleportVillaRoom, exitVillaInterior,
   setAudioMuted, isAudioMuted, setMixLevel, getMixLevels, getMixDefaults, resetMixLevels,
-} from "./scene.js?v=62";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=62";
+} from "./scene.js?v=63";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=63";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
-} from "./controls.js?v=62";
+} from "./controls.js?v=63";
 import {
   initMinimap, updateMinimap,
   buildViewpointStrip, showZonePanel, hideZonePanel,
@@ -34,7 +34,7 @@ import {
   setCaption as _setCaption_raw, showEnterPrompt, hideEnterPrompt,
   showVRButton, showJoystick, hideJoystick, isMobile,
   enableAudio, updateSpatialAudio, initAudio
-} from "./ui.js?v=62";
+} from "./ui.js?v=63";
 
 window.plotRegistry = plotRegistry;
 
@@ -1394,7 +1394,10 @@ async function openWorldAt(viewKey) {
       'field_centre': { pos:[0,    1.72, 0],      yaw: 0,           pitch: 0,     caption: 'Main polo field — facing north' },
       'field_south':  { pos:[0,    1.72, 95],     yaw: Math.PI,     pitch: -0.04, caption: 'South goal — Clubhouse behind you' },
       'clubhouse':    { pos:[0,    1.72, 135],    yaw: Math.PI,     pitch: -0.05, caption: 'Clubhouse — estate social anchor' },
-      'lake_north':   { pos:[0,    1.72, -108],   yaw: 0,           pitch: -0.04, caption: 'Crescent lake — north shore' },
+      // z was -108, which sits INSIDE the water once NORTH_SHIFT (+12) moved
+      // the lake to z -87..-116 — the camera was submerged. Now on the field-side
+      // shore at z=-80, looking north across the water to the villa arc.
+      'lake_north':   { pos:[0,    1.72,  -80],   yaw: Math.PI,     pitch: -0.02, caption: 'Crescent Lake — across the water to the north arc' },
       'stables':      { pos:[-280, 1.72, 80],     yaw: Math.PI/2,   pitch: 0,     caption: 'Equestrian quarter — 56 stalls' },
       'training':     { pos:[-260, 1.72, -40],    yaw: Math.PI/2,   pitch: 0,     caption: 'Training field — polo academy' },
       'lofts':        { pos:[-218, 1.72, -5],     yaw: -Math.PI/2,  pitch: 0,     caption: 'Loft terraces — south precinct' },
@@ -1777,19 +1780,26 @@ window.toggleAerial=toggleAerial;
 // Floor heights: ground 2.0m · first 5.5m · roof terrace 9.0m.
 function _injectInteriorViewpoints() {
   if (typeof VIEWPOINTS === 'undefined' || !VIEWPOINTS.villas) return;
+  // Positions snapped to REAL villa coordinates, verified against the actual
+  // placement arrays. An earlier version used round numbers (x=±162, z=0) which
+  // put the "interior" views 19m away in empty space — there is no villa at
+  // z=0 on either column. These sit inside actual units:
+  //   west/east columns  z = -19  (villas at z = -75,-47,-19,19,47,75)
+  //   north arc          x = 0, z = -116  (arc apex after NORTH_SHIFT)
+  //   south row          x = -65, z = 90.6  (z = 88 + x*0.04)
   const V = [
-    { key:'int_w_g', label:'West · Ground',   pos:[-162,2.0,0],   yaw: Math.PI/2, pitch: 0,     caption:'West villa · ground floor — polo field ahead' },
-    { key:'int_w_1', label:'West · First',    pos:[-162,5.5,0],   yaw: Math.PI/2, pitch:-0.10,  caption:'West villa · first floor — elevated polo view' },
-    { key:'int_w_r', label:'West · Roof',     pos:[-162,9.0,0],   yaw: Math.PI/2, pitch:-0.15,  caption:'West villa · roof terrace — estate panorama' },
-    { key:'int_e_g', label:'East · Ground',   pos:[162,2.0,0],    yaw:-Math.PI/2, pitch: 0,     caption:'East villa · ground floor — polo field ahead' },
-    { key:'int_e_1', label:'East · First',    pos:[162,5.5,0],    yaw:-Math.PI/2, pitch:-0.10,  caption:'East villa · first floor — elevated polo view' },
-    { key:'int_e_r', label:'East · Roof',     pos:[162,9.0,0],    yaw:-Math.PI/2, pitch:-0.15,  caption:'East villa · roof terrace — clubhouse and field' },
-    { key:'int_n_g', label:'North · Ground',  pos:[0,2.0,-108],   yaw: Math.PI,   pitch: 0,     caption:'North arc · ground floor — lake in the foreground' },
-    { key:'int_n_1', label:'North · First',   pos:[0,5.5,-108],   yaw: Math.PI,   pitch:-0.10,  caption:'North arc · first floor — over the lake to the field' },
-    { key:'int_n_r', label:'North · Roof',    pos:[0,9.0,-108],   yaw: Math.PI,   pitch:-0.16,  caption:'North arc · roof terrace — lake and full estate' },
-    { key:'int_s_g', label:'South · Ground',  pos:[-65,2.0,88],   yaw: 0,         pitch: 0,     caption:'South villa · ground floor — field and lake beyond' },
-    { key:'int_s_1', label:'South · First',   pos:[-65,5.5,88],   yaw: 0,         pitch:-0.10,  caption:'South villa · first floor — full field length' },
-    { key:'int_s_r', label:'South · Roof',    pos:[-65,9.0,88],   yaw: 0,         pitch:-0.16,  caption:'South villa · roof terrace — estate panorama' },
+    { key:'int_w_g', label:'Inside · West · Ground',  pos:[-162,2.0,-19],   yaw: Math.PI/2, pitch: 0,    caption:'Inside west villa · ground floor — polo field ahead' },
+    { key:'int_w_1', label:'Inside · West · First',   pos:[-162,5.5,-19],   yaw: Math.PI/2, pitch:-0.10, caption:'Inside west villa · first floor — elevated polo view' },
+    { key:'int_w_r', label:'Inside · West · Roof',    pos:[-162,9.0,-19],   yaw: Math.PI/2, pitch:-0.15, caption:'West villa roof terrace — estate panorama' },
+    { key:'int_e_g', label:'Inside · East · Ground',  pos:[162,2.0,-19],    yaw:-Math.PI/2, pitch: 0,    caption:'Inside east villa · ground floor — polo field ahead' },
+    { key:'int_e_1', label:'Inside · East · First',   pos:[162,5.5,-19],    yaw:-Math.PI/2, pitch:-0.10, caption:'Inside east villa · first floor — elevated polo view' },
+    { key:'int_e_r', label:'Inside · East · Roof',    pos:[162,9.0,-19],    yaw:-Math.PI/2, pitch:-0.15, caption:'East villa roof terrace — clubhouse and field' },
+    { key:'int_n_g', label:'Inside · North · Ground', pos:[0,2.0,-116],     yaw: Math.PI,   pitch: 0,    caption:'Inside north arc villa · ground floor — lake in the foreground' },
+    { key:'int_n_1', label:'Inside · North · First',  pos:[0,5.5,-116],     yaw: Math.PI,   pitch:-0.10, caption:'Inside north arc villa · first floor — over the lake' },
+    { key:'int_n_r', label:'Inside · North · Roof',   pos:[0,9.0,-116],     yaw: Math.PI,   pitch:-0.16, caption:'North arc roof terrace — lake and full estate' },
+    { key:'int_s_g', label:'Inside · South · Ground', pos:[-65,2.0,90.6],   yaw: 0,         pitch: 0,    caption:'Inside south villa · ground floor — field and lake beyond' },
+    { key:'int_s_1', label:'Inside · South · First',  pos:[-65,5.5,90.6],   yaw: 0,         pitch:-0.10, caption:'Inside south villa · first floor — full field length' },
+    { key:'int_s_r', label:'Inside · South · Roof',   pos:[-65,9.0,90.6],   yaw: 0,         pitch:-0.16, caption:'South villa roof terrace — estate panorama' },
   ];
   const existing = VIEWPOINTS.villas.subViews || [];
   // Keep whatever data.js already defines; append ours if not already present.
@@ -2834,7 +2844,7 @@ function teleportTo(key, vp){
       // Clubhouse
       'clubhouse':    { pos:[0,    1.72,  135],  yaw: Math.PI,     pitch:-0.05,  caption: 'Clubhouse — estate social anchor' },
       // Lake
-      'lake_north':   { pos:[0,    1.72,  -108], yaw: 0,           pitch:-0.04,  caption: 'Crescent lake — north shore' },
+      'lake_north':   { pos:[0,    1.72,   -80], yaw: Math.PI,     pitch:-0.02,  caption: 'Crescent Lake — across the water to the north arc' },
       // Stables
       'stables':      { pos:[-280, 1.72,  80],   yaw: Math.PI/2,   pitch: 0,     caption: 'Equestrian quarter — 56 stalls' },
       // Training
