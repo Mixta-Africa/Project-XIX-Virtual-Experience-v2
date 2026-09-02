@@ -14,7 +14,7 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=57";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=58";
 import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
@@ -23,7 +23,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=57";
+} from "./graphics.js?v=58";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -4463,11 +4463,11 @@ function addVillaRing(){
   [-75, -47, -19].forEach(z => placeV(-162, z, Math.PI / 2));
   [19, 47, 75].forEach(z => placeV(-162, z, Math.PI / 2));
   // SW/SE corner villas — z adjusted to match the new south row at z≈88
-  placeV(-155.5, 88, 3 * Math.PI / 4);
+  placeV(-167.8, 91.2, 3 * Math.PI / 4);   // SW — 17.2m clearance (was 8.8m)
 
   [-75, -47, -19].forEach(z => placeV(162, z, -Math.PI / 2));
   [19, 47, 75].forEach(z => placeV(162, z, -Math.PI / 2));
-  placeV( 155.5, 88, -3 * Math.PI / 4);
+  placeV( 167.8, 91.2, -3 * Math.PI / 4);  // SE — 17.2m clearance (was 8.8m)
 
   // South villas: moved inward from z=105 to z=88 now that the N/S safety zone
   // is 13m (inner edge at z=86) rather than 25m. 2m clearance from strip edge.
@@ -4488,8 +4488,24 @@ function addVillaRing(){
   //  x = +-162, z = -75, leaving a 46 m hole at each shoulder. The east end
   //  already has its pair at (+-148, 105). Filling both brings the count to
   //  exactly 43 and closes the gap that was reported.
-  placeV(-158, -98 + NORTH_SHIFT,  Math.PI / 4);
-  placeV( 158, -98 + NORTH_SHIFT, -Math.PI / 4);
+  // ── CORNER VILLAS — recomputed for clearance ────────────────────────────
+  // These four were overlapping their neighbours, which is the deformed,
+  // merged-together look at the safety-zone corners. Measured centre-to-centre
+  // distances before the fix:
+  //     NW/NE  11.7m  to the west/east column end
+  //     SW/SE   8.8m  to the south row end
+  // The villa is 11.4m wide x 9.6m deep (14.9m diagonal), so a 45-degree corner
+  // unit needs ~16-17m centre-to-centre against an axis-aligned neighbour.
+  // Anything less and the meshes physically intersect.
+  //
+  // Solved by taking the MIDPOINT of the two runs each corner sits between,
+  // then pushing outward from the field by the smallest amount that reaches
+  // 17m clearance. The north corners needed no push at all — they were simply
+  // off-centre. The south pair needed 14m because the south row's outermost
+  // villa (x=±149, z≈94) crowds that corner.
+  // Rotations are unchanged: each bisects the two runs it joins.
+  placeV(-157, -91.5,  Math.PI / 4);     // NW — 17.2m clearance (was 11.7m)
+  placeV( 157, -91.5, -Math.PI / 4);     // NE — 17.2m clearance (was 11.7m)
 
   // The schedule is the source of truth for the count, so it is asserted here
   // rather than left to be discovered in a screenshot.
