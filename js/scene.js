@@ -14,7 +14,7 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=52";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=53";
 import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
@@ -23,7 +23,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=52";
+} from "./graphics.js?v=53";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -315,11 +315,17 @@ const _ambientHorses = [];
 // pointing at the ORIGINAL skeleton, so a plain clone would animate
 // identically to (and visually fight with) the source.
 let _horseTemplate = null, _horseClip = null;
+let _horseClipFull = null;
+let _horseIdleClip = null;
 const _pendingAmbientBuilds = [];
 
 function _spawnAmbientHorse(bounds, delayMs) {
   const rec = { model: null, mixer: null, pos: new THREE.Vector3(), yaw: 0,
-                target: new THREE.Vector3(), pauseT: 0, speed: 1.8 + Math.random()*0.8, bounds };
+                target: new THREE.Vector3(), pauseT: 0,
+                // A horse walks at roughly 1.5 m/s and trots near 3.5. The old
+                // 1.8-2.6 range read as sluggish across a 700m estate, so this
+                // sits at a purposeful walk-to-slow-trot.
+                speed: 2.9 + Math.random()*1.0, bounds };
   const pick = () => new THREE.Vector3(
     bounds.xMin + Math.random()*(bounds.xMax-bounds.xMin), 0,
     bounds.zMin + Math.random()*(bounds.zMax-bounds.zMin));
@@ -357,18 +363,59 @@ function _spawnAmbientHorse(bounds, delayMs) {
       if (bbox.min.y < 0) model.position.y = -bbox.min.y;
       _horseTemplate = model;
 
-      const rawClip = gltf.animations.find(a => /trot|walk|run/i.test(a.name)) || gltf.animations[0];
+      // ─── EXTRACT THE WALK FROM THE COMBINED TIMELINE ──────────────────────
+      // horse.glb contains exactly ONE animation, "Take 001", 31.2s long, with
+      // every gait baked end to end. The old lookup regex (/trot|walk|run/)
+      // therefore never matched and fell through to animations[0] — the WHOLE
+      // timeline. That is why the horse galloped, slid, reared and idled in
+      // sequence instead of simply walking.
+      //
+      // Measuring angular velocity per second across the clip shows three
+      // distinct phases:
+      //     0-3s    ~1.7 rad/s   gallop
+      //     3-15s   ~0.6-1.1     WALK
+      //     15-31s  ~0.05-0.3    idle / grazing
+      // The walk band has a clean stride cycle: low at 3s, peak at 7s, low
+      // again at 11s — the same phase, so 3->11s loops without a visible jump.
+      // Tunable live via window.setHorseWalkRange(start, end).
+      const rawClip = gltf.animations[0];
       if (rawClip) {
+        // Strip root motion so the clip animates in place and the code drives
+        // position — otherwise the baked translation fights our movement.
         const filteredTracks = rawClip.tracks.filter(track => {
           const isRoot = /^(root|_rootjoint|rootnode|hips_01)/i.test(track.name.split('.')[0]);
           return !(isRoot && (track.name.endsWith('.position') || track.name.endsWith('.quaternion')));
         });
-        _horseClip = new THREE.AnimationClip(rawClip.name, rawClip.duration, filteredTracks);
+        const inPlace = new THREE.AnimationClip(rawClip.name, rawClip.duration, filteredTracks);
+        _horseClipFull = inPlace;
+        const FPS = 30;
+        _horseClip     = THREE.AnimationUtils.subclip(inPlace, 'walk', 3 * FPS, 11 * FPS, FPS);
+        _horseIdleClip = THREE.AnimationUtils.subclip(inPlace, 'idle', 20 * FPS, 30 * FPS, FPS);
+        console.log(`[XIX] Horse: extracted walk 3-11s and idle 20-30s from "${rawClip.name}" (${rawClip.duration.toFixed(1)}s combined)`);
       }
       _pendingAmbientBuilds.forEach(fn => fn());
       _pendingAmbientBuilds.length = 0;
     }, undefined, err => console.warn('[XIX] ambient horse template load failed:', err));
   }, delayMs);
+}
+
+// Re-cut the walk range at runtime without a rebuild, e.g.
+//   window.setHorseWalkRange(3, 11)
+// Useful for dialling the loop in against the actual animation.
+if (typeof window !== 'undefined') {
+  window.setHorseWalkRange = function (startSec, endSec) {
+    if (!_horseClipFull) { console.warn('[XIX] horse clip not loaded yet'); return; }
+    const FPS = 30;
+    _horseClip = THREE.AnimationUtils.subclip(_horseClipFull, 'walk', startSec * FPS, endSec * FPS, FPS);
+    let n = 0;
+    _ambientHorses.forEach(h => {
+      if (!h.mixer || !h.model) return;
+      h.mixer.stopAllAction();
+      const a = h.mixer.clipAction(_horseClip);
+      a.setLoop(THREE.LoopRepeat, Infinity); a.play(); n++;
+    });
+    console.log(`[XIX] Horse walk range set to ${startSec}-${endSec}s on ${n} horses`);
+  };
 }
 
 export function spawnAmbientHorses() {
@@ -411,6 +458,17 @@ export function tickAmbientHorses(delta) {
     const step = Math.min(h.speed * delta, dist);
     h.pos.x += (dx / dist) * step;
     h.pos.z += (dz / dist) * step;
+
+    // ── FOOT SLIDING FIX ───────────────────────────────────────────────────
+    // Sliding happens when the legs cycle at a rate that does not match how
+    // fast the body is actually travelling. The walk subclip is authored for
+    // roughly WALK_REF m/s, so scaling the mixer by (actual / reference) keeps
+    // the hooves planted at whatever speed this particular horse is moving.
+    if (h.mixer) {
+      const WALK_REF = 3.0;
+      const actual = step / Math.max(delta, 0.0001);
+      h.mixer.timeScale = Math.max(0.35, Math.min(1.8, actual / WALK_REF));
+    }
     const targetYaw = Math.atan2(dx, dz);
     let yawDiff = targetYaw - h.yaw;
     while (yawDiff > Math.PI) yawDiff -= Math.PI * 2;
@@ -497,7 +555,7 @@ function spawnNPCHorse(pathIndex) {
 
     const path = NPC_PATHS[pathIndex % NPC_PATHS.length];
     group.position.copy(path[0]);
-    npcHorses.push({ group, mixer, path, pathIdx: 0, speed: 2.5 + Math.random() * 1.5, progress: 0 });
+    npcHorses.push({ group, mixer, path, pathIdx: 0, speed: 3.2 + Math.random() * 1.4, progress: 0 });
   }, undefined, err => console.warn("NPC horse failed:", err));
 }
 
@@ -914,9 +972,17 @@ function _tickHorseEvents(now) {
   if (now < _nextHorseAt) return;
   _nextHorseAt = now + 12000 + Math.random() * 22000;   // every 12-34s
 
-  // Pick the nearest horse location within earshot — a whinny should come from
-  // the stables you can see, not from an empty paddock across the estate.
+  // Nearest horse within earshot. LIVE model positions first — the ambient
+  // horses wander, so the fixed stable/paddock points alone meant a snort could
+  // never come from the animal standing right beside you. Fixed points remain
+  // as a fallback for the stables themselves and for mobile, where ambient
+  // horses are not spawned.
   let best = null, bestD = 105;   // local event — aerial height (118m) excludes it
+  for (const h of _ambientHorses) {
+    if (!h.model) continue;
+    const d = _dist3(h.pos.x, h.pos.z);
+    if (d < bestD) { bestD = d; best = { x: h.pos.x, z: h.pos.z }; }
+  }
   for (const p of ONESHOT_POINTS.horses) {
     const d = _dist3(p.x, p.z);
     if (d < bestD) { bestD = d; best = p; }
@@ -1168,27 +1234,40 @@ let _lastNeigh = 0;
 function _tickAmbientNeighs(listenerX, listenerZ) {
   if (!_audioCtx) return;
   const now = performance.now();
-  if (now - _lastNeigh < 4500) return;   // at most one every 4.5s
+  if (now - _lastNeigh < 4500) return;
+  if (Math.random() > 0.010) return;   // was 0.006 — too rare to ever catch
 
-  // Slightly higher probability than before (0.006 vs 0.004) so neighs are
-  // heard every 10-20 seconds on average rather than every 30s.
-  if (Math.random() > 0.006) return;
-
-  // First try actual horse models (desktop only)
+  // ── NEIGH FROM THE HORSE YOU ARE ACTUALLY NEXT TO ────────────────────────
+  // This used a static list of fixed positions, but the ambient horses WANDER.
+  // Standing beside a horse produced nothing, because the nearest hardcoded
+  // point could be a hundred metres away. Live model positions come first now,
+  // and only fall back to fixed points when no model is in range (mobile,
+  // where ambient horses are not spawned at all).
+  let best = null, bestD = 95;
   for (const h of _ambientHorses) {
     if (!h.model) continue;
-    const d = Math.hypot(h.pos.x - listenerX, h.pos.z - listenerZ);
-    if (d < 120) { _makeNeighAt(h.pos.x, h.pos.z); _lastNeigh = now; return; }
+    const d = _dist3(h.pos.x, h.pos.z);
+    if (d < bestD) { bestD = d; best = { x: h.pos.x, z: h.pos.z }; }
   }
+  if (!best) {
+    for (const p of _NEIGH_POSITIONS) {
+      const d = _dist3(p.x, p.z);
+      if (d < bestD) { bestD = d; best = p; }
+    }
+  }
+  if (!best) return;
 
-  // Fallback: pick the nearest fixed position within 180m (always fires on mobile)
-  let best = null, bestD = 105;
-  for (const p of _NEIGH_POSITIONS) {
-    const d = _dist3(p.x, p.z);
-    if (d < bestD) { bestD = d; best = p; }
+  _lastNeigh = now;
+  // Prefer the recorded whinny; fall back to the synthesised one if absent.
+  if (_sampleBuffers.get('horse-whinny-123.mp3')) {
+    _playSampleAt('horse-whinny-123.mp3', best.x, best.z, {
+      volume: 0.8, audible: 130, rate: 0.95 + Math.random() * 0.1,
+    });
+  } else {
+    _makeNeighAt(best.x, best.z);
   }
-  if (best) { _makeNeighAt(best.x, best.z); _lastNeigh = now; }
 }
+
 
 function _makeHooves() {
   if (!_audioCtx) return null;
