@@ -10,7 +10,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
-import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=58";
+import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=59";
 // villa-interior.js removed — dead file, superseded by interior.js
 import {
   initScene, getRenderer, getScene, getCamera, getClock,
@@ -21,12 +21,12 @@ import {
   getSunLight, getHorseGroup, updateNightLights, updateBuildingNightGlow,
   enterVillaInterior, teleportVillaRoom, exitVillaInterior,
   setAudioMuted, isAudioMuted, setMixLevel, getMixLevels, getMixDefaults, resetMixLevels,
-} from "./scene.js?v=58";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=58";
+} from "./scene.js?v=59";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=59";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
-} from "./controls.js?v=58";
+} from "./controls.js?v=59";
 import {
   initMinimap, updateMinimap,
   buildViewpointStrip, showZonePanel, hideZonePanel,
@@ -34,7 +34,7 @@ import {
   setCaption as _setCaption_raw, showEnterPrompt, hideEnterPrompt,
   showVRButton, showJoystick, hideJoystick, isMobile,
   enableAudio, updateSpatialAudio, initAudio
-} from "./ui.js?v=58";
+} from "./ui.js?v=59";
 
 window.plotRegistry = plotRegistry;
 
@@ -836,7 +836,15 @@ function bindPlotSystem() {
     // Inside HOVER_RANGE the plot highlights and one click opens it.
     // Beyond it nothing highlights on hover and selection needs a double-click,
     // which makes distant selection deliberate rather than accidental.
-    if (plotKey && typeof plotRegistry !== 'undefined') {
+    // AERIAL IS EXEMPT. In aerial the camera sits ~118m above the estate, so
+    // EVERY plot fails a 70m test and hover died completely — a regression I
+    // introduced with this gate. Aerial is a top-down selection interface: its
+    // entire purpose is picking plots from above, and the cursor points at one
+    // plot at a time, so there is no flicker to suppress.
+    // The gate exists for WALKTHROUGH, where panning at ground level sweeps the
+    // ray across dozens of distant plots.
+    const _inAerial = !!window._aerialModeActive;
+    if (!_inAerial && plotKey && typeof plotRegistry !== 'undefined') {
       const pl = plotRegistry.get(plotKey);
       if (pl) {
         const dx = pl.x - cam.position.x, dz = pl.z - cam.position.z;
@@ -988,8 +996,10 @@ function bindPlotSystem() {
         // usually an accident while panning, so selection needs a DELIBERATE
         // double-click. The first click arms the plot and tells the user what
         // to do; a second click on the SAME plot within the window opens it.
+        // Aerial is exempt for the same reason: you are deliberately aiming at
+        // a plot from above, so one click should open it.
         let far = false;
-        if (plot) {
+        if (plot && !window._aerialModeActive) {
           const cam2 = getCamera();
           const dx = plot.x - cam2.position.x, dz = plot.z - cam2.position.z;
           const dy = cam2.position.y - 1.6;
@@ -1395,7 +1405,12 @@ async function openWorldAt(viewKey) {
 
   const overlay = document.getElementById("world-overlay");
   overlay.classList.add("open");
+  document.body.classList.add("in-estate");
   document.body.style.overflow = "hidden";
+  // Belt and braces alongside the CSS rule — the pre-entry CTA must not survive
+  // into the 3D view on large touchscreens.
+  const _cta = document.getElementById('billboard-cta');
+  if (_cta) _cta.style.display = 'none';
 
   // Size the buffers BEFORE anything is shown, then render one correct frame
   // while the loading screen is still up. Previously the overlay opened, the
@@ -2665,6 +2680,7 @@ function bindExitButton(){
 }
 
 function closeWorld(){
+  document.body.classList.remove('in-estate');
   // Safeguard: Reset DOF when fully exiting the 3D overlay
   if (typeof setInteriorDOF === 'function') setInteriorDOF(false);
 
