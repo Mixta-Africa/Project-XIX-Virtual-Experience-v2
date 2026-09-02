@@ -10,7 +10,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
-import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=54";
+import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=55";
 // villa-interior.js removed — dead file, superseded by interior.js
 import {
   initScene, getRenderer, getScene, getCamera, getClock,
@@ -20,13 +20,13 @@ import {
   setHorsePosition, getThirdPersonCameraOffset, setAerialMode,
   getSunLight, getHorseGroup, updateNightLights, updateBuildingNightGlow,
   enterVillaInterior, teleportVillaRoom, exitVillaInterior,
-  setAudioMuted, isAudioMuted,
-} from "./scene.js?v=54";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=54";
+  setAudioMuted, isAudioMuted, setMixLevel, getMixLevels, getMixDefaults, resetMixLevels,
+} from "./scene.js?v=55";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=55";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
-} from "./controls.js?v=54";
+} from "./controls.js?v=55";
 import {
   initMinimap, updateMinimap,
   buildViewpointStrip, showZonePanel, hideZonePanel,
@@ -34,7 +34,7 @@ import {
   setCaption as _setCaption_raw, showEnterPrompt, hideEnterPrompt,
   showVRButton, showJoystick, hideJoystick, isMobile,
   enableAudio, updateSpatialAudio, initAudio
-} from "./ui.js?v=54";
+} from "./ui.js?v=55";
 
 window.plotRegistry = plotRegistry;
 
@@ -1725,6 +1725,199 @@ function aerialTouchMove(e){
 window.toggleAerial=toggleAerial;
 
 // ─── SOUND TOGGLE ───────────────────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONTROLS PANEL  —  everything you need to move and interact, in one place
+// ═══════════════════════════════════════════════════════════════════════════
+// A first-time viewer has no idea that hovering highlights a plot, that far
+// plots need a double-click, or that the viewpoint strip exists. Nothing in the
+// interface said so. This is grouped by what someone is trying to DO rather
+// than by input device, because that is how people look for help.
+let _ctrlPanelEl = null;
+
+const CONTROL_SECTIONS = [
+  { title: 'Moving around', items: [
+    ['W A S D  /  Arrow keys', 'Walk through the estate'],
+    ['Move the mouse',         'Look around'],
+    ['Shift (hold)',           'Move faster'],
+    ['Click the view once',    'Capture the mouse for smooth looking'],
+    ['Esc',                    'Release the mouse'],
+  ]},
+  { title: 'Seeing the estate', items: [
+    ['AERIAL',                 'Orbiting view of the whole estate — drag to steer'],
+    ['Bottom strip',           'Jump to Centre Field, Clubhouse, Lake, Stables and more'],
+    ['VILLAS ▸',               'Step inside a unit — ground floor, first floor, roof terrace'],
+    ['TOUR',                   'Guided sequence through the estate'],
+  ]},
+  { title: 'Choosing a property', items: [
+    ['Hover nearby',           'The plot lights up green and shows its number'],
+    ['Click (close up)',       'Opens the property details'],
+    ['Click twice (far away)', 'Confirms which plot you mean before opening'],
+    ['Property Directory',     'Search all units by number or type'],
+  ]},
+  { title: 'Atmosphere', items: [
+    ['TIME',                   'Morning, afternoon, sunset, night'],
+    ['WEATHER',                'Clear, overcast, rain'],
+    ['QUALITY',                'Fast, Balanced, Rich — lower it if movement feels heavy'],
+    ['SOUND',                  'Per-element mixer and mute'],
+  ]},
+  { title: 'Shortcuts', items: [
+    ['M',                      'Mute / unmute'],
+    ['D',                      'Performance diagnostics'],
+    ['Esc',                    'Release mouse, or close the estate view'],
+  ]},
+];
+
+function _buildControlsPanel() {
+  if (_ctrlPanelEl) return _ctrlPanelEl;
+  const el = document.createElement('div');
+  el.id = 'controls-panel';
+  el.style.cssText =
+    'position:fixed;top:88px;right:16px;z-index:10001;width:min(370px,92vw);' +
+    'max-height:calc(100vh - 190px);overflow-y:auto;display:none;' +
+    'background:rgba(8,18,10,0.97);border:1px solid rgba(201,168,76,0.4);border-radius:10px;' +
+    'padding:16px 18px;font-family:Inter,system-ui,sans-serif;color:#eee;' +
+    'box-shadow:0 10px 34px rgba(0,0,0,0.55);';
+
+  el.innerHTML =
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">' +
+      '<span style="color:#c9a84c;font-size:12px;font-weight:600;letter-spacing:1.2px;">CONTROLS</span>' +
+      '<button id="ctrl-close" style="background:none;border:none;color:#888;font-size:17px;cursor:pointer;line-height:1;">&times;</button>' +
+    '</div>' +
+    CONTROL_SECTIONS.map(sec =>
+      '<div style="margin-bottom:14px;">' +
+        '<div style="font-size:10.5px;letter-spacing:1px;text-transform:uppercase;' +
+          'color:rgba(201,168,76,0.75);margin-bottom:6px;">' + sec.title + '</div>' +
+        sec.items.map(([k, v]) =>
+          '<div style="display:flex;gap:10px;margin-bottom:5px;align-items:baseline;">' +
+            '<span style="flex:0 0 132px;font-size:11.5px;color:#f2e9d0;font-weight:500;">' + k + '</span>' +
+            '<span style="flex:1;font-size:11.5px;color:rgba(255,255,255,0.62);line-height:1.35;">' + v + '</span>' +
+          '</div>').join('') +
+      '</div>').join('') +
+    '<div style="font-size:10.5px;color:rgba(255,255,255,0.35);border-top:1px solid rgba(255,255,255,0.09);padding-top:9px;">' +
+      'Tip — if movement feels heavy, set QUALITY to Balanced or Fast. Quality adjusts itself automatically if the frame rate drops.' +
+    '</div>';
+
+  document.body.appendChild(el);
+  el.querySelector('#ctrl-close').addEventListener('click', () => _toggleControlsPanel(false));
+  _ctrlPanelEl = el;
+  return el;
+}
+
+function _toggleControlsPanel(force) {
+  const el = _buildControlsPanel();
+  const open = (force !== undefined) ? force : (el.style.display === 'none');
+  el.style.display = open ? 'block' : 'none';
+  // Only one right-hand panel at a time, and free the cursor so it is usable.
+  if (open) {
+    if (_mixPanelEl) _mixPanelEl.style.display = 'none';
+    if (document.pointerLockElement) document.exitPointerLock();
+  }
+}
+window.toggleControlsPanel = () => _toggleControlsPanel();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SOUND MIXER PANEL  —  opens from the SOUND button
+// ═══════════════════════════════════════════════════════════════════════════
+// Mute alone was too blunt for a curated viewing: an agent may want the birds
+// up and traffic gone, or the water forward while standing at the lake. Each
+// slider drives a bus that sits between its sources and the master, so all the
+// proximity and time-of-day logic keeps working underneath — the slider is a
+// multiplier on top, never a replacement for it.
+// The experience always OPENS at the designed default balance; Reset restores it.
+let _mixPanelEl = null;
+
+const MIX_ROWS = [
+  { key:'master',  label:'Master',        hint:'Overall level' },
+  { key:'birds',   label:'Birds & Nature', hint:'Time-of-day ambience' },
+  { key:'water',   label:'Lake Water',     hint:'Audible near the crescent lake' },
+  { key:'wind',    label:'Wind & Palms',   hint:'Along the west avenue' },
+  { key:'horses',  label:'Horses',         hint:'Whinny, snort, hooves' },
+  { key:'traffic', label:'Traffic',        hint:'Perimeter roads only' },
+];
+
+function _buildMixPanel() {
+  if (_mixPanelEl) return _mixPanelEl;
+  const levels = getMixLevels();
+  const el = document.createElement('div');
+  el.id = 'sound-mixer';
+  el.style.cssText =
+    'position:fixed;top:88px;right:16px;z-index:10001;width:290px;display:none;' +
+    'background:rgba(8,18,10,0.97);border:1px solid rgba(201,168,76,0.4);border-radius:10px;' +
+    'padding:14px 16px 12px;font-family:Inter,system-ui,sans-serif;color:#eee;' +
+    'box-shadow:0 10px 34px rgba(0,0,0,0.55);';
+
+  el.innerHTML =
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">' +
+      '<span style="color:#c9a84c;font-size:12px;font-weight:600;letter-spacing:1.2px;">SOUND MIXER</span>' +
+      '<button id="mix-close" style="background:none;border:none;color:#888;font-size:17px;cursor:pointer;line-height:1;">&times;</button>' +
+    '</div>' +
+    // Quick mute stays one tap away — the SOUND button now opens this panel
+    // rather than muting directly, so mute needs a home inside it. M also works.
+    '<button id="mix-mute" style="width:100%;margin-bottom:12px;background:rgba(255,255,255,0.06);' +
+      'border:1px solid rgba(255,255,255,0.16);color:#e8e2d2;padding:8px;border-radius:6px;' +
+      'font-size:11.5px;font-weight:600;letter-spacing:0.6px;cursor:pointer;">' +
+      (isAudioMuted() ? 'UNMUTE ALL  (M)' : 'MUTE ALL  (M)') + '</button>' +
+    MIX_ROWS.map(r =>
+      '<div style="margin-bottom:11px;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:baseline;">' +
+          '<label style="font-size:12.5px;color:#e8e2d2;">' + r.label + '</label>' +
+          '<span id="mixval-' + r.key + '" style="font-size:11px;color:#c9a84c;font-variant-numeric:tabular-nums;">' +
+            Math.round((levels[r.key] ?? 1) * 100) + '%</span>' +
+        '</div>' +
+        '<input type="range" id="mix-' + r.key + '" min="0" max="120" value="' +
+          Math.round((levels[r.key] ?? 1) * 100) + '" ' +
+          'style="width:100%;accent-color:#c9a84c;margin:3px 0 1px;cursor:pointer;">' +
+        '<div style="font-size:10px;color:rgba(255,255,255,0.38);">' + r.hint + '</div>' +
+      '</div>').join('') +
+    '<button id="mix-reset" style="width:100%;margin-top:4px;background:rgba(201,168,76,0.14);' +
+      'border:1px solid rgba(201,168,76,0.45);color:#c9a84c;padding:8px;border-radius:6px;' +
+      'font-size:11.5px;font-weight:600;letter-spacing:0.6px;cursor:pointer;">RESET TO DEFAULTS</button>';
+
+  document.body.appendChild(el);
+
+  MIX_ROWS.forEach(r => {
+    const slider = el.querySelector('#mix-' + r.key);
+    const out    = el.querySelector('#mixval-' + r.key);
+    slider.addEventListener('input', () => {
+      const pct = parseInt(slider.value, 10);
+      out.textContent = pct + '%';
+      setMixLevel(r.key, pct / 100);
+    });
+  });
+
+  el.querySelector('#mix-close').addEventListener('click', () => _toggleMixPanel(false));
+  el.querySelector('#mix-mute').addEventListener('click', () => {
+    window.toggleSound();
+    el.querySelector('#mix-mute').textContent = isAudioMuted() ? 'UNMUTE ALL  (M)' : 'MUTE ALL  (M)';
+  });
+  el.querySelector('#mix-reset').addEventListener('click', () => {
+    resetMixLevels();
+    const d = getMixDefaults();
+    MIX_ROWS.forEach(r => {
+      const pct = Math.round((d[r.key] ?? 1) * 100);
+      el.querySelector('#mix-' + r.key).value = pct;
+      el.querySelector('#mixval-' + r.key).textContent = pct + '%';
+    });
+    if (typeof showNotification === 'function') showNotification('Sound levels reset to defaults');
+  });
+
+  _mixPanelEl = el;
+  return el;
+}
+
+function _toggleMixPanel(force) {
+  const el = _buildMixPanel();
+  const open = (force !== undefined) ? force : (el.style.display === 'none');
+  el.style.display = open ? 'block' : 'none';
+  if (open) {
+    if (_ctrlPanelEl) _ctrlPanelEl.style.display = 'none';
+    if (document.pointerLockElement) document.exitPointerLock();
+  }
+}
+window.toggleSoundMixer = () => _toggleMixPanel();
+
 function _syncSoundBtn(muted) {
   const btn = document.getElementById('btn-sound');
   if (!btn) return;
@@ -1761,6 +1954,9 @@ window.toggleSound = function() {
   }
 
   _syncSoundBtn(nowMuted);
+  // Keep the mixer's mute button label correct if M was used while it is open.
+  const mb = document.getElementById('mix-mute');
+  if (mb) mb.textContent = nowMuted ? 'UNMUTE ALL  (M)' : 'MUTE ALL  (M)';
 };
 
 // Property detail panel — opens over the 3D world for any viewpoint with a productKey
