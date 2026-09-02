@@ -10,7 +10,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
-import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=57";
+import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=58";
 // villa-interior.js removed — dead file, superseded by interior.js
 import {
   initScene, getRenderer, getScene, getCamera, getClock,
@@ -21,12 +21,12 @@ import {
   getSunLight, getHorseGroup, updateNightLights, updateBuildingNightGlow,
   enterVillaInterior, teleportVillaRoom, exitVillaInterior,
   setAudioMuted, isAudioMuted, setMixLevel, getMixLevels, getMixDefaults, resetMixLevels,
-} from "./scene.js?v=57";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=57";
+} from "./scene.js?v=58";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=58";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
-} from "./controls.js?v=57";
+} from "./controls.js?v=58";
 import {
   initMinimap, updateMinimap,
   buildViewpointStrip, showZonePanel, hideZonePanel,
@@ -34,7 +34,7 @@ import {
   setCaption as _setCaption_raw, showEnterPrompt, hideEnterPrompt,
   showVRButton, showJoystick, hideJoystick, isMobile,
   enableAudio, updateSpatialAudio, initAudio
-} from "./ui.js?v=57";
+} from "./ui.js?v=58";
 
 window.plotRegistry = plotRegistry;
 
@@ -1762,18 +1762,29 @@ window.toggleAerial=toggleAerial;
 //   • It never fades while a panel is open, or during the opening grace period.
 //   • A pin locks it permanently visible, and that choice is remembered.
 //   • A one-time hint explains the behaviour on first visit.
-const CHROME_IDLE_MS = 3800;   // inactivity before the interface settles back
+const CHROME_IDLE_MS = 2600;   // inactivity before the interface settles back
 let _chromeIdleTimer = null;
 let _chromeLocked = false;
 let _chromeHoverHold = false;
 
 function _chromePanelOpen() {
-  const ids = ['sound-mixer', 'controls-panel', 'reservation-modal'];
-  if (ids.some(id => {
-    const el = document.getElementById(id);
-    return el && el.style.display && el.style.display !== 'none';
-  })) return true;
-  return !!document.querySelector('.plot-panel, #xix-plot-panel');
+  // BUG THAT BROKE THE FADE: this used to end with
+  //   return !!document.querySelector('.plot-panel, #xix-plot-panel');
+  // but #plot-panel is a PERMANENT element in index.html (line ~541), so the
+  // selector always matched, _chromePanelOpen() was always true, and the chrome
+  // never faded once. Existence is not the same as visibility — every check
+  // below tests whether the element is actually SHOWN.
+  const isShown = (el) => {
+    if (!el) return false;
+    if (el.style.display === 'none') return false;
+    if (el.classList.contains('open') || el.classList.contains('active')) return true;
+    // Computed check catches CSS-driven visibility (transform/opacity panels).
+    const cs = getComputedStyle(el);
+    if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+    return parseFloat(cs.opacity || '1') > 0.05 && el.offsetParent !== null;
+  };
+  return ['sound-mixer', 'controls-panel', 'reservation-modal', 'plot-panel']
+    .some(id => isShown(document.getElementById(id)));
 }
 
 function _chromeWake() {
@@ -1840,7 +1851,7 @@ function initAutoFadingChrome() {
   // it settle back once they have started exploring.
   if (!_chromeLocked) {
     document.body.classList.remove('chrome-idle');
-    setTimeout(() => _chromeWake(), 6000);
+    setTimeout(() => _chromeWake(), 3500);   // shorter grace — the effect must be felt
   }
 
   _showChromeHintOnce();
@@ -1858,8 +1869,8 @@ function _showChromeHintOnce() {
     'The controls dim while you explore — <strong>move your mouse</strong> to bring them back, ' +
     'or use the <strong>pin</strong> on the right to keep them visible.';
   document.body.appendChild(hint);
-  setTimeout(() => { hint.style.display = 'block'; }, 6500);
-  setTimeout(() => { hint.style.display = 'none'; }, 14000);
+  setTimeout(() => { hint.style.display = 'block'; }, 4200);
+  setTimeout(() => { hint.style.display = 'none'; }, 12000);
   try { localStorage.setItem('xix_chrome_hint', '1'); } catch (e) {}
 }
 
@@ -1956,6 +1967,17 @@ function _toggleControlsPanel(force) {
   }
 }
 window.toggleControlsPanel = () => _toggleControlsPanel();
+
+// Why is the chrome not fading? Run window._chromeState() in the console.
+if (typeof window !== 'undefined') {
+  window._chromeState = () => ({
+    idle:      document.body.classList.contains('chrome-idle'),
+    locked:    _chromeLocked,
+    hoverHold: _chromeHoverHold,
+    panelOpen: _chromePanelOpen(),
+    idleMs:    CHROME_IDLE_MS,
+  });
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SOUND MIXER PANEL  —  opens from the SOUND button
