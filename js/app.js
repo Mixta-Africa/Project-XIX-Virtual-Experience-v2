@@ -10,23 +10,23 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
-import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=51";
+import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=52";
 // villa-interior.js removed — dead file, superseded by interior.js
 import {
   initScene, getRenderer, getScene, getCamera, getClock,
   tickScene, updateSky, updateSkyForTime, plotRegistry, reservePlot, getPlotAtRay,
-  highlightPlot, setPerfMode, PERF_MODE, pickPlotFast, markPickTargetsDirty, refreshReservedOverlays,
+  highlightPlot, setPerfMode, PERF_MODE, pickPlotFast, unreservePlot, markPickTargetsDirty, refreshReservedOverlays,
   RIDER_EYE_HEIGHT, FOOT_EYE_HEIGHT, tickHorse, tickHorseAnim,
   setHorsePosition, getThirdPersonCameraOffset, setAerialMode,
   getSunLight, getHorseGroup, updateNightLights, updateBuildingNightGlow,
   enterVillaInterior, teleportVillaRoom, exitVillaInterior,
   setAudioMuted, isAudioMuted,
-} from "./scene.js?v=51";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=51";
+} from "./scene.js?v=52";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=52";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
-} from "./controls.js?v=51";
+} from "./controls.js?v=52";
 import {
   initMinimap, updateMinimap,
   buildViewpointStrip, showZonePanel, hideZonePanel,
@@ -34,7 +34,7 @@ import {
   setCaption as _setCaption_raw, showEnterPrompt, hideEnterPrompt,
   showVRButton, showJoystick, hideJoystick, isMobile,
   enableAudio, updateSpatialAudio, initAudio
-} from "./ui.js?v=51";
+} from "./ui.js?v=52";
 
 window.plotRegistry = plotRegistry;
 
@@ -803,6 +803,9 @@ function bindPlotSystem() {
   // Now: driven by real mousemove, coalesced to at most one raycast per
   // animation frame (so it can never outpace rendering), tests only the cached
   // overlay planes, and lights up on the same frame the cursor arrives.
+  // Distance within which a plot highlights on hover and opens on ONE click.
+  // Beyond this, hover stays clean and selection requires a double-click.
+  const HOVER_RANGE = 70;
   const _hoverNDC = new THREE.Vector2(0, 0);
   let _hoverRafPending = false;
   let _hoverClientX = 0, _hoverClientY = 0;
@@ -821,9 +824,28 @@ function bindPlotSystem() {
     if (_hoverPointerLocked) _hoverNDC.set(0, 0);
 
     _crosshairRay.setFromCamera(_hoverNDC, cam);
-    const plotKey = (typeof pickPlotFast === 'function')
+    let plotKey = (typeof pickPlotFast === 'function')
       ? pickPlotFast(_crosshairRay)
       : (typeof getPlotAtRay === 'function' ? getPlotAtRay(_crosshairRay) : null);
+
+    // ── PROXIMITY GATE ───────────────────────────────────────────────────────
+    // Standing at the centre spot and panning should NOT keep selecting houses
+    // 150m away. A highlight is a statement that you are looking at something
+    // you could walk up to; at distance the ray sweeps across dozens of plots
+    // and the flicker is noise, not information.
+    // Inside HOVER_RANGE the plot highlights and one click opens it.
+    // Beyond it nothing highlights on hover and selection needs a double-click,
+    // which makes distant selection deliberate rather than accidental.
+    if (plotKey && typeof plotRegistry !== 'undefined') {
+      const pl = plotRegistry.get(plotKey);
+      if (pl) {
+        const dx = pl.x - cam.position.x, dz = pl.z - cam.position.z;
+        const dy = cam.position.y - 1.6;
+        const d = Math.sqrt(dx*dx + dz*dz + dy*dy);
+        window._xixHoverDist = d;
+        if (d > HOVER_RANGE) plotKey = null;   // too far to hover-highlight
+      }
+    }
 
     if (typeof window.setHoveredPlot === 'function') window.setHoveredPlot(plotKey);
     _updateHoverLabel(plotKey);
@@ -1037,6 +1059,10 @@ function showPlotPanel(plotKey) {
     </div>
   `;
 
+  // Free the cursor as the panel slides in — the user needs to click Reserve
+  // or Close, and neither is reachable while the pointer is locked to look.
+  if (document.pointerLockElement) document.exitPointerLock();
+
   document.getElementById('world-overlay')?.appendChild(panel);
   requestAnimationFrame(() => panel.style.transform = 'translateX(0)');
 
@@ -1117,9 +1143,75 @@ function showNotification(msg) {
 // ─── RESERVATION MODAL LOGIC ──────────────────────────────────────────────────
 const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwR4JKertI953T1GDB90RGgCwNNZvh2CCruaR4MAb_ViViVZ3Pd4OZG3qEmwjA-axSf/exec";
 
+// ═══════════════════════════════════════════════════════════════════════════
+// SHEET SYNC  —  the sheet is the single source of truth
+// ═══════════════════════════════════════════════════════════════════════════
+// GOOGLE_SCRIPT_URL existed but NOTHING EVER CALLED doGet, so the app never
+// read the sheet. Plots you had marked RESERVED in the spreadsheet still showed
+// as AVAILABLE in the walkthrough — a straight sales-data disconnect.
+//
+// This polls doGet and applies the result in BOTH directions:
+//   AVAILABLE -> RESERVED   marks the plot reserved (red overlay, badge, and
+//                           the Reserve button disabled)
+//   RESERVED  -> AVAILABLE  releases it again
+// So editing a cell in the sheet now updates the environment, which is the
+// backward compatibility that was missing.
+let _lastStatusMap = {};
+let _syncTimer = null;
+
+async function syncPlotStatusFromSheet(quiet = false) {
+  try {
+    const res = await fetch(GOOGLE_SCRIPT_URL, { method: 'GET' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const map = await res.json();
+    let applied = 0;
+
+    Object.keys(map).forEach(id => {
+      const status = String(map[id] || '').trim().toUpperCase();
+      const plot = plotRegistry.get(String(id));
+      if (!plot) return;                       // id in sheet with no plot in scene
+      const wantReserved = (status === 'RESERVED');
+      const isReserved   = (plot.status === 'reserved');
+      if (wantReserved === isReserved) return; // already correct — no work
+      if (wantReserved) { reservePlot(String(id)); }
+      else              { unreservePlot(String(id)); }
+      applied++;
+    });
+
+    _lastStatusMap = map;
+    if (applied || !quiet) {
+      console.log(`[XIX] Sheet sync: ${Object.keys(map).length} rows read, ${applied} plot(s) updated`);
+    }
+    return applied;
+  } catch (err) {
+    console.warn('[XIX] Sheet sync failed:', err.message);
+    return -1;
+  }
+}
+
+// Poll every 20s so a change made in the sheet during a live viewing appears
+// without a reload. Pauses while the tab is hidden so it costs nothing in the
+// background, and re-syncs immediately on return.
+function startSheetSync() {
+  syncPlotStatusFromSheet(false);
+  if (_syncTimer) clearInterval(_syncTimer);
+  _syncTimer = setInterval(() => {
+    if (document.visibilityState === 'visible') syncPlotStatusFromSheet(true);
+  }, 20000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') syncPlotStatusFromSheet(true);
+  });
+}
+window.syncPlotStatusFromSheet = syncPlotStatusFromSheet;
+
 window.openReservationModal = function(propertyName, plotId = "") {
   const modal = document.getElementById('reservation-modal');
   if (!modal) return;
+  // Release the pointer lock IMMEDIATELY. Previously the cursor stayed captured
+  // by the walkthrough controls, so the form was on screen but unusable until
+  // the user pressed Esc — a dead end at the exact moment they are trying to
+  // convert. Any panel that asks for input must free the cursor as it opens.
+  if (document.pointerLockElement) document.exitPointerLock();
   document.getElementById('res-property-name').value = propertyName || "General";
   document.getElementById('res-plot-id').value = plotId || "";
   document.getElementById('res-form-title').textContent = plotId ? `Reserve ${plotId}` : `Reserve ${propertyName}`;
@@ -1147,6 +1239,16 @@ document.getElementById('res-submit-btn')?.addEventListener('click', async () =>
     email:        document.getElementById('res-email').value,
     phone:        document.getElementById('res-phone').value,
     notes:        document.getElementById('res-notes').value,
+    // TYPOLOGY — was never sent, which is why every villa row in the sheet read
+    // "Property" while lofts and apartments showed their real unit type. The
+    // registry already knows the type per plot, so send it and let the Apps
+    // Script write it to column G.
+    typology:     (() => {
+      const id = document.getElementById('res-plot-id').value;
+      const pl = id && typeof plotRegistry !== 'undefined' ? plotRegistry.get(String(id)) : null;
+      return (pl && pl.type) ? pl.type
+           : (document.getElementById('res-property-name').value || 'Property');
+    })(),
   };
 
   try {
@@ -1263,6 +1365,8 @@ async function openWorldAt(viewKey) {
 
   // Phase 4: Mount persistent sales badges once the world opens
   setTimeout(() => buildVillaStatusOverlays(), 100);
+  // Sheet is the source of truth — pull it once the registry is populated.
+  setTimeout(() => startSheetSync(), 3000);
 
   // ── TOPBAR CONTROLS BINDING ──────────────────────────────────────────────────
   // Bind TIME / WEATHER / QUALITY / TOUR topbar dropdowns and their sub-buttons.
@@ -1637,11 +1741,35 @@ function openPropertyPanel(key) {
       description: 'Three-storey polo-facing villa with two-car undercroft, full-height glazing on all floors, private landscaped garden, and direct views over the main polo field. Designed by ECAD Architecture.',
       features: ['Full-height glazing — polo field view','2-car undercroft parking','Private landscaped garden with hedges','Terrace on each floor','Residents polo membership included'],
       canReserve: true,
+      // ── VIEW FROM INSIDE THE UNIT ──────────────────────────────────────────
+      // The point of these is simple: stand where a buyer would stand inside
+      // their own home, at each floor level, and look out at the estate. Not a
+      // modelled room — the view THROUGH the unit, which is what is actually
+      // being sold. Elevation is what changes: higher floor, more estate.
+      // Previously only the WEST row existed, so a buyer looking at an east or
+      // north-arc plot had no way to see their own outlook.
+      // Floor heights: ground 2m, first 5.5m, roof terrace 9m.
       interior: [
-        { label:'Ground Floor — Living', pos:[-162,2,0],   yaw:Math.PI/2,  pitch:0,    caption:'Ground floor living — polo field ahead' },
-        { label:'First Floor — Master',  pos:[-162,5.5,0], yaw:Math.PI/2,  pitch:-0.1, caption:'Master bedroom — elevated polo view' },
-        { label:'Roof Terrace',          pos:[-162,9,0],   yaw:Math.PI/2,  pitch:-0.15,caption:'Roof terrace — panoramic estate view' },
-        { label:'Garden — Approach',     pos:[-148,1.72,0],yaw:-Math.PI/2, pitch:0,    caption:'Private garden — looking back at your villa' },
+        // ---- WEST ROW (x=-162) — looks east across the field (+X, yaw +PI/2)
+        { label:'West · Ground Floor',   pos:[-162,2,0],    yaw:Math.PI/2,  pitch:0,     caption:'West villa · ground floor — polo field ahead' },
+        { label:'West · First Floor',    pos:[-162,5.5,0],  yaw:Math.PI/2,  pitch:-0.10, caption:'West villa · first floor — elevated polo view' },
+        { label:'West · Roof Terrace',   pos:[-162,9,0],    yaw:Math.PI/2,  pitch:-0.15, caption:'West villa · roof terrace — panoramic estate view' },
+        { label:'West · Garden',         pos:[-148,1.72,0], yaw:-Math.PI/2, pitch:0,     caption:'Private garden — looking back at your villa' },
+
+        // ---- EAST ROW (x=+162) — looks west across the field (-X, yaw -PI/2)
+        { label:'East · Ground Floor',   pos:[162,2,0],     yaw:-Math.PI/2, pitch:0,     caption:'East villa · ground floor — polo field ahead' },
+        { label:'East · First Floor',    pos:[162,5.5,0],   yaw:-Math.PI/2, pitch:-0.10, caption:'East villa · first floor — elevated polo view' },
+        { label:'East · Roof Terrace',   pos:[162,9,0],     yaw:-Math.PI/2, pitch:-0.15, caption:'East villa · roof terrace — clubhouse and field' },
+
+        // ---- NORTH ARC (z=-108) — looks south over the lake to the field
+        { label:'North · Ground Floor',  pos:[0,2,-108],    yaw:Math.PI,    pitch:0,     caption:'North arc · ground floor — lake in the foreground' },
+        { label:'North · First Floor',   pos:[0,5.5,-108],  yaw:Math.PI,    pitch:-0.10, caption:'North arc · first floor — over the lake to the field' },
+        { label:'North · Roof Terrace',  pos:[0,9,-108],    yaw:Math.PI,    pitch:-0.16, caption:'North arc · roof terrace — lake and full estate' },
+
+        // ---- SOUTH ROW (z=+88) — looks north up the length of the field
+        { label:'South · Ground Floor',  pos:[-65,2,88],    yaw:0,          pitch:0,     caption:'South villa · ground floor — field and lake beyond' },
+        { label:'South · First Floor',   pos:[-65,5.5,88],  yaw:0,          pitch:-0.10, caption:'South villa · first floor — full field length' },
+        { label:'South · Roof Terrace',  pos:[-65,9,88],    yaw:0,          pitch:-0.16, caption:'South villa · roof terrace — estate panorama' },
       ],
     },
     clubhouse: {
@@ -1693,9 +1821,15 @@ function openPropertyPanel(key) {
       description: 'Ninety-six loft terrace apartments in two rows along the south precinct. Ground floor in natural gabion stone, upper floor in vertical timber slats and full-width glazing — tropical terrace living.',
       features: ['Full-width terrace per unit','Vertical timber facade','Gabion stone ground floor','Polo estate address','Strong rental yield potential'],
       canReserve: true,
+      // Lofts are two-storey, so ground and upper terrace only (no roof level).
+      // West column faces the field across the compound; the north row looks
+      // south down the length of the estate.
       interior: [
-        { label:'Loft Terrace — West',  pos:[-218,1.72,-5], yaw:-Math.PI/2, pitch:0, caption:'West compound loft terraces' },
-        { label:'Looking South',        pos:[-155,1.72,-40],yaw:0,           pitch:0, caption:'South precinct — loft row ahead' },
+        { label:'West Col · Ground',    pos:[-200,2,10],    yaw:Math.PI/2,  pitch:0,     caption:'Loft · ground floor — looking toward the field' },
+        { label:'West Col · Terrace',   pos:[-200,5.2,10],  yaw:Math.PI/2,  pitch:-0.10, caption:'Loft · upper terrace — elevated estate view' },
+        { label:'North Row · Ground',   pos:[-200,2,-165],  yaw:Math.PI,    pitch:0,     caption:'North loft row · ground floor — estate ahead' },
+        { label:'North Row · Terrace',  pos:[-200,5.2,-165],yaw:Math.PI,    pitch:-0.10, caption:'North loft row · terrace — over the estate' },
+        { label:'Street Approach',      pos:[-180,1.72,10], yaw:-Math.PI/2, pitch:0,     caption:'Looking back at the loft terrace row' },
       ],
     },
     paddock: {
