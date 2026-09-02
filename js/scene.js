@@ -14,7 +14,7 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=58";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=59";
 import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
@@ -23,7 +23,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=58";
+} from "./graphics.js?v=59";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -2424,9 +2424,15 @@ export function initScene(canvas) {
     addLandmarkHotspots();
 
     // Load main asset first, stagger the rest using separate loaders to prevent Web Worker deadlock
-    loadVillaGLB();
+    // PROGRESSIVE LOAD — low model FIRST, full model behind it.
+    // Previously the 10MB full villa loaded first and nothing appeared until it
+    // finished, then the 8MB low model downloaded on top: an 18MB wait staring
+    // at empty ground. Loading the low model first puts every building on
+    // screen early at correct scale and silhouette, then the full model streams
+    // in and upgrades the near villas.
+    loadVillaLowGLB();
     addVillaRing();
-    setTimeout(() => loadVillaLowGLB(), 2500);
+    setTimeout(() => loadVillaGLB(), 1200);
 
     setTimeout(() => { loadLoftGLB(); addLoftTerraces(); }, 400);
     setTimeout(() => { loadApartmentGLB(); addWestCompound(); }, 800);
@@ -3777,7 +3783,13 @@ function addLake() {
   waterMeshes.push(lake);
   window._xixLakeWater = lake;
 
-  addLakeBanks(NORTH_SHIFT);
+  // addLakeBanks() REMOVED. This produced the crescent-shaped greenery (graded
+  // bank rings, reeds, boulders, shrubs). It was originally rendering around the
+  // clubhouse because its edge points were authored at positive Z while the
+  // water sits at negative Z; moving it to the lake made it correct but still
+  // unwanted. Removed outright rather than left disabled — the function body is
+  // gone too, so nothing can re-enable it by accident.
+  // The lake now reads as a clean water body against the ground shader.
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -3787,150 +3799,7 @@ function addLake() {
 //  have a wet margin, reed beds, boulders and scattered planting. All of it
 //  is instanced, so the whole shoreline costs 4 draw calls.
 // ══════════════════════════════════════════════════════════════════════════
-function addLakeBanks(northShift) {
-  const _ns = northShift || 0;
-  // All bank geometry goes into this group, then the whole group is translated
-  // by the north shift — so banks, reeds, rocks and shrubs move rigidly with
-  // the lake and villas, preserving every relative position.
-  const bankGroup = new THREE.Group();
-  bankGroup.name = 'lakeBanks';
-  bankGroup.position.z = _ns;
-  // Sample points along the lake's crescent edge
-  const edge = [];
-  const N = PERF_MODE === 'fast' ? 40 : PERF_MODE === 'balanced' ? 80 : 130;
-  // ─── COORDINATE FIX ──────────────────────────────────────────────────────
-  // These edge points were authored at POSITIVE z (92..135) and used directly
-  // as world coordinates, but the lake water sits at NEGATIVE z (-99..-128):
-  // its shape is built in +y and then rotated -PI/2 about X, which maps shape-y
-  // to world -z. So the entire shoreline — graded banks, reeds, boulders and
-  // shrubs — was rendering around the CLUBHOUSE (z=108) instead of around the
-  // lake. That is the untidy greenery under the clubhouse roads.
-  // Negating z puts the shoreline where the water actually is.
-  for (let i = 0; i <= N; i++) {
-    const t = i / N;
-    const x = -80 + 160 * t;
-    const z = -(102 + 33 * Math.sin(Math.PI * t));
-    edge.push([x, z]);
-  }
-  // Straight shore on the field side of the lake
-  for (let i = 0; i <= Math.floor(N * 0.7); i++) {
-    edge.push([-75 + 150 * (i / Math.floor(N * 0.7)), -92]);
-  }
-
-  const rnd = (a, b) => a + Math.random() * (b - a);
-
-  // ── 0. GRADED BANK — the ground descends into the water ─────────────────
-  // A lake flush with flat ground reads as a puddle painted on a lawn. Three
-  // concentric rings step down toward the waterline, each slightly lower and
-  // darker, so the eye reads a real excavated basin with a shelving edge.
-  const bankSteps = [
-    { out: 11.0, y: 0.30, col: 0x5f6b3a, rough: 0.93 },  // dry upper bank
-    { out:  6.5, y: 0.22, col: 0x555c33, rough: 0.90 },  // mid slope
-    { out:  2.8, y: 0.13, col: 0x494327, rough: 0.72 },  // damp lower bank
-  ];
-  bankSteps.forEach(step => {
-    const mat = new THREE.MeshStandardMaterial({
-      color: step.col, roughness: step.rough, metalness: 0.0,
-    });
-    const geo = new THREE.CircleGeometry(step.out * 0.55, 8);
-    const mesh = new THREE.InstancedMesh(geo, mat, edge.length);
-    edge.forEach(([x, z], i) => {
-      // Push each ring progressively outward from the waterline
-      const nx = x * 0.012, nz = (z - 105) * 0.02;
-      const len = Math.hypot(nx, nz) || 1;
-      _dummy.position.set(
-        x + (nx / len) * step.out * 0.42,
-        step.y,
-        z + (nz / len) * step.out * 0.42
-      );
-      _dummy.rotation.set(-Math.PI / 2, 0, Math.random() * Math.PI * 2);
-      _dummy.scale.setScalar(0.8 + Math.random() * 0.7);
-      _dummy.updateMatrix();
-      mesh.setMatrixAt(i, _dummy.matrix);
-    });
-    mesh.instanceMatrix.needsUpdate = true;
-    mesh.receiveShadow = true;
-    bankGroup.add(mesh);
-  });
-
-  // ── 1. WET MARGIN — damp, dark soil where water meets land ──────────────
-  const marginMat = new THREE.MeshStandardMaterial({
-    color: 0x4a4032, roughness: 0.55, metalness: 0.0,
-  });
-  const marginGeo = new THREE.CircleGeometry(3.4, 7);
-  const margin = new THREE.InstancedMesh(marginGeo, marginMat, edge.length);
-  edge.forEach(([x, z], i) => {
-    _dummy.position.set(x + rnd(-1.2, 1.2), 0.16, z + rnd(-1.2, 1.2));
-    _dummy.rotation.set(-Math.PI / 2, 0, rnd(0, Math.PI * 2));
-    _dummy.scale.setScalar(rnd(0.7, 1.5));
-    _dummy.updateMatrix();
-    margin.setMatrixAt(i, _dummy.matrix);
-  });
-  margin.instanceMatrix.needsUpdate = true;
-  margin.receiveShadow = true;
-  bankGroup.add(margin);
-
-  // ── 2. REED BEDS — tall marginal planting, the signature of a real bank ──
-  const reedMat = new THREE.MeshStandardMaterial({
-    color: 0x5d7a34, roughness: 0.9, metalness: 0.0, side: THREE.DoubleSide,
-  });
-  const reedGeo = new THREE.ConeGeometry(0.16, 2.2, 4, 1, true);
-  const reedCount = Math.floor(edge.length * (PERF_MODE === 'fast' ? 2 : 5));
-  const reeds = new THREE.InstancedMesh(reedGeo, reedMat, reedCount);
-  for (let i = 0; i < reedCount; i++) {
-    const [ex, ez] = edge[Math.floor(Math.random() * edge.length)];
-    const out = rnd(-2.0, 3.2);
-    _dummy.position.set(ex + rnd(-2.5, 2.5), rnd(0.8, 1.5), ez + out);
-    _dummy.rotation.set(rnd(-0.22, 0.22), rnd(0, Math.PI * 2), rnd(-0.22, 0.22));
-    _dummy.scale.set(rnd(0.7, 1.5), rnd(0.7, 1.7), rnd(0.7, 1.5));
-    _dummy.updateMatrix();
-    reeds.setMatrixAt(i, _dummy.matrix);
-  }
-  reeds.instanceMatrix.needsUpdate = true;
-  reeds.castShadow = PERF_MODE !== 'fast';
-  bankGroup.add(reeds);
-
-  // ── 3. BOULDERS — irregular rock revetment holding the bank ─────────────
-  const rockMat = new THREE.MeshStandardMaterial({
-    color: 0x6b6459, roughness: 0.94, metalness: 0.0,
-  });
-  const rockGeo = new THREE.DodecahedronGeometry(1.0, 0);
-  const rockCount = Math.floor(edge.length * 0.42);
-  const rocks = new THREE.InstancedMesh(rockGeo, rockMat, rockCount);
-  for (let i = 0; i < rockCount; i++) {
-    const [ex, ez] = edge[Math.floor(Math.random() * edge.length)];
-    _dummy.position.set(ex + rnd(-3, 3), rnd(0.1, 0.5), ez + rnd(-1.5, 2.6));
-    _dummy.rotation.set(rnd(0, 3.14), rnd(0, 6.28), rnd(0, 3.14));
-    _dummy.scale.set(rnd(0.4, 1.3), rnd(0.3, 0.8), rnd(0.4, 1.3));
-    _dummy.updateMatrix();
-    rocks.setMatrixAt(i, _dummy.matrix);
-  }
-  rocks.instanceMatrix.needsUpdate = true;
-  rocks.castShadow = PERF_MODE !== 'fast';
-  rocks.receiveShadow = true;
-  bankGroup.add(rocks);
-
-  // ── 4. SHRUB CLUMPS — low planting softening the turf-to-water line ─────
-  const shrubMat = new THREE.MeshStandardMaterial({
-    color: 0x35592a, roughness: 0.93, metalness: 0.0,
-  });
-  const shrubGeo = new THREE.IcosahedronGeometry(1.0, 0);
-  const shrubCount = Math.floor(edge.length * 0.34);
-  const shrubs = new THREE.InstancedMesh(shrubGeo, shrubMat, shrubCount);
-  for (let i = 0; i < shrubCount; i++) {
-    const [ex, ez] = edge[Math.floor(Math.random() * edge.length)];
-    _dummy.position.set(ex + rnd(-5, 5), rnd(0.5, 1.1), ez + rnd(1.5, 6.5));
-    _dummy.rotation.set(0, rnd(0, 6.28), 0);
-    _dummy.scale.set(rnd(0.9, 2.1), rnd(0.6, 1.3), rnd(0.9, 2.1));
-    _dummy.updateMatrix();
-    shrubs.setMatrixAt(i, _dummy.matrix);
-  }
-  shrubs.instanceMatrix.needsUpdate = true;
-  shrubs.castShadow = PERF_MODE !== 'fast';
-  bankGroup.add(shrubs);
-
-  scene.add(bankGroup);   // whole bank group translated by north shift
-}
+// addLakeBanks() deleted — see the note in addLake().
 
 function addEastLake(){
   // East lake removed — was positioned in the paddock zone causing visual bleed
@@ -4019,6 +3888,17 @@ function loadVillaLowGLB(){
     gltf.scene.position.y = bbox.min.y < 0 ? -bbox.min.y : 0;
     const w = new THREE.Group(); w.add(gltf.scene);
     villaLowScene = w;
+
+    // If the full model has not arrived yet, stand in for it so buildings are
+    // on screen immediately at correct scale. loadVillaGLB() upgrades them when
+    // it lands — this is what makes the estate usable in seconds rather than
+    // after an 18MB wait.
+    if (!villaGLBScene) {
+      villaGLBScene = w;
+      const queue = [...pendingVillas]; pendingVillas = [];
+      queue.forEach(d => placeVillaGLBWithLOD(d.x, d.z, d.ry, d.plotKey));
+      console.log(`[XIX] Low-poly villas placed early (${queue.length}) — full model streaming`);
+    }
 
     // Attach to every villa already placed.
     let n = 0;
