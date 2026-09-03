@@ -14,7 +14,7 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=67";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=68";
 import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
@@ -23,7 +23,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=67";
+} from "./graphics.js?v=68";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -4398,6 +4398,7 @@ function _rebuildPickTargets() {
 // regardless of `visible`, so hidden overlays are still pickable and we never
 // need to touch material.opacity here.
 export function pickPlotFast(raycaster) {
+  if (_overlaysSuppressed) return null;   // nothing is pickable inside a unit
   if (_pickDirty) _rebuildPickTargets();
   if (!_pickTargets.length) return null;
   const hits = raycaster.intersectObjects(_pickTargets, false);
@@ -4470,17 +4471,21 @@ function addVillaRing(){
   [-75, -47, -19].forEach(z => placeV(-162, z, Math.PI / 2));
   [19, 47, 75].forEach(z => placeV(-162, z, Math.PI / 2));
   // SW/SE corner villas — z adjusted to match the new south row at z≈88
-  placeV(-167.8, 91.2, 3 * Math.PI / 4);   // SW — 17.2m clearance (was 8.8m)
+  placeV(-146.0, 84.1, 3 * Math.PI / 4);   // SW — ON the ring line, 18.4m clearance
 
   [-75, -47, -19].forEach(z => placeV(162, z, -Math.PI / 2));
   [19, 47, 75].forEach(z => placeV(162, z, -Math.PI / 2));
-  placeV( 167.8, 91.2, -3 * Math.PI / 4);  // SE — 17.2m clearance (was 8.8m)
+  placeV( 146.0, 84.1, -3 * Math.PI / 4);  // SE — ON the ring line, 18.4m clearance
 
   // South villas: moved inward from z=105 to z=88 now that the N/S safety zone
   // is 13m (inner edge at z=86) rather than 25m. 2m clearance from strip edge.
   // This fills the gap left by the reduced setback and makes the ring more compact.
   for(const side of [-1, 1]) {
-    [65, 93, 121, 149].forEach(xa => {
+    // Tightened from 65/93/121/149. The outermost unit at x=±149 crowded the
+    // corner so badly that v=58 had to push the corner 14m OUT of the ring —
+    // which broke the wrap the villas are meant to form. Pulling the row in to
+    // 58/82/106/130 lets the corner sit exactly ON the run midpoint instead.
+    [58, 82, 106, 130].forEach(xa => {
       placeV(side * xa, 88 + xa * 0.04, Math.PI);
     });
   }
@@ -4941,6 +4946,31 @@ function _villaRoomWorldView(room, x, z, ry) {
     pitch: room.pitch || 0,
   };
 }
+
+// Overlays are hard-disabled while inside a unit. The overlay is a BOX around
+// the building (v=66), so from inside you are standing in a green cube — and an
+// invisible box is still raycastable, so hiding alone is not enough. Both the
+// visibility and the pick list are suppressed.
+let _overlaysSuppressed = false;
+export function setPlotOverlaysSuppressed(on) {
+  _overlaysSuppressed = on;
+  plotRegistry.forEach(p => {
+    if (!p.overlay) return;
+    if (on) {
+      p.overlay.visible = false;
+      p.overlay.userData._wasFade = p.overlay.userData._fadeTarget || 0;
+      p.overlay.userData._fadeTarget = 0;
+      p.overlay.material.opacity = 0;
+    } else if (p.status === 'reserved') {
+      p.overlay.userData._fadeTarget = 0.45;
+      p.overlay.visible = true;
+    }
+  });
+  if (_selRing) _selRing.visible = false;
+  _litPlotKey = null;
+  markPickTargetsDirty();
+}
+export function arePlotOverlaysSuppressed() { return _overlaysSuppressed; }
 
 export function enterVillaInterior(plotKey, roomKey) {
   const plot = plotRegistry.get(plotKey);
