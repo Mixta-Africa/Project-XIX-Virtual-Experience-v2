@@ -10,7 +10,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
-import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=66";
+import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=67";
 // villa-interior.js removed — dead file, superseded by interior.js
 import {
   initScene, getRenderer, getScene, getCamera, getClock,
@@ -21,12 +21,12 @@ import {
   getSunLight, getHorseGroup, updateNightLights, updateBuildingNightGlow,
   enterVillaInterior, teleportVillaRoom, exitVillaInterior,
   setAudioMuted, isAudioMuted, setMixLevel, getMixLevels, getMixDefaults, resetMixLevels, getAudioStatus,
-} from "./scene.js?v=66";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=66";
+} from "./scene.js?v=67";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=67";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
-} from "./controls.js?v=66";
+} from "./controls.js?v=67";
 import {
   initMinimap, updateMinimap,
   buildViewpointStrip, showZonePanel, hideZonePanel,
@@ -34,7 +34,7 @@ import {
   setCaption as _setCaption_raw, showEnterPrompt, hideEnterPrompt,
   showVRButton, showJoystick, hideJoystick, isMobile,
   enableAudio, updateSpatialAudio, initAudio
-} from "./ui.js?v=66";
+} from "./ui.js?v=67";
 
 window.plotRegistry = plotRegistry;
 
@@ -2015,6 +2015,26 @@ window.toggleFullscreen = function () {
   }
 };
 
+// Block the gestures that were breaking fullscreen on tablets. A two-finger
+// pinch or an edge swipe inside the canvas is interpreted by the browser as
+// zoom / navigation, which resizes the visual viewport and can exit fullscreen.
+// Registered non-passive because preventDefault is the whole point.
+(function _guardFullscreenGestures() {
+  const canvas = document.getElementById('world-canvas');
+  if (!canvas) return;
+  canvas.addEventListener('touchmove', (e) => {
+    // Multi-touch inside the canvas is orbit/zoom for US, never for the page.
+    if (e.touches.length > 1) e.preventDefault();
+  }, { passive: false });
+  // Ctrl+wheel is browser zoom, which also breaks the fullscreen layout.
+  canvas.addEventListener('wheel', (e) => { if (e.ctrlKey) e.preventDefault(); }, { passive: false });
+  // iOS Safari gesture events — no-ops elsewhere, essential on iPad.
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach(ev =>
+    canvas.addEventListener(ev, (e) => e.preventDefault(), { passive: false }));
+  // A drag that begins on the canvas must never start a text selection.
+  canvas.addEventListener('selectstart', (e) => e.preventDefault());
+})();
+
 // Keep the label in sync, including when the user leaves fullscreen with Esc or
 // F11 rather than the button — otherwise it lies about the current state.
 ['fullscreenchange', 'webkitfullscreenchange'].forEach(ev =>
@@ -2026,7 +2046,12 @@ window.toggleFullscreen = function () {
     if (btn) btn.classList.toggle('active', on);
     // The canvas must be resized to the new viewport or the render stays at the
     // old size and is stretched.
-    setTimeout(() => { try { resizeWorldNow(); } catch (e) {} }, 120);
+    // Resize twice. Several browsers still report the OLD viewport size in the
+    // first fullscreenchange tick, so a single resize leaves the canvas at the
+    // previous dimensions and stretched.
+    try { resizeWorldNow(); } catch (e) {}
+    setTimeout(() => { try { resizeWorldNow(); } catch (e) {} }, 150);
+    setTimeout(() => { try { resizeWorldNow(); } catch (e) {} }, 450);
   })
 );
 
