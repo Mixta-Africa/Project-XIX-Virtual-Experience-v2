@@ -82,6 +82,21 @@
       opacity: 1 !important; transform: none !important;
     }
 
+    /* INTERIOR OVERLAY — must NOT cover the 3D view.
+       "Step inside" was rendering a black page: the overlay panel chrome showed
+       but the room behind it did not. Forcing the container transparent and
+       letting only its actual panels take pointer events guarantees the canvas
+       is visible underneath, whatever css/styles.css does. */
+    #interior-overlay.interior-overlay {
+      background: none !important;
+      backdrop-filter: none !important;
+      pointer-events: none;
+    }
+    #interior-overlay .int-topbar,
+    #interior-overlay .int-room-strip,
+    #interior-overlay #int-exit-btn,
+    #interior-overlay button { pointer-events: auto; }
+
     /* TOUR MODE — the interface gets out of the way entirely. The tour is meant
        to be watched, not operated, so every control hides for its duration.
        Fades rather than cuts so the transition into the film is not jarring. */
@@ -501,6 +516,14 @@
         <span class="world-btn-label">Aerial</span>
       </button>
 
+      <!-- Fullscreen: the browser address bar and tabs eat vertical space on a
+           web-hosted VR view, which matters most on a laptop or tablet. This is
+           the same result as F11 but reachable from inside the estate. -->
+      <button class="world-btn" id="btn-fullscreen" aria-label="Toggle fullscreen" onclick="window.toggleFullscreen && window.toggleFullscreen()">
+        <svg id="fs-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+        <span class="world-btn-label" id="fs-label">Fullscreen</span>
+      </button>
+
       <!-- Controls: expandable help panel -->
       <button class="world-btn" id="btn-controls" aria-label="Controls help" onclick="window.toggleControlsPanel && window.toggleControlsPanel()">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
@@ -752,14 +775,14 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 
-<script type="module" src="js/app.js?v=64"></script>
+<script type="module" src="js/app.js?v=66"></script>
 
 <!-- Interior walkthrough is now built directly into the main scene by app.js -->
 <!-- (window.stepInsideVilla, scene.js: enterVillaInterior/teleportVillaRoom/exitVillaInterior) -->
 <!-- interior.js is now a pure geometry factory only — no separate scene/camera/renderer. -->
 
 <script type="module">
-import { openProductPanel, closeProductPanel, resizePanelViewer } from "./js/product-panel.js?v=64";
+import { openProductPanel, closeProductPanel, resizePanelViewer } from "./js/product-panel.js?v=66";
 window.__moduleReady = window.__moduleReady || {};
 window.__moduleReady.showProductPanel = openProductPanel;
 window.__moduleReady.closeProductPanel = closeProductPanel;
