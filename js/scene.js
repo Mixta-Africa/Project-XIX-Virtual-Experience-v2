@@ -14,7 +14,7 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=66";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=67";
 import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
@@ -23,7 +23,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=66";
+} from "./graphics.js?v=67";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -3128,13 +3128,16 @@ function addGround() {
   asphaltMat.userData.isRoadSurface = true;
   // TIER 4: the six car-park surfaces all share asphaltMat and never move, so
   // they merge into a single draw call rather than six.
+  // ONE clean apron instead of six overlapping rectangles.
+  // The clubhouse precinct had six car-park planes at y=0.09 plus four roads at
+  // y=0.13 crossing through them — ten surfaces at two heights with mismatched
+  // edges, which read as the messy cluster of tarmac around the clubhouse.
+  // A single rectangle covering the whole precinct is cleaner, is one draw call
+  // instead of six, and removes every seam and z-fight between them.
+  // 300 x 86 centred at (0,147) => x -150..150, z 104..190: forecourt, both
+  // wings and the rear parking in one surface.
   const _carParkPieces = [
-    plane(180, 70, asphaltMat, [0,   .09,  153]),   // rear / south block
-    plane(60,  90, asphaltMat, [-114, .09, 135]),   // left wing
-    plane(60,  90, asphaltMat, [ 114, .09, 135]),   // right wing
-    plane(140,  16, asphaltMat, [0,  .09,  118]),   // forecourt
-    plane(168,  30, asphaltMat, [0,  .09,  105]),   // central gap-fill
-    plane(60,   22, asphaltMat, [0,  .09,  108]),   // clubhouse base plate
+    plane(300, 86, asphaltMat, [0, .09, 147]),
   ];
   const mergedParks = mergeStaticMeshes(_carParkPieces, asphaltMat, 'carParksMerged');
   if (mergedParks) {
@@ -3706,8 +3709,10 @@ function addRoads() {
     plane(8, 250, am, [ 200, Y, 10]),
     plane(55, 8, am, [ 215, Y, 120]),
 
-    plane(400, 8, am, [0, Y, 128]),
-    plane(130, 35, am, [0, Y, 148]),
+    // REMOVED: plane(400, 8, [0,Y,128]) and plane(130, 35, [0,Y,148]).
+    // Both sat INSIDE the clubhouse apron at a different height (0.13 vs 0.09),
+    // so they showed as raised strips cutting across the parking with visible
+    // seams. The apron covers this ground; the roads were redundant.
   ];
 
   // Grass median keeps its own material, so it stays a separate mesh.
