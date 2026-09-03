@@ -14,7 +14,7 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=64";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=66";
 import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
@@ -23,7 +23,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=64";
+} from "./graphics.js?v=66";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -676,7 +676,23 @@ let _masterGain = null;
 let _muted = false;
 export function setAudioMuted(muted) {
   _muted = muted;
-  if (_masterGain) _masterGain.gain.value = muted ? 0 : 1;
+  if (_masterGain && _audioCtx) {
+    // MUST cancel scheduled automation first. This used a direct
+    // `_masterGain.gain.value = ...` write, but the mixer's master slider uses
+    // setTargetAtTime — and once a Web Audio param has scheduled automation,
+    // direct .value writes are IGNORED while it runs. setTargetAtTime never
+    // formally completes (it approaches its target asymptotically), so after any
+    // master slider movement, mute silently stopped working entirely.
+    const t = _audioCtx.currentTime;
+    _masterGain.gain.cancelScheduledValues(t);
+    _masterGain.gain.setValueAtTime(_masterGain.gain.value, t);
+    // Unmute restores the mixer's master level, not a hardcoded 1.0, so muting
+    // and unmuting no longer discards a level the user set.
+    const target = muted ? 0 : (_mixLevels && _mixLevels.master !== undefined ? _mixLevels.master : 1);
+    _masterGain.gain.linearRampToValueAtTime(target, t + 0.08);
+  } else if (_masterGain) {
+    _masterGain.gain.value = muted ? 0 : 1;
+  }
   try { localStorage.setItem('xix_audio_muted', muted ? '1' : '0'); } catch (e) {}
 }
 export function isAudioMuted() { return _muted; }
@@ -1105,7 +1121,12 @@ export function setMixLevel(name, value) {
   if (!_audioCtx) return;
   if (name === 'master') {
     // Respect mute: never unmute by moving the master slider.
-    if (_masterGain && !_muted) _masterGain.gain.setTargetAtTime(v, _audioCtx.currentTime, 0.05);
+    if (_masterGain && !_muted) {
+      const t = _audioCtx.currentTime;
+      _masterGain.gain.cancelScheduledValues(t);
+      _masterGain.gain.setValueAtTime(_masterGain.gain.value, t);
+      _masterGain.gain.linearRampToValueAtTime(v, t + 0.06);
+    }
   } else if (_mixBuses[name]) {
     _mixBuses[name].gain.setTargetAtTime(v, _audioCtx.currentTime, 0.05);
   }
@@ -1113,6 +1134,30 @@ export function setMixLevel(name, value) {
 }
 
 export function getMixLevels() { return { ..._mixLevels }; }
+
+// Audio status for the D panel. The symptom "synthesised birds at night, no
+// water, no cars" means the SAMPLES never loaded and every source fell back to
+// its oscillator/noise stand-in — almost always because assets/audio/ is not
+// deployed. This makes that visible instead of guesswork.
+export function getAudioStatus() {
+  const want = ['birds-dawn.mp3','birds-day.mp3','birds-evening.mp3','night-ambience.mp3',
+                'water-lapping.mp3','wind-trees.mp3','car-pass.mp3','hooves-dirt.mp3',
+                'horse-snort.mp3','horse-whinny-123.mp3'];
+  let ok = 0, missing = [];
+  want.forEach(f => {
+    const b = _sampleBuffers.get(f);
+    if (b) ok++; else if (_sampleBuffers.has(f)) missing.push(f.replace('.mp3',''));
+  });
+  return {
+    ctx: !!_audioCtx,
+    muted: _muted,
+    samplesLoaded: ok,
+    samplesExpected: want.length,
+    missing,
+    timeBeds: _timeBedNodes.size,
+    activeBed: _activeTimeBed || '(none)',
+  };
+}
 export function getMixDefaults() { return { ...MIX_DEFAULTS }; }
 
 // Restore every element to its load-time value in one action.
@@ -3045,7 +3090,28 @@ function addGround() {
 
   // Hard surfaces
   // Cobblestone yard at the stables (unchanged)
-  s(plane(90, 70, MATS.cobble(), [-355, .02, 90]));
+  // Stables yard cobble. Was MATS.cobble() — a shared PBR.stone() whose UVs run
+  // 0..1 across the whole plane, so the texture was stretched across 90 x 70
+  // metres and the stones read as huge smeared slabs.
+  // Same treatment as the safety zone: clone the material and set the texture
+  // repeat from the plane's PHYSICAL size, so one tile covers a fixed number of
+  // metres regardless of how large the plane is.
+  {
+    const COBBLE_TILE_M = 3.2;          // one texture tile per 3.2m of ground
+    const cm = MATS.cobble();
+    ['map', 'normalMap', 'roughnessMap', 'aoMap'].forEach(slot => {
+      const t = cm[slot];
+      if (!t) return;
+      const t2 = t.clone();
+      t2.needsUpdate = true;
+      t2.wrapS = t2.wrapT = THREE.RepeatWrapping;
+      t2.repeat.set(90 / COBBLE_TILE_M, 70 / COBBLE_TILE_M);
+      t2.anisotropy = PERF_MODE === 'rich' ? 16 : 8;
+      cm[slot] = t2;
+    });
+    cm.needsUpdate = true;
+    s(plane(90, 70, cm, [-355, .02, 90]));
+  }
 
   // ── CLUBHOUSE CAR PARKS ───────────────────────────────────────────────────
   // The masterplan shows a large asphalt car park behind the clubhouse (south,
@@ -4075,10 +4141,23 @@ function addPlotOverlay(x,z,ry,plotKey,villaClone){
 }
 // Same registration, sizeable footprint — apartment blocks need a much
 // larger hit-plane (37x19m) than a single villa's 20x18m default above.
-function addPlotOverlayCustom(x,z,ry,plotKey,villaClone,w,d){
+// The overlay is BOTH the pick target and the visual highlight.
+// It used to be a flat PlaneGeometry lying on the ground at y=0.25 — a decal.
+// That is why hover felt broken at eye level: aiming at a house sent the ray
+// straight OVER the plane and onto the next plot's plane further away, so the
+// highlight landed half a plot past where you were pointing, and you had to aim
+// at the very base of a building to hit its own plot.
+// It is now a BOX enclosing the building volume, which is what the loft units
+// already used and why those always felt accurate. Pointing anywhere at a
+// house — roof, wall, door — now hits that house.
+// It also fixes the aerial case: from above you now see a green volume wrapping
+// the building rather than a decal hidden under its roof.
+function addPlotOverlayCustom(x,z,ry,plotKey,villaClone,w,d,h){
   const mat=MATS.plotAvail();
-  const overlay=new THREE.Mesh(new THREE.PlaneGeometry(w,d),mat);
-  overlay.rotation.x=-Math.PI/2; overlay.position.set(x,.25,z);
+  const height = h || 11;                       // typical villa mass
+  const overlay=new THREE.Mesh(new THREE.BoxGeometry(w*0.72, height, d*0.72), mat);
+  overlay.position.set(x, height/2, z);
+  overlay.rotation.y = ry || 0;                 // follow the unit's orientation
   overlay.renderOrder = 999;   // draw after opaque geometry regardless of depth
   overlay.userData.plotKey=plotKey; overlay.userData.isPlotOverlay=true; overlay.userData.villaClone=villaClone;
   scene.add(overlay);
@@ -4161,15 +4240,18 @@ export function highlightPlot(plotKey){
 
         // Snap the shared selection ring onto this plot, sized to its overlay.
         const ring = _ensureSelectionRing();
-        const gp = plot.overlay.geometry.parameters || { width: 20, height: 18 };
-        ring.scale.set(gp.width, gp.height, 1);
-        ring.position.set(plot.overlay.position.x, plot.overlay.position.y + 0.02, plot.overlay.position.z);
+        // Overlay is now a BOX (width x height x depth). The ring is a ground
+        // footprint marker, so it uses width/depth and sits just above grade —
+        // not at the box centre, which is halfway up the building.
+        const gp = plot.overlay.geometry.parameters || { width: 14, depth: 13 };
+        ring.scale.set(gp.width || 14, gp.depth || 13, 1);
+        ring.position.set(plot.overlay.position.x, 0.28, plot.overlay.position.z);
         // MUST match the overlay, which is axis-aligned (rotation.x only, no
         // Y rotation). Rotating the ring by plot.ry made it sit skewed against
         // the square on the north arc, where ry is an arbitrary atan2 angle —
         // which is exactly the "two squares" artefact. Axis-aligned plots hid
         // the bug because a rectangle rotated 0 or PI looks identical.
-        ring.rotation.z = 0;
+        ring.rotation.z = -(plot.ry || 0);   // matches the box, which now rotates too
         ring.material.color.setHex(plot.status === 'reserved' ? 0xffb0b0 : 0x9dffc4);
         ring.material.opacity = 0.95;
         ring.visible = true;
@@ -4180,6 +4262,27 @@ export function highlightPlot(plotKey){
 
 // Reserved plots must stay visible even when nothing is hovered. Called once
 // after the registry is built and whenever a plot's status changes.
+// Reports the exact state of a plot's highlight. Run window._debugPlot('10').
+if (typeof window !== 'undefined') {
+  window._debugPlot = (key) => {
+    const p = plotRegistry.get(String(key));
+    if (!p) return 'no such plot';
+    const ov = p.overlay;
+    return {
+      plotKey: String(key), status: p.status,
+      litKey: _litPlotKey,
+      hasOverlay: !!ov,
+      visible: ov && ov.visible,
+      opacity: ov && ov.material && ov.material.opacity,
+      fadeTarget: ov && ov.userData._fadeTarget,
+      depthTest: ov && ov.material && ov.material.depthTest,
+      renderOrder: ov && ov.renderOrder,
+      y: ov && ov.position.y,
+      inPickList: _pickTargets.includes(ov),
+    };
+  };
+}
+
 export function refreshReservedOverlays() {
   plotRegistry.forEach((plot, key) => {
     if (!plot.overlay) return;
