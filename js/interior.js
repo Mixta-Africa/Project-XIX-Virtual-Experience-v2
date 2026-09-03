@@ -287,6 +287,10 @@ export function getInteriorRooms(t){return INTERIORS[t]?.rooms||[];}
 //  there, lit by the same sun already lighting the rest of the estate.
 // ═══════════════════════════════════════════════════════════════════════════
 export function buildVillaRoomGroup(room) {
+  // Base fill so a room is never pitch black regardless of which fixtures the
+  // room definition includes. Cheap (ambient costs nothing) and it is what
+  // stops "step inside" from opening on a dark screen.
+  const _ambientFill = new THREE.AmbientLight(0xfff4e2, 0.55);
   const group = new THREE.Group();
   group.name = `villaRoom_${room.key}`;
 
@@ -381,16 +385,20 @@ export function buildVillaRoomGroup(room) {
   //        through the glazing. Ceiling downlights and bedside lamps are
   //        real room fixtures, so those stay.
   for (let dx = -W/2+1.5; dx <= W/2-1.5; dx += 1.5) {
-    const pt = new THREE.PointLight(0xfff0e0, .55, 6, 2);
+    // Interior lighting raised substantially. At 0.55 intensity with a 6m falloff
+    // and decay 2, this lit almost nothing — an enclosed room the sun cannot reach
+    // rendered essentially black. 2.6 / 14m / decay 1.4 gives an evenly lit room.
+    const pt = new THREE.PointLight(0xfff0e0, 2.6, 14, 1.4);
     pt.position.set(dx, ceilH-.12, 0); add(pt);
   }
   if (room.key.includes('bedroom') || room.key.includes('master')) {
     for (const bx of [-.9, .9]) {
-      const lmp = new THREE.PointLight(0xffcc70, .8, 3.5, 2);
+      const lmp = new THREE.PointLight(0xffcc70, 1.6, 7, 1.6);
       lmp.position.set(bx, floorY+1.3, -.9); add(lmp);
     }
   }
 
+  group.add(_ambientFill);   // base fill — never let a room render black
   return group;
 }
 
