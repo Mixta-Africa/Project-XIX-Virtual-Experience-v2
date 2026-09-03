@@ -10,7 +10,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
-import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=67";
+import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=68";
 // villa-interior.js removed — dead file, superseded by interior.js
 import {
   initScene, getRenderer, getScene, getCamera, getClock,
@@ -21,12 +21,13 @@ import {
   getSunLight, getHorseGroup, updateNightLights, updateBuildingNightGlow,
   enterVillaInterior, teleportVillaRoom, exitVillaInterior,
   setAudioMuted, isAudioMuted, setMixLevel, getMixLevels, getMixDefaults, resetMixLevels, getAudioStatus,
-} from "./scene.js?v=67";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=67";
+  setPlotOverlaysSuppressed,
+} from "./scene.js?v=68";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=68";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
-} from "./controls.js?v=67";
+} from "./controls.js?v=68";
 import {
   initMinimap, updateMinimap,
   buildViewpointStrip, showZonePanel, hideZonePanel,
@@ -34,7 +35,7 @@ import {
   setCaption as _setCaption_raw, showEnterPrompt, hideEnterPrompt,
   showVRButton, showJoystick, hideJoystick, isMobile,
   enableAudio, updateSpatialAudio, initAudio
-} from "./ui.js?v=67";
+} from "./ui.js?v=68";
 
 window.plotRegistry = plotRegistry;
 
@@ -104,6 +105,7 @@ window.stepInsideVilla = function(plotKey) {
 
   overlay?.classList.add('open');
   document.body.classList.add('interior-open');
+  setPlotOverlaysSuppressed(true);    // kill the green box you would be standing in
   if (typeof activate === 'function') activate();
 };
 
@@ -111,6 +113,7 @@ window.exitVillaWalkthrough = function() {
   exitVillaInterior();
   document.getElementById('interior-overlay')?.classList.remove('open');
   document.body.classList.remove('interior-open');
+  setPlotOverlaysSuppressed(false);
   if (typeof setMoveMode === 'function') setMoveMode('ride');
 };
 document.getElementById('int-exit-btn')?.addEventListener('click', () => window.exitVillaWalkthrough());
@@ -709,6 +712,7 @@ let _badgeTick = 0;
 function _tickBadgeVisibility(camera) {
   if (!camera || typeof plotRegistry === 'undefined') return;
   if ((_badgeTick++ % 6) !== 0) return;
+  if (isInteriorMode()) { plotRegistry.forEach(p => { if (p.badgeSprite) p.badgeSprite.visible = false; }); return; }
   const cx = camera.position.x, cz = camera.position.z;
   // 3D distance — camera HEIGHT must count. This used only dx/dz, so from the
   // aerial camera (~118m up) a plot directly below measured 0m horizontally and
@@ -816,6 +820,8 @@ function bindPlotSystem() {
 
   function _runHoverPick() {
     _hoverRafPending = false;
+    // Inside a unit, looking around must not re-select the building you are in.
+    if (isInteriorMode()) { window.setHoveredPlot(null); _updateHoverLabel(null); return; }
     const overlay = document.getElementById("world-overlay");
     if (!overlay || !overlay.classList.contains("open")) return;
 
@@ -985,6 +991,8 @@ function bindPlotSystem() {
       raycaster.setFromCamera(mouse, cam);
 
       // Same cached overlay picker the hover uses — no full-scene traversal.
+      // Clicking inside a unit is "click to look", never "select a property".
+      if (isInteriorMode()) { _isDragging = false; return; }
       const plotKey = (typeof pickPlotFast === 'function')
         ? pickPlotFast(raycaster)
         : (typeof getPlotAtRay === 'function' ? getPlotAtRay(raycaster) : null);
@@ -2001,7 +2009,15 @@ window.__tourStop = function() {
 // Requests fullscreen on documentElement rather than the canvas so the overlay
 // UI comes with it — fullscreening just the canvas would leave the controls
 // behind.
+// GUARD: on a laptop with BOTH touch and mouse, a single tap fires a touch
+// event AND a synthesised mouse click. Two toggles land in ~300ms, so it enters
+// fullscreen and immediately exits — which is exactly the reported symptom.
+// A short lockout collapses the pair into one action.
+let _fsLock = 0;
 window.toggleFullscreen = function () {
+  const now = performance.now();
+  if (now - _fsLock < 600) return;
+  _fsLock = now;
   const el = document.documentElement;
   const isFs = document.fullscreenElement || document.webkitFullscreenElement;
   try {
@@ -2058,6 +2074,7 @@ window.toggleFullscreen = function () {
 // F key as a shortcut, consistent with M for mute and D for diagnostics.
 document.addEventListener('keydown', (e) => {
   if ((e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (e.repeat) return;   // holding F must not toggle repeatedly
     const t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
     if (!document.getElementById('world-overlay')?.classList.contains('open')) return;
@@ -2065,6 +2082,46 @@ document.addEventListener('keydown', (e) => {
     window.toggleFullscreen();
   }
 });
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// INTERIOR MODE GATE  —  one switch, every conflicting system off
+// ═══════════════════════════════════════════════════════════════════════════
+// Standing inside a villa, FIVE systems were fighting each other:
+//   1. The plot overlay is now a BOX enclosing the building (v=66), so from
+//      inside you are literally standing in a translucent green cube — that is
+//      the green tint over everything.
+//   2. Hover picking kept raycasting plots, so looking around re-selected the
+//      house you were standing in.
+//   3. Click picking opened the property panel every time you clicked to look,
+//      which is why clicking to move selected the building instead.
+//   4. Eye-height smoothing (_targetEyeY) kept pulling the camera toward 1.72m
+//      while rooms sit at floorY 0.0 or 2.85 — the camera drifting up and down
+//      continuously is these two fighting frame by frame.
+//   5. AVAILABLE badges still rendered through the walls.
+// isInteriorMode() is now the single source of truth and every one of those
+// systems checks it.
+function isInteriorMode() {
+  return document.body.classList.contains('interior-open');
+}
+window.isInteriorMode = isInteriorMode;
+
+// Hide/show everything that only makes sense outdoors.
+function _setExteriorUIVisible(visible) {
+  try {
+    if (typeof plotRegistry === 'undefined') return;
+    plotRegistry.forEach(plot => {
+      if (plot.overlay) {
+        // Park the overlay out of the way entirely rather than only fading it:
+        // an invisible box still sits around you and can still be raycast.
+        plot.overlay.visible = visible ? plot.overlay.visible : false;
+        plot.overlay.userData._suppressed = !visible;
+      }
+      if (plot.badgeSprite) plot.badgeSprite.visible = false;   // re-evaluated by the cull each frame
+    });
+    if (typeof setHoveredPlot === 'function') window.setHoveredPlot(null);
+  } catch (e) {}
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // BUILDING COLLISION  —  you cannot walk through a house
@@ -3405,6 +3462,9 @@ function startRenderLoop(){
     }
 
     _resolveBuildingCollision(camera);   // keep the camera out of buildings
+  // The interior owns camera Y. Eye-height smoothing pulling toward 1.72m while
+  // a first-floor room sits at 2.85m is what made the camera drift up and down.
+  if (isInteriorMode()) { _targetEyeY = camera.position.y; _currentEyeY = camera.position.y; }
     tickScene(elapsed,camera);
     if (typeof window._tickCrosshairHover === 'function') window._tickCrosshairHover();
     if (typeof window._tickPlotPulse === 'function') window._tickPlotPulse(delta);
