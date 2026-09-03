@@ -10,7 +10,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
-import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=64";
+import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=66";
 // villa-interior.js removed — dead file, superseded by interior.js
 import {
   initScene, getRenderer, getScene, getCamera, getClock,
@@ -20,13 +20,13 @@ import {
   setHorsePosition, getThirdPersonCameraOffset, setAerialMode,
   getSunLight, getHorseGroup, updateNightLights, updateBuildingNightGlow,
   enterVillaInterior, teleportVillaRoom, exitVillaInterior,
-  setAudioMuted, isAudioMuted, setMixLevel, getMixLevels, getMixDefaults, resetMixLevels,
-} from "./scene.js?v=64";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=64";
+  setAudioMuted, isAudioMuted, setMixLevel, getMixLevels, getMixDefaults, resetMixLevels, getAudioStatus,
+} from "./scene.js?v=66";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=66";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
-} from "./controls.js?v=64";
+} from "./controls.js?v=66";
 import {
   initMinimap, updateMinimap,
   buildViewpointStrip, showZonePanel, hideZonePanel,
@@ -34,7 +34,7 @@ import {
   setCaption as _setCaption_raw, showEnterPrompt, hideEnterPrompt,
   showVRButton, showJoystick, hideJoystick, isMobile,
   enableAudio, updateSpatialAudio, initAudio
-} from "./ui.js?v=64";
+} from "./ui.js?v=66";
 
 window.plotRegistry = plotRegistry;
 
@@ -710,13 +710,16 @@ function _tickBadgeVisibility(camera) {
   if (!camera || typeof plotRegistry === 'undefined') return;
   if ((_badgeTick++ % 6) !== 0) return;
   const cx = camera.position.x, cz = camera.position.z;
-  // 95m: close enough that you are evaluating a specific plot, not the estate.
+  // 3D distance — camera HEIGHT must count. This used only dx/dz, so from the
+  // aerial camera (~118m up) a plot directly below measured 0m horizontally and
+  // its badge stayed visible. That is the leftover floating AVAILABLE labels.
+  const dy = camera.position.y - 1.6;
   const SHOW2 = 95 * 95;
   plotRegistry.forEach(plot => {
     const b = plot.badgeSprite;
     if (!b) return;
     const dx = plot.x - cx, dz = plot.z - cz;
-    b.visible = (dx * dx + dz * dz) < SHOW2;
+    b.visible = (dx * dx + dz * dz + dy * dy) < SHOW2;
   });
 }
 
@@ -1444,6 +1447,8 @@ async function openWorldAt(viewKey) {
   setTimeout(() => buildVillaStatusOverlays(), 100);
   // Sheet is the source of truth — pull it once the registry is populated.
   setTimeout(() => startSheetSync(), 3000);
+  // Collision volumes come from the plot registry — rebuild once everything has loaded.
+  setTimeout(() => { try { _buildCollisionBoxes(); } catch(e){} }, 6000);
 
   // ── TOPBAR CONTROLS BINDING ──────────────────────────────────────────────────
   // Bind TIME / WEATHER / QUALITY / TOUR topbar dropdowns and their sub-buttons.
@@ -1987,6 +1992,122 @@ window.__tourStop = function() {
   setCaption('');
 };
 
+
+
+// ── FULLSCREEN ───────────────────────────────────────────────────────────────
+// Same outcome as F11, but reachable from inside the estate. On a web-hosted
+// experience the address bar, tab strip and bookmarks can take 100-150px of
+// vertical space, which is a real loss on a laptop and worse on a tablet.
+// Requests fullscreen on documentElement rather than the canvas so the overlay
+// UI comes with it — fullscreening just the canvas would leave the controls
+// behind.
+window.toggleFullscreen = function () {
+  const el = document.documentElement;
+  const isFs = document.fullscreenElement || document.webkitFullscreenElement;
+  try {
+    if (!isFs) {
+      (el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen).call(el);
+    } else {
+      (document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen).call(document);
+    }
+  } catch (e) {
+    console.warn('[XIX] Fullscreen unavailable:', e.message);
+  }
+};
+
+// Keep the label in sync, including when the user leaves fullscreen with Esc or
+// F11 rather than the button — otherwise it lies about the current state.
+['fullscreenchange', 'webkitfullscreenchange'].forEach(ev =>
+  document.addEventListener(ev, () => {
+    const on = !!(document.fullscreenElement || document.webkitFullscreenElement);
+    const lbl = document.getElementById('fs-label');
+    const btn = document.getElementById('btn-fullscreen');
+    if (lbl) lbl.textContent = on ? 'Exit Full' : 'Fullscreen';
+    if (btn) btn.classList.toggle('active', on);
+    // The canvas must be resized to the new viewport or the render stays at the
+    // old size and is stretched.
+    setTimeout(() => { try { resizeWorldNow(); } catch (e) {} }, 120);
+  })
+);
+
+// F key as a shortcut, consistent with M for mute and D for diagnostics.
+document.addEventListener('keydown', (e) => {
+  if ((e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    if (!document.getElementById('world-overlay')?.classList.contains('open')) return;
+    e.preventDefault();
+    window.toggleFullscreen();
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BUILDING COLLISION  —  you cannot walk through a house
+// ═══════════════════════════════════════════════════════════════════════════
+// Walking through a villa exposed the untextured inside of an exterior shell,
+// which looks broken and undoes the quality of everything around it. Interiors
+// are a CURATED experience — the "Inside ·" viewpoints and Step Inside — not
+// something to stumble into.
+// Implemented as a push-out rather than a hard stop: if the camera ends a frame
+// inside a footprint, it is moved to the nearest point just outside. That slides
+// along walls naturally instead of sticking, which is what a hard stop does.
+// Runs on the plot registry, so every villa, loft and apartment is covered
+// automatically and nothing needs registering by hand.
+const COLLIDE_PAD = 1.1;          // body radius — keeps the camera off the wall
+let _collideBoxes = null;
+
+function _buildCollisionBoxes() {
+  _collideBoxes = [];
+  plotRegistry.forEach(plot => {
+    if (!plot.overlay || !plot.overlay.geometry || !plot.overlay.geometry.parameters) return;
+    const g = plot.overlay.geometry.parameters;
+    if (!g.width || !g.depth) return;           // skip anything not a box
+    _collideBoxes.push({
+      x: plot.x, z: plot.z, ry: plot.ry || 0,
+      // The overlay box is 0.72 of the plot footprint; the building itself is
+      // smaller still, so collide against a slightly tighter volume than the
+      // highlight or doorways feel unreachable.
+      hw: (g.width  * 0.5) * 0.86 + COLLIDE_PAD,
+      hd: (g.depth  * 0.5) * 0.86 + COLLIDE_PAD,
+    });
+  });
+}
+
+function _resolveBuildingCollision(camera) {
+  if (window.__tourActive) return;                 // the tour flies its own path
+  if (document.body.classList.contains('interior-open')) return;  // curated interior
+  if (aerialOrbit) return;                         // aerial is above everything
+  if (!_collideBoxes) _buildCollisionBoxes();
+  if (!_collideBoxes.length) return;
+  if (camera.position.y > 14) return;              // above roof height — no collision
+
+  const px = camera.position.x, pz = camera.position.z;
+  for (const b of _collideBoxes) {
+    // Transform the camera into the box's local frame so rotated units
+    // (the north arc, all four corners) collide correctly rather than using an
+    // axis-aligned approximation.
+    const dx = px - b.x, dz = pz - b.z;
+    const c = Math.cos(-b.ry), sn = Math.sin(-b.ry);
+    const lx = dx * c - dz * sn;
+    const lz = dx * sn + dz * c;
+    if (Math.abs(lx) >= b.hw || Math.abs(lz) >= b.hd) continue;   // outside
+
+    // Inside: push out along whichever axis needs the least movement, so the
+    // camera slides along the nearest wall instead of popping across the room.
+    const ox = b.hw - Math.abs(lx);
+    const oz = b.hd - Math.abs(lz);
+    let nlx = lx, nlz = lz;
+    if (ox < oz) nlx = (lx < 0 ? -b.hw : b.hw);
+    else         nlz = (lz < 0 ? -b.hd : b.hd);
+
+    const cc = Math.cos(b.ry), ss = Math.sin(b.ry);
+    camera.position.x = b.x + (nlx * cc - nlz * ss);
+    camera.position.z = b.z + (nlx * ss + nlz * cc);
+    return;   // one resolution per frame is enough and avoids jitter between two boxes
+  }
+}
+window._rebuildCollision = _buildCollisionBoxes;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // FLY TO UNIT  —  aerial click takes you to the property
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2257,6 +2378,7 @@ const CONTROL_SECTIONS = [
     ['Pin (right edge)',       'Keeps the controls visible at all times'],
   ]},
   { title: 'Shortcuts', items: [
+    ['F',                      'Fullscreen — hides the browser bars'],
     ['M',                      'Mute / unmute'],
     ['D',                      'Performance diagnostics'],
     ['Esc',                    'Release mouse, or close the estate view'],
@@ -3137,6 +3259,11 @@ function _tickDiag(fps) {
     `VERDICT      ${verdict}\n` +
     `VILLA MODEL  ${window._xixVillaFallbackActive ? '** BOX FALLBACK — GLB FAILED **'
                     : (window._xixVillaLowActive ? 'GLB + low LOD' : 'GLB (full only)')}\n` +
+    (() => { try {
+      const a = getAudioStatus();
+      return `AUDIO        ${a.samplesLoaded}/${a.samplesExpected} samples · beds ${a.timeBeds} · now "${a.activeBed}"${a.muted ? ' · MUTED' : ''}\n` +
+             (a.missing.length ? `MISSING      ${a.missing.slice(0,4).join(', ')}${a.missing.length>4?' +'+(a.missing.length-4):''}\n` : '');
+    } catch(e){ return ''; } })() +
     '──────────────────────────────────────────────\n' +
     _diagLog.join('\n');
 }
@@ -3252,6 +3379,7 @@ function startRenderLoop(){
       // change, only the horse's visual presence.
     }
 
+    _resolveBuildingCollision(camera);   // keep the camera out of buildings
     tickScene(elapsed,camera);
     if (typeof window._tickCrosshairHover === 'function') window._tickCrosshairHover();
     if (typeof window._tickPlotPulse === 'function') window._tickPlotPulse(delta);
