@@ -130,6 +130,24 @@
     #interior-overlay #int-exit-btn,
     #interior-overlay button { pointer-events: auto; }
 
+    /* INTERIOR MODE — the estate chrome must GO, not stack.
+       Overlaying the interior's room strip and header on top of the estate
+       topbar and viewpoint strip gave two competing control sets on screen at
+       once. Inside a unit the only relevant controls are the room switcher and
+       the way back out; everything about the estate is noise until you leave. */
+    body.interior-open .world-topbar,
+    body.interior-open #viewpoint-strip,
+    body.interior-open #xix-property-directory,
+    body.interior-open #chrome-pin,
+    body.interior-open #plot-hover-label {
+      opacity: 0 !important;
+      pointer-events: none !important;
+      transition: opacity 0.35s ease;
+    }
+    /* The minimap stays — knowing WHERE in the estate this unit sits is the
+       whole point of viewing from inside it. */
+    body.interior-open #minimap { opacity: 0.9 !important; }
+
     /* TOUR MODE — the interface gets out of the way entirely. The tour is meant
        to be watched, not operated, so every control hides for its duration.
        Fades rather than cuts so the transition into the film is not jarring. */
@@ -808,14 +826,14 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 
-<script type="module" src="js/app.js?v=68"></script>
+<script type="module" src="js/app.js?v=69"></script>
 
 <!-- Interior walkthrough is now built directly into the main scene by app.js -->
 <!-- (window.stepInsideVilla, scene.js: enterVillaInterior/teleportVillaRoom/exitVillaInterior) -->
 <!-- interior.js is now a pure geometry factory only — no separate scene/camera/renderer. -->
 
 <script type="module">
-import { openProductPanel, closeProductPanel, resizePanelViewer } from "./js/product-panel.js?v=68";
+import { openProductPanel, closeProductPanel, resizePanelViewer } from "./js/product-panel.js?v=69";
 window.__moduleReady = window.__moduleReady || {};
 window.__moduleReady.showProductPanel = openProductPanel;
 window.__moduleReady.closeProductPanel = closeProductPanel;
