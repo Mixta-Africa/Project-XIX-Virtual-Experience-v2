@@ -14,7 +14,7 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=69";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=70";
 import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
@@ -23,7 +23,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=69";
+} from "./graphics.js?v=70";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -425,10 +425,17 @@ if (typeof window !== 'undefined') {
 export function spawnAmbientHorses() {
   // All six share one load now — the stagger only spreads the cheap BUILD
   // calls (clone + mixer), not network fetches, which no longer repeat.
-  const POLO_N   = { xMin: -60, xMax: 60,  zMin: -88, zMax: -76 };  // north safety zone, clear of the lake
-  const POLO_S   = { xMin: -60, xMax: 60,  zMin:  76, zMax:  90 };
-  const TRAINING = { xMin: -335, xMax: -185, zMin: -80, zMax: 5 };  // matches the 180x110 turf patch at (-260,-40)
-  const PADDOCK  = { xMin: 212, xMax: 268, zMin: -55, zMax: -5 };   // inset from the rail fence at 205-275/-60-0
+  // Roam zones verified against the built geometry. Two were wrong:
+  //   POLO_N  zMin -88 reached INTO the lake, which now spans z -87..-116 after
+  //           NORTH_SHIFT — horses were walking on water.
+  //   TRAINING x -335..-185 contained the apartment block at (-245, -45), so
+  //           horses walked through the building.
+  // Corrected below, with a margin rather than an exact edge so a horse mid-turn
+  // cannot clip the boundary.
+  const POLO_N   = { xMin: -60,  xMax: 60,   zMin: -84, zMax: -76 };  // between lake edge (-87) and field
+  const POLO_S   = { xMin: -60,  xMax: 60,   zMin:  76, zMax:  85 };  // inside the 13m south strip (73..86)
+  const TRAINING = { xMin: -330, xMax: -268, zMin: -85, zMax:  5  };  // WEST of the apartments at x=-245
+  const PADDOCK  = { xMin: 212,  xMax: 268,  zMin: -55, zMax: -5 };   // inset from the rail fence
   [POLO_N, POLO_S, TRAINING, TRAINING, PADDOCK, PADDOCK].forEach((b, i) =>
     _spawnAmbientHorse(b, 2400 + i * 120));
 }
@@ -462,6 +469,15 @@ export function tickAmbientHorses(delta) {
     const step = Math.min(h.speed * delta, dist);
     h.pos.x += (dx / dist) * step;
     h.pos.z += (dz / dist) * step;
+
+    // Hard clamp to the zone. Targets are already drawn from inside it, but a
+    // clamp guarantees no horse can ever be seen inside a building or on the
+    // lake regardless of rounding or a mid-turn overshoot.
+    const bd = h.bounds;
+    if (h.pos.x < bd.xMin) h.pos.x = bd.xMin;
+    if (h.pos.x > bd.xMax) h.pos.x = bd.xMax;
+    if (h.pos.z < bd.zMin) h.pos.z = bd.zMin;
+    if (h.pos.z > bd.zMax) h.pos.z = bd.zMax;
 
     // ── FOOT SLIDING FIX ───────────────────────────────────────────────────
     // Sliding happens when the legs cycle at a rate that does not match how
@@ -1016,6 +1032,7 @@ let _listenerPos = { x: 0, z: 0 };
 let _nextHorseAt = 0;
 function _tickHorseEvents(now) {
   if (now < _nextHorseAt) return;
+  if ((window._currentTimeName || 'afternoon') === 'night') return;   // quiet at night
   _nextHorseAt = now + 12000 + Math.random() * 22000;   // every 12-34s
 
   // Nearest horse within earshot. LIVE model positions first — the ambient
@@ -1377,6 +1394,9 @@ const _NEIGH_POSITIONS = [
 let _lastNeigh = 0;
 function _tickAmbientNeighs(listenerX, listenerZ) {
   if (!_audioCtx) return;
+  // Horses are stabled and quiet at night. A whinny across a dark estate reads
+  // as wrong, and it was undercutting the calm of the night scene.
+  if ((window._currentTimeName || 'afternoon') === 'night') return;
   const now = performance.now();
   if (now - _lastNeigh < 4500) return;
   if (Math.random() > 0.010) return;   // was 0.006 — too rare to ever catch
