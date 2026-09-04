@@ -2,7 +2,13 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
 
 //        ROOM CATALOGUE                                                                                                                                                                                        
 // pos = [x, y, z] in interior space (centred on villa footprint)
-// yaw = camera facing direction (0 = south/field, PI = north/lake)
+// yaw = camera facing direction, LOCAL to the unit, added to the plot ry.
+//   Convention (frozen-state doc, v=63): direction = (sin yaw, cos yaw),
+//   so yaw 0 -> local +Z. buildVillaRoomGroup() glazes local +Z and ONLY
+//   local +Z; -Z/+X/-X are solid. Any room meant to show a view therefore
+//   needs yaw 0. Local +Z faces the polo field on all four villa runs
+//   (verified: west ry=PI/2 -> +X, east -PI/2 -> -X, north arc ~0 -> +Z,
+//   south PI -> -Z, all pointing at x,z = 0).
 // pitch = camera tilt (-ve = look down, +ve = look up)
 export const INTERIORS = {
 
@@ -14,8 +20,8 @@ export const INTERIORS = {
         key:      "undercroft",
         label:    "Undercroft Parking",
         sublabel: "Ground level     2-car private garage",
-        pos:      [-1.5, 1.2, 1.0],   // standing in undercroft, 1.2m eye (low)
-        yaw:      Math.PI,             // looking out toward road/field
+        pos:      [0, 1.65, -2.6],   // 0.90m off rear wall, eye 1.65m
+        yaw:      0,             // faces the glazed +Z wall
         pitch:    0,
         fov:      72,
         hint:     "Secure 2-car undercroft parking beneath the villa plinth. Ramp access from road.",
@@ -29,8 +35,8 @@ export const INTERIORS = {
         key:      "living_dining",
         label:    "Living & Dining",
         sublabel: "Ground floor     42m       polo field view",
-        pos:      [1.5, 4.5, 1.0],    // y=2.85+1.65=4.50
-        yaw:      Math.PI,             // facing south (polo field)
+        pos:      [0, 4.5, -2.1],   // 0.90m off rear wall, eye 1.65m
+        yaw:      0,             // faces the glazed +Z wall
         pitch:    -0.04,
         fov:      78,
         hint:     "42m   open-plan living and dining. Full-height south glazing frames the polo field. East terrace door to right.",
@@ -47,8 +53,8 @@ export const INTERIORS = {
         key:      "kitchen",
         label:    "Kitchen",
         sublabel: "Ground floor     26m  ",
-        pos:      [-3.0, 4.5, -1.5],
-        yaw:      -Math.PI/2,          // facing west (polo field side)
+        pos:      [0, 4.5, -1.4],   // 0.90m off rear wall, eye 1.65m
+        yaw:      0,             // faces the glazed +Z wall
         pitch:    0,
         fov:      70,
         hint:     "26m   kitchen with terrace access facing west toward the polo field. Natural light throughout the day.",
@@ -65,8 +71,8 @@ export const INTERIORS = {
         key:      "west_terrace",
         label:    "West Terrace",
         sublabel: "Ground floor     polo field-facing terrace",
-        pos:      [-5.5, 3.0, 0.0],   // on the terrace itself (cantilevered slab level)
-        yaw:      -Math.PI/2,          // facing west, directly at polo field
+        pos:      [0, 4.5, -2.1],   // 0.90m off rear wall, eye 1.65m
+        yaw:      0,             // faces the glazed +Z wall
         pitch:    -0.05,
         fov:      82,
         hint:     "Open terrace directly facing the polo field. Your private grandstand seat during match days.",
@@ -80,8 +86,8 @@ export const INTERIORS = {
         key:      "study",
         label:    "Study",
         sublabel: "Ground floor     22m  ",
-        pos:      [3.5, 4.5, -2.5],
-        yaw:      0,                   // facing north
+        pos:      [0, 4.5, -1.3],   // 0.90m off rear wall, eye 1.65m
+        yaw:      0,             // faces the glazed +Z wall
         pitch:    0,
         fov:      65,
         hint:     "22m   study with north-facing outlook toward the lake and crescent road.",
@@ -98,8 +104,8 @@ export const INTERIORS = {
         key:      "master_bedroom",
         label:    "Master Bedroom",
         sublabel: "First floor     27m       lake view",
-        pos:      [-2.5, 7.8, -2.5],  // y=6.15+1.65=7.80
-        yaw:      0,                   // facing north (lake)
+        pos:      [0, 7.8, -1.55],   // 0.90m off rear wall, eye 1.65m
+        yaw:      0,             // faces the glazed +Z wall
         pitch:    -0.06,
         fov:      68,
         hint:     "27m   master suite. Wake to views of the crescent lake through north-facing floor-to-ceiling glazing.",
@@ -116,8 +122,8 @@ export const INTERIORS = {
         key:      "bedroom2",
         label:    "Bedroom 2",
         sublabel: "First floor     16m       north aspect",
-        pos:      [2.5, 7.8, -2.5],
-        yaw:      0,                   // facing north
+        pos:      [0, 7.8, -1],   // 0.90m off rear wall, eye 1.65m
+        yaw:      0,             // faces the glazed +Z wall
         pitch:    -0.04,
         fov:      65,
         hint:     "16m   second bedroom with north aspect. Quiet and private, overlooking the crescent road and loft terraces beyond.",
@@ -133,8 +139,8 @@ export const INTERIORS = {
         key:      "bedroom3",
         label:    "Bedroom 3",
         sublabel: "First floor     17m       south & west views",
-        pos:      [-2.0, 7.8, 1.5],
-        yaw:      Math.PI,             // facing south (polo field view from F1)
+        pos:      [0, 7.8, -1],   // 0.90m off rear wall, eye 1.65m
+        yaw:      0,             // faces the glazed +Z wall
         pitch:    -0.06,
         fov:      68,
         hint:     "17m   third bedroom. South and west windows give first-floor polo field views     an elevated match-day seat.",
@@ -151,8 +157,8 @@ export const INTERIORS = {
         key:      "family_lounge",
         label:    "Family Lounge",
         sublabel: "First floor     23m       south terrace",
-        pos:      [2.5, 7.8, 1.5],
-        yaw:      Math.PI,             // facing south toward balcony
+        pos:      [0, 7.8, -1.35],   // 0.90m off rear wall, eye 1.65m
+        yaw:      0,             // faces the glazed +Z wall
         pitch:    -0.08,
         fov:      76,
         hint:     "23m   family lounge opening onto the south balcony. First-floor elevation gives an unobstructed polo field panorama.",
@@ -169,8 +175,8 @@ export const INTERIORS = {
         key:      "south_balcony",
         label:    "South Balcony",
         sublabel: "First floor     elevated polo field view",
-        pos:      [0.0, 6.35, 6.5],   // standing on balcony
-        yaw:      Math.PI,             // looking south over polo field
+        pos:      [0, 7.8, -0.22],   // 0.90m off rear wall, eye 1.65m
+        yaw:      0,             // faces the glazed +Z wall
         pitch:    -0.12,
         fov:      85,
         hint:     "First-floor south balcony. The entire polo field stretches before you. The clubhouse is visible in the distance.",
@@ -188,7 +194,7 @@ export const INTERIORS = {
     rooms: [
       {
         key: "loft_living", label: "Open-Plan Living", sublabel: "Ground floor     crescent road view",
-        pos: [0, 1.7, 0.5], yaw: Math.PI, pitch: -0.04, fov: 75,
+        pos: [0, 1.65, -3.1], yaw: 0, pitch: -0.04, fov: 75,
         hint: "Open-plan living/dining with direct crescent road view through south glazing.",
         floorY: 0, ceilH: 3.2, W: 6.0, D: 8.0,
         windows: [{ side:"south", cx:0, cy:1.7, w:5.5, h:2.5, type:"warm" }],
@@ -196,7 +202,7 @@ export const INTERIORS = {
       },
       {
         key: "loft_master", label: "Master Bedroom", sublabel: "First floor     rear outlook",
-        pos: [0, 4.9, -2.5], yaw: 0, pitch: -0.04, fov: 65,
+        pos: [0, 4.85, -1.2], yaw: 0, pitch: -0.04, fov: 65,
         hint: "First-floor master bedroom. Private outlook over rear garden.",
         floorY: 3.2, ceilH: 6.4, W: 5.5, D: 4.2,
         windows: [{ side:"north", cx:0, cy:4.9, w:3.5, h:2.2, type:"warm" }],
@@ -204,7 +210,7 @@ export const INTERIORS = {
       },
       {
         key: "loft_void", label: "Living Void", sublabel: "First floor     looking down",
-        pos: [0, 5.0, 1.0], yaw: Math.PI, pitch: -0.5, fov: 80,
+        pos: [0, 4.85, -0.85], yaw: 0, pitch: -0.5, fov: 80,
         hint: "The dramatic double-height void above the living room     a defining feature of the loft typology.",
         floorY: 3.2, ceilH: 6.4, W: 4.0, D: 3.5,
         windows: [],
@@ -212,7 +218,7 @@ export const INTERIORS = {
       },
       {
         key: "loft_terrace", label: "Front Terrace", sublabel: "Ground floor     crescent address",
-        pos: [0, 0.1, 6.5], yaw: 0, pitch: -0.05, fov: 80,
+        pos: [0, 1.65, -0.6], yaw: 0, pitch: -0.05, fov: 80,
         hint: "Private front terrace. Crescent road address with timber slatted privacy screen to fore.",
         floorY: 0, ceilH: 3.2, W: 6.0, D: 3.0,
         windows: [],
@@ -226,7 +232,7 @@ export const INTERIORS = {
     rooms: [
       {
         key: "apt_lobby", label: "Podium Lobby", sublabel: "Ground level     main entrance",
-        pos: [0, 1.5, 8.0], yaw: Math.PI, pitch: 0, fov: 70,
+        pos: [0, 1.65, -3.1], yaw: 0, pitch: 0, fov: 70,
         hint: "Grand double-height lobby with concierge desk.",
         floorY: 0, ceilH: 6.8, W: 12, D: 8,
         windows: [{ side:"south", cx:0, cy:3.4, w:10, h:5.5, type:"dark" }],
@@ -234,7 +240,7 @@ export const INTERIORS = {
       },
       {
         key: "apt_living_f2", label: "Living     Floor 2", sublabel: "First residential floor",
-        pos: [0, 7.5, -4.0], yaw: Math.PI, pitch: -0.05, fov: 75,
+        pos: [0, 8.45, -2.1], yaw: 0, pitch: -0.05, fov: 75,
         hint: "Open-plan living with south balcony access. Estate avenue view.",
         floorY: 6.8, ceilH: 10.1, W: 10, D: 6,
         windows: [{ side:"south", cx:0, cy:7.5, w:8.5, h:2.8, type:"warm" }],
@@ -242,7 +248,7 @@ export const INTERIORS = {
       },
       {
         key: "apt_living_f5", label: "Living     Floor 5", sublabel: "Top floor     full estate panorama",
-        pos: [0, 17.8, -4.0], yaw: Math.PI, pitch: -0.12, fov: 82,
+        pos: [0, 18.65, -2.1], yaw: 0, pitch: -0.12, fov: 82,
         hint: "Top-floor living. Unobstructed panorama across the entire estate and beyond.",
         floorY: 17.0, ceilH: 20.3, W: 10, D: 6,
         windows: [{ side:"south", cx:0, cy:17.8, w:8.5, h:2.8, type:"warm" }],
@@ -250,7 +256,7 @@ export const INTERIORS = {
       },
       {
         key: "apt_balcony_f3", label: "Balcony     Floor 3", sublabel: "Mid-rise south-facing",
-        pos: [0, 10.8, -7.2], yaw: Math.PI, pitch: -0.10, fov: 88,
+        pos: [0, 11.75, -0.18], yaw: 0, pitch: -0.10, fov: 88,
         hint: "Step outside to the wraparound balcony. The polo field spreads ahead at mid-rise height.",
         floorY: 10.1, ceilH: 13.4, W: 8, D: 1.8,
         windows: [],
@@ -258,7 +264,7 @@ export const INTERIORS = {
       },
       {
         key: "apt_master", label: "Master Bedroom", sublabel: "Floor 4     quiet north aspect",
-        pos: [-4, 14.2, 3.5], yaw: 0, pitch: -0.05, fov: 65,
+        pos: [0, 15.05, -1.6], yaw: 0, pitch: -0.05, fov: 65,
         hint: "North-facing master. Tree canopy views, quiet and private.",
         floorY: 13.4, ceilH: 16.7, W: 7, D: 5,
         windows: [{ side:"north", cx:0, cy:14.2, w:5.0, h:2.5, type:"clear" }],
