@@ -10,7 +10,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
-import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=68";
+import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=69";
 // villa-interior.js removed — dead file, superseded by interior.js
 import {
   initScene, getRenderer, getScene, getCamera, getClock,
@@ -22,12 +22,12 @@ import {
   enterVillaInterior, teleportVillaRoom, exitVillaInterior,
   setAudioMuted, isAudioMuted, setMixLevel, getMixLevels, getMixDefaults, resetMixLevels, getAudioStatus,
   setPlotOverlaysSuppressed,
-} from "./scene.js?v=68";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=68";
+} from "./scene.js?v=69";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=69";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
-} from "./controls.js?v=68";
+} from "./controls.js?v=69";
 import {
   initMinimap, updateMinimap,
   buildViewpointStrip, showZonePanel, hideZonePanel,
@@ -35,7 +35,7 @@ import {
   setCaption as _setCaption_raw, showEnterPrompt, hideEnterPrompt,
   showVRButton, showJoystick, hideJoystick, isMobile,
   enableAudio, updateSpatialAudio, initAudio
-} from "./ui.js?v=68";
+} from "./ui.js?v=69";
 
 window.plotRegistry = plotRegistry;
 
@@ -105,7 +105,9 @@ window.stepInsideVilla = function(plotKey) {
 
   overlay?.classList.add('open');
   document.body.classList.add('interior-open');
-  setPlotOverlaysSuppressed(true);    // kill the green box you would be standing in
+  setPlotOverlaysSuppressed(true);
+  showHint('Inside the villa — WASD to walk, the strip below switches rooms, Esc to step back out',
+           { key: 'interior-enter', ms: 5200 });    // kill the green box you would be standing in
   if (typeof activate === 'function') activate();
 };
 
@@ -874,6 +876,18 @@ function bindPlotSystem() {
     requestAnimationFrame(_runHoverPick);
   }
 
+  // Clearing hover when the cursor leaves the canvas onto UI chrome. Without
+  // this the last highlight stayed lit — the cursor was down on the viewpoint
+  // strip while a building was still glowing, because no further pick ran.
+  ['#viewpoint-strip', '.world-topbar', '#minimap', '#xix-property-directory'].forEach(sel => {
+    const el = document.querySelector(sel);
+    if (!el) return;
+    el.addEventListener('mouseenter', () => {
+      if (typeof window.setHoveredPlot === 'function') window.setHoveredPlot(null);
+      _updateHoverLabel(null);
+    }, { passive: true });
+  });
+
   canvas.addEventListener('mousemove', e => {
     _hoverPointerLocked = !!document.pointerLockElement;
     if (!_hoverPointerLocked) {
@@ -1116,9 +1130,8 @@ function showPlotPanel(plotKey) {
     </div>
   `;
 
-  // Free the cursor as the panel slides in — the user needs to click Reserve
-  // or Close, and neither is reachable while the pointer is locked to look.
-  if (document.pointerLockElement) document.exitPointerLock();
+  // Free the cursor as the panel slides in.
+  releaseCursorForPanel('Cursor released — use the panel on the left');
 
   document.getElementById('world-overlay')?.appendChild(panel);
   requestAnimationFrame(() => panel.style.transform = 'translateX(0)');
@@ -1271,11 +1284,7 @@ window.syncPlotStatusFromSheet = syncPlotStatusFromSheet;
 window.openReservationModal = function(propertyName, plotId = "") {
   const modal = document.getElementById('reservation-modal');
   if (!modal) return;
-  // Release the pointer lock IMMEDIATELY. Previously the cursor stayed captured
-  // by the walkthrough controls, so the form was on screen but unusable until
-  // the user pressed Esc — a dead end at the exact moment they are trying to
-  // convert. Any panel that asks for input must free the cursor as it opens.
-  if (document.pointerLockElement) document.exitPointerLock();
+  releaseCursorForPanel('Cursor released — fill in the form to reserve');
   document.getElementById('res-property-name').value = propertyName || "General";
   document.getElementById('res-plot-id').value = plotId || "";
   document.getElementById('res-form-title').textContent = plotId ? `Reserve ${plotId}` : `Reserve ${propertyName}`;
@@ -1702,6 +1711,8 @@ function toggleAerial(btn){
     // angle, elevAngle must be LARGE (~1.1 rad ≈ 63° off vertical).
     // -1.1 → R_ground≈232m, height≈118m: camera low and out, looking across.
     aerialAngle=-0.8; aerialYawOffset=0; aerialPitch=-1.1;
+    showHint('Hover a plot to highlight it, click to open. Drag to steer the orbit.',
+             { key: 'aerial-enter', ms: 5000 });
     // Narrow FOV — 55° completely removes architectural edge warping
     const _aerCam = getCamera();
     _aerCam.fov = 55; _aerCam.far = 2000; _aerCam.updateProjectionMatrix();
@@ -2084,6 +2095,42 @@ document.addEventListener('keydown', (e) => {
 });
 
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONTEXTUAL HINTS  —  a few, at the right moment, never a wall of tips
+// ═══════════════════════════════════════════════════════════════════════════
+// Rule applied here: a hint appears only at a moment the interface has just
+// CHANGED STATE in a way the user did not initiate, and only ONCE per session
+// for that state. Persistent instructions belong in the Controls panel; hints
+// are for "something just happened, here is what it means".
+// Anything shown more than once becomes noise the user learns to ignore.
+const _hintsShown = new Set();
+let _hintEl = null, _hintTimer = null;
+
+function showHint(text, opts = {}) {
+  const key = opts.key || text;
+  if (!opts.repeat && _hintsShown.has(key)) return;   // once per session
+  _hintsShown.add(key);
+
+  if (!_hintEl) {
+    _hintEl = document.createElement('div');
+    _hintEl.id = 'xix-hint';
+    _hintEl.style.cssText =
+      'position:fixed;left:50%;bottom:16%;transform:translateX(-50%);z-index:10040;' +
+      'background:rgba(8,18,10,0.93);border:1px solid rgba(201,168,76,0.5);' +
+      'border-radius:8px;padding:10px 16px;font-family:Inter,system-ui,sans-serif;' +
+      'font-size:12.5px;color:#f2e9d0;pointer-events:none;opacity:0;' +
+      'transition:opacity 0.5s ease;box-shadow:0 6px 22px rgba(0,0,0,0.5);' +
+      'max-width:min(420px,88vw);text-align:center;line-height:1.4;';
+    document.body.appendChild(_hintEl);
+  }
+  _hintEl.textContent = text;
+  _hintEl.style.opacity = '1';
+  if (_hintTimer) clearTimeout(_hintTimer);
+  _hintTimer = setTimeout(() => { if (_hintEl) _hintEl.style.opacity = '0'; }, opts.ms || 4200);
+}
+window.showHint = showHint;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // INTERIOR MODE GATE  —  one switch, every conflicting system off
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2101,6 +2148,16 @@ document.addEventListener('keydown', (e) => {
 //   5. AVAILABLE badges still rendered through the walls.
 // isInteriorMode() is now the single source of truth and every one of those
 // systems checks it.
+// Every panel that asks for input must free the cursor. Individual call sites
+// kept getting missed, so this is the one helper they all use — and it also
+// shows the contextual hint, so the two can never drift apart.
+function releaseCursorForPanel(hintText) {
+  if (document.pointerLockElement) document.exitPointerLock();
+  if (typeof window._xixSuspendLook === 'function') window._xixSuspendLook(true);
+  if (hintText) showHint(hintText);
+}
+window.releaseCursorForPanel = releaseCursorForPanel;
+
 function isInteriorMode() {
   return document.body.classList.contains('interior-open');
 }
