@@ -14,7 +14,7 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=68";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=69";
 import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
@@ -23,7 +23,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=68";
+} from "./graphics.js?v=69";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -3890,8 +3890,11 @@ function addEastLake(){
 }
 
 function addClubhouse(){
-  s(plane(55,28,MATS.roadAsph(),[-65,.13,128]));
-  s(plane(55,28,MATS.roadAsph(),[65,.13,128]));
+  // REMOVED: two 55x28 parking slabs at (±65, 128).
+  // They used MATS.roadAsph() — a DIFFERENT asphalt material from the apron's —
+  // and sat at y=0.13 vs the apron's 0.09, so they read as two pale rectangles
+  // floating on top of the darker tarmac. The single apron already covers this
+  // ground (x -150..150, z 104..190), so they were redundant as well as wrong.
 }
 
 // ─── GLB LOADERS ──────────────────────────────────────────────────────────────
@@ -4471,11 +4474,17 @@ function addVillaRing(){
   [-75, -47, -19].forEach(z => placeV(-162, z, Math.PI / 2));
   [19, 47, 75].forEach(z => placeV(-162, z, Math.PI / 2));
   // SW/SE corner villas — z adjusted to match the new south row at z≈88
-  placeV(-146.0, 84.1, 3 * Math.PI / 4);   // SW — ON the ring line, 18.4m clearance
+  // SW/SE corners: the pure run-midpoint (-146, 84.1) sat 9.3m INSIDE the south
+  // safety strip — a 45-degree villa has a 7.42m half-extent, so its centre must
+  // clear z=86 by that much, or clear the strip's x half-width of 149.
+  // (-157, 91) does the latter: x -149.6..-164.4 is entirely outside the strip,
+  // it keeps 16.8m from every neighbour, and sitting near the west column line
+  // (x=-162) it holds the wrap rather than bulging out of it.
+  placeV(-157.0, 91.0, 3 * Math.PI / 4);   // SW — clears the strip, 16.8m clearance
 
   [-75, -47, -19].forEach(z => placeV(162, z, -Math.PI / 2));
   [19, 47, 75].forEach(z => placeV(162, z, -Math.PI / 2));
-  placeV( 146.0, 84.1, -3 * Math.PI / 4);  // SE — ON the ring line, 18.4m clearance
+  placeV( 157.0, 91.0, -3 * Math.PI / 4);  // SE — clears the strip, 16.8m clearance
 
   // South villas: moved inward from z=105 to z=88 now that the N/S safety zone
   // is 13m (inner edge at z=86) rather than 25m. 2m clearance from strip edge.
@@ -4486,7 +4495,10 @@ function addVillaRing(){
     // which broke the wrap the villas are meant to form. Pulling the row in to
     // 58/82/106/130 lets the corner sit exactly ON the run midpoint instead.
     [58, 82, 106, 130].forEach(xa => {
-      placeV(side * xa, 88 + xa * 0.04, Math.PI);
+      // base z 88 -> 93. The south safety strip is 13m deep at z=79.5, i.e.
+      // z 73..86. At base 88 the innermost unit sat at z=90.3 with a 4.8m
+      // half-depth, clipping the strip. 93 clears it with margin.
+      placeV(side * xa, 93 + xa * 0.04, Math.PI);
     });
   }
 
