@@ -12,7 +12,7 @@ import { WORLD, VIEWPOINTS, ZONES } from "./data.js";
 import { initAudio as _sceneInitAudio, enableAudio as _sceneEnableAudio,
          updateSpatialAudio as _sceneUpdateSpatialAudio,
          setAudioMuted as _sceneSetAudioMuted,
-         isAudioMuted as _sceneIsAudioMuted } from "./scene.js?v=69";
+         isAudioMuted as _sceneIsAudioMuted } from "./scene.js?v=70";
 
 //           LOADING SCREEN                                                                                                                                                                                  
 
