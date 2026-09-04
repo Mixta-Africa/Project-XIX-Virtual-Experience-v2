@@ -10,7 +10,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
-import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=69";
+import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=70";
 // villa-interior.js removed — dead file, superseded by interior.js
 import {
   initScene, getRenderer, getScene, getCamera, getClock,
@@ -22,12 +22,12 @@ import {
   enterVillaInterior, teleportVillaRoom, exitVillaInterior,
   setAudioMuted, isAudioMuted, setMixLevel, getMixLevels, getMixDefaults, resetMixLevels, getAudioStatus,
   setPlotOverlaysSuppressed,
-} from "./scene.js?v=69";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=69";
+} from "./scene.js?v=70";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=70";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
-} from "./controls.js?v=69";
+} from "./controls.js?v=70";
 import {
   initMinimap, updateMinimap,
   buildViewpointStrip, showZonePanel, hideZonePanel,
@@ -35,7 +35,7 @@ import {
   setCaption as _setCaption_raw, showEnterPrompt, hideEnterPrompt,
   showVRButton, showJoystick, hideJoystick, isMobile,
   enableAudio, updateSpatialAudio, initAudio
-} from "./ui.js?v=69";
+} from "./ui.js?v=70";
 
 window.plotRegistry = plotRegistry;
 
@@ -1758,23 +1758,41 @@ function bindAerialPointer(){
   const el=getRenderer()?.domElement; if(!el) return;
   el.addEventListener("mousedown",aerialMouseDown,{passive:true});
   el.addEventListener("mousemove",aerialMouseMove,{passive:true});
-  el.addEventListener("mouseup",aerialMouseUp,{passive:true});
   el.addEventListener("touchstart",aerialTouchStart,{passive:true});
   el.addEventListener("touchmove",aerialTouchMove,{passive:false});
-  el.addEventListener("touchend",aerialMouseUp,{passive:true});
+  // RELEASE MUST BE ON WINDOW, NOT THE ELEMENT.
+  // mouseup/touchend were bound to the canvas, so releasing the button OUTSIDE
+  // it (over the topbar, the strip, or off-window) never fired — aerialDragging
+  // stayed true forever and every later mouse move rotated the camera with no
+  // click held. That is the "keeps rotating, trails the cursor" behaviour, and
+  // on a hybrid touch+mouse laptop it triggers constantly because a touch can
+  // begin a drag that no matching mouseup ever ends.
+  window.addEventListener("mouseup",aerialMouseUp,{passive:true});
+  window.addEventListener("touchend",aerialMouseUp,{passive:true});
+  window.addEventListener("touchcancel",aerialMouseUp,{passive:true});
+  window.addEventListener("pointercancel",aerialMouseUp,{passive:true});
+  window.addEventListener("blur",aerialMouseUp,{passive:true});
 }
 function unbindAerialPointer(){
   const el=getRenderer()?.domElement; if(!el) return;
   el.removeEventListener("mousedown",aerialMouseDown);
   el.removeEventListener("mousemove",aerialMouseMove);
-  el.removeEventListener("mouseup",aerialMouseUp);
   el.removeEventListener("touchstart",aerialTouchStart);
   el.removeEventListener("touchmove",aerialTouchMove);
-  el.removeEventListener("touchend",aerialMouseUp);
+  window.removeEventListener("mouseup",aerialMouseUp);
+  window.removeEventListener("touchend",aerialMouseUp);
+  window.removeEventListener("touchcancel",aerialMouseUp);
+  window.removeEventListener("pointercancel",aerialMouseUp);
+  window.removeEventListener("blur",aerialMouseUp);
 }
 function aerialMouseDown(e){aerialDragging=true;aerialLastX=e.clientX;aerialLastY=e.clientY;}
 function aerialMouseUp(){aerialDragging=false;}
 function aerialMouseMove(e){
+  // Definitive guard: e.buttons is 0 when NO button is physically held. This
+  // self-corrects a stuck drag no matter which release event was missed, so a
+  // lost mouseup can never leave the camera spinning with the cursor again.
+  if (e.buttons === 0) { aerialDragging = false; return; }
+  if (window.__tourActive) return;   // the tour drives the camera itself
   if(!aerialDragging) return;
   aerialYawOffset-=(e.clientX-aerialLastX)*0.004;
   aerialPitch=Math.max(-1.4,Math.min(-0.25,aerialPitch-(e.clientY-aerialLastY)*0.003));
