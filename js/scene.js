@@ -9,7 +9,7 @@
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
 import {
   initVillaLODBudget, updateVillaLODBudget, setVillaLODBudget, fixVillaMaterials
-} from "./villa-lod-budget.js?v=78";
+} from "./villa-lod-budget.js?v=79";
 import { GLTFLoader }  from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/GLTFLoader.js";
 import { DRACOLoader } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/DRACOLoader.js";
 import { MeshoptDecoder } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/libs/meshopt_decoder.module.js";
@@ -18,8 +18,8 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=78";
-import { UNIT_SCHEDULE } from "./data.js?v=78";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=79";
+import { UNIT_SCHEDULE } from "./data.js?v=79";
 import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
@@ -28,7 +28,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=78";
+} from "./graphics.js?v=79";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -1814,8 +1814,26 @@ function buildInstancedCypress(positions) {
   // mirror-merging to ~70k we can afford roughly 25x more instances.
   const CAP = PERF_MODE === 'rich' ? 200 : PERF_MODE === 'balanced' ? 110 : 40;
 
-  // Cone fallback for everything beyond the real-mesh cap (and all of fast mode)
-  const coneList = _treePositions.slice(CAP);
+  // ── CONE FALLBACK: OFF ────────────────────────────────────────────────────
+  // Everything past CAP used to be drawn as a flat-shaded 7-sided green cone.
+  // That was tolerable as a background filler BEHIND real instanced trees. It
+  // stopped being tolerable once assets/tree-mesh.glb was removed, because the
+  // GLB load then fails and EVERY tree in the estate falls through to a cone —
+  // a sales tool full of green traffic cones.
+  //
+  // No trees reads better than obviously fake trees. Palms are a separate
+  // system (the GPU wind shader) and are unaffected, so the estate keeps its
+  // signature planting either way.
+  //
+  // Flip this back to true the moment a real assets/tree-mesh.glb exists: with
+  // hero instances in front of them, cones do their original job of massing out
+  // the far canopy at almost no cost.
+  const TREE_CONE_FALLBACK = false;
+
+  const coneList = TREE_CONE_FALLBACK ? _treePositions.slice(CAP) : [];
+  if (!TREE_CONE_FALLBACK && _treePositions.length > CAP) {
+    console.log(`[XIX] Trees: cone fallback disabled — ${_treePositions.length - CAP} distant positions left empty`);
+  }
   if (coneList.length) {
     const cMat = new THREE.MeshStandardMaterial({ color: 0x2f5a24, roughness: 0.92, metalness: 0 });
     const cGeo = new THREE.ConeGeometry(1.5, 6.5, 7);
@@ -1892,7 +1910,9 @@ function buildInstancedCypress(positions) {
 
     const tris = Math.round(geo.attributes.position.count / 3);
     console.log(`[XIX] Trees: ${heroList.length} radial-shell instances, ${tris.toLocaleString()} tris each`);
-  }, undefined, () => console.warn('[XIX] tree-mesh.glb not found — cones only'));
+  }, undefined, () => console.warn(
+    '[XIX] assets/tree-mesh.glb not found — NO trees will render. ' +
+    'The cone fallback is disabled (see TREE_CONE_FALLBACK). Palms are unaffected.'));
 }
 
 // ─── INSTANCED VILLA RENDERING WITH LOD ───────────────────────────────────────
