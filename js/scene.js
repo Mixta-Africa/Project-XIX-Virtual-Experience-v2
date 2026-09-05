@@ -9,7 +9,7 @@
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
 import {
   initVillaLODBudget, updateVillaLODBudget, setVillaLODBudget, fixVillaMaterials
-} from "./villa-lod-budget.js?v=72";
+} from "./villa-lod-budget.js?v=73";
 import { GLTFLoader }  from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/GLTFLoader.js";
 import { DRACOLoader } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/DRACOLoader.js";
 import { MeshoptDecoder } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/libs/meshopt_decoder.module.js";
@@ -18,7 +18,7 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=72";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=73";
 import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
@@ -27,7 +27,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=72";
+} from "./graphics.js?v=73";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -321,6 +321,15 @@ const LOFT_SCALE = 28.5;
 // rather than spread round a 274 m field, and because nobody inspects a loft
 // the way a buyer inspects their own villa.
 const LOFT_LOD_SWAP = 45;
+
+// A block is FOUR units. The old scalar 4.79208 was derived from one unit's
+// 125 m² GFA and applied to a model of the whole block, so the terrace rendered
+// at roughly the width of a single apartment — 4.683 m on the current export,
+// about the height of a horse, which is exactly how it looked.
+//
+// 36 m is what the rest of the code already assumes: the unit hitboxes sit at
+// offsets [-13.5,-4.5,4.5,13.5], i.e. four bays at 9 m centres.
+const LOFT_BLOCK_WIDTH = 36.0;
 let loftLowScene = null;
 
 // Derived at runtime, not hard-coded. loft-mesh.glb keeps its legacy 4.79208
@@ -1958,6 +1967,10 @@ function placeVillaGLBWithLOD(x, z, ry, plotKey) {
   } else {
     const lowDetail = new THREE.Mesh(_impostorGeo, _impostorMat);
     lowDetail.position.y = 4;
+    // Marked so villa-lod-budget.js never picks it as a real tier. Without this,
+    // a hero budget of 0 (fast mode) plus a missing low tier left every villa
+    // showing an invisible placeholder — the estate rendered empty.
+    lowDetail.userData.isLODPlaceholder = true;
     lod.addLevel(lowDetail, 400);
   }
 
@@ -4016,7 +4029,12 @@ function makeDracoLoader() {
   // irrelevant, so Draco's tighter compression wins outright. The HERO model
   // is where decode cost actually bites, so meshopt is the safer default there
   // on anything but a fast desktop.
-  loader.setMeshoptDecoder(MeshoptDecoder);
+    loader.setMeshoptDecoder(MeshoptDecoder);
+
+  // product-panel.js builds its own GLTFLoader and was failing with
+  // "setMeshoptDecoder must be called before loading compressed files" on any
+  // meshopt-compressed product GLB. Expose the decoder so it can register too.
+  window.__xixMeshoptDecoder = MeshoptDecoder;
 
   _sharedGLTFLoader = loader;
   return loader;
@@ -4093,7 +4111,17 @@ function loadVillaLowGLB(){
     scene.traverse(o => {
       if (o.isLOD && o.userData.isVillaGLB) {
         // Drop the old invisible impostor level if present, then add the real one.
-        o.levels = o.levels.filter(l => !(l.object && l.object.material === _impostorMat));
+        //
+        // THREE.LOD defines `levels` with Object.defineProperties({ value: [] }) —
+        // no setter. Assigning to it throws "Cannot assign to read only property
+        // 'levels'" under ES-module strict mode, which is what silently killed
+        // this whole callback: villa-low.glb has never attached in any version.
+        // Mutate the existing array in place instead.
+        for (let i = o.levels.length - 1; i >= 0; i--) {
+          if (o.levels[i].object && o.levels[i].object.material === _impostorMat) {
+            o.levels.splice(i, 1);
+          }
+        }
         const low = villaLowScene.clone(true);
         low.rotation.y = 0;
         o.addLevel(low, VILLA_LOD_SWAP);
@@ -4229,9 +4257,14 @@ function loadApartmentGLB(){
 
 function loadLoftGLB(){
   makeDracoLoader().load("assets/loft-mesh.glb",gltf=>{
-    // Legacy scalar preserved deliberately — this is the size the estate is
-    // already tuned around (block pitch, hitboxes, plot overlays).
-    gltf.scene.scale.setScalar(4.79208);
+    // Derived from LOFT_BLOCK_WIDTH, not hard-coded — the old 4.79208 was a
+    // per-unit figure applied to a per-block model.
+    {
+      const raw = new THREE.Box3().setFromObject(gltf.scene).getSize(new THREE.Vector3());
+      const scalar = raw.x > 1e-6 ? (LOFT_BLOCK_WIDTH / raw.x) : 4.79208;
+      gltf.scene.scale.setScalar(scalar);
+      console.log(`[XIX] loft raw ${raw.x.toFixed(5)} -> scalar ${scalar.toFixed(5)}`);
+    }
     applyPS4Materials(gltf.scene);
     fixVillaMaterials(gltf.scene);   // FrontSide; a closed shell never needs DoubleSide
     gltf.scene.traverse(c=>{ if(c.isMesh){ c.castShadow=false; c.receiveShadow=true; c.frustumCulled=true; } });
@@ -4241,7 +4274,7 @@ function loadLoftGLB(){
     // Record the world width the legacy scalar produces, so loft-low can be
     // fitted to match it exactly rather than guessing at a target.
     LOFT_TARGET_WIDTH = bbox.max.x - bbox.min.x;
-    console.log(`[XIX] loft hero ${LOFT_TARGET_WIDTH.toFixed(3)} m wide at scalar 4.79208`);
+    console.log(`[XIX] loft hero ${LOFT_TARGET_WIDTH.toFixed(3)} m wide (target ${LOFT_BLOCK_WIDTH})`);
 
     const wrapper=new THREE.Group(); wrapper.add(gltf.scene); loftGLBScene=wrapper;
     loadLoftLowGLB();
