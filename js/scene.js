@@ -9,7 +9,7 @@
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
 import {
   initVillaLODBudget, updateVillaLODBudget, setVillaLODBudget, fixVillaMaterials
-} from "./villa-lod-budget.js?v=83";
+} from "./villa-lod-budget.js?v=86";
 import { GLTFLoader }  from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/GLTFLoader.js";
 import { DRACOLoader } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/DRACOLoader.js";
 import { MeshoptDecoder } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/libs/meshopt_decoder.module.js";
@@ -18,8 +18,8 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=83";
-import { UNIT_SCHEDULE } from "./data.js?v=83";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=86";
+import { UNIT_SCHEDULE } from "./data.js?v=86";
 import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
@@ -28,7 +28,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=83";
+} from "./graphics.js?v=86";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -3222,7 +3222,15 @@ const MATS = {
 
 function addGround() {
   // Estate floor: procedural laterite/grass zones (GLSL, no tiling artefacts).
-  const gp = new THREE.Mesh(new THREE.PlaneGeometry(900, 700, 8, 8), buildGroundMaterial());
+  // ── GROUND EXTENT ─────────────────────────────────────────────────────────
+  // Placed content runs x -375..+280 and z -218..+224 — the south palm avenue
+  // sits at z 206 and 224, so anything under ~460 m deep clips it.
+  //
+  // 900 across gives the content a 37% horizon margin; 620 gives depth the same
+  // proportional margin, where 700 gave 58%. A modest correction only: the real
+  // spaciousness is that the CONTENT is laid out ~2x deeper than the masterplan
+  // outside the polo field, not that the ground around it is too large.
+  const gp = new THREE.Mesh(new THREE.PlaneGeometry(900, 620, 8, 8), buildGroundMaterial());
   gp.rotation.x = -Math.PI / 2;
   gp.position.set(0, 0, 30);
   gp.receiveShadow = true;
@@ -4792,16 +4800,34 @@ function addVillaRing(){
   [-86, -108, -130, -152].forEach(x => { placeV(x, -120 + NORTH_SHIFT, 0); });
   [86, 108, 130, 152].forEach(x => { placeV(x, -120 + NORTH_SHIFT, 0); });
 
-  //  The arc sat 10-20 m outside the line the west and east columns hold, so
-  //  it read as a separate row floating above the ring instead of part of it.
-  //  Count and x positions are untouched — only the standoff changes, from
-  //  -120/-138 to -118/-128, which is the flattest bow the lake still clears
-  //  by a villa half-depth.
-  for (let i = 0; i < 11; i++) {
-    const t = 0.05 + (i / 10) * 0.90;
-    const x = -70 + (t * 140);
-    const z = (-118 - Math.sin(t * Math.PI) * 10) + NORTH_SHIFT;   // arc shifted with the group
-    placeV(x, z, Math.atan2(0 - x, -60 - z));
+  // ── NORTH ARC ─────────────────────────────────────────────────────────────
+  // Every villa here now faces the polo field square-on, like the straight rows
+  // either side of it. It used to aim each one at the point (0, -60) with
+  // Math.atan2(0 - x, -60 - z), which splayed the outer villas by up to 53
+  // degrees so they looked across the field at an angle rather than down it.
+  //
+  // That splay was also causing a collision nobody had measured. A villa
+  // rotated 53 degrees presents an x-extent of |W cos ry| + |D sin ry| =
+  // 14.57 m, against a 12.6 m pitch — so 8 of the 10 adjacent pairs physically
+  // intersected, by up to 2.29 m. Only the two either side of the apex, where
+  // the rotation is near zero, actually cleared. Squaring them to yaw 0 drops
+  // the extent to the villa's own 11.44 m width and the problem disappears.
+  //
+  // Standoff moves from -106 - 10 sin to -111 - 6 sin. The arc's southern edge
+  // was reaching z -100.1, inside both the safety zone and the water; it now
+  // stops at -106.2, leaving 4.19 m of clearance to the lake's north edge.
+  // Flattening the bow from 10 m to 6 m is what buys that without pushing the
+  // apex villa further from the field than it already was.
+  //
+  // Span widens from +/-63 to +/-70.5, giving a uniform 2.66 m gap between
+  // neighbours and still clearing the straight row's inner edge (x 80.28) by
+  // 4.06 m. Count stays at 11.
+  const ARC_N = 11, ARC_HALF_SPAN = 70.5, ARC_BASE_Z = -111.0, ARC_BOW = 6.0;
+  for (let i = 0; i < ARC_N; i++) {
+    const t = i / (ARC_N - 1);                       // 0..1 inclusive, endpoints included
+    const x = -ARC_HALF_SPAN + t * (2 * ARC_HALF_SPAN);
+    const z = ARC_BASE_Z - Math.sin(t * Math.PI) * ARC_BOW;
+    placeV(x, z, 0);                                 // 0 = local +Z = the field
   }
 
   [-75, -47, -19].forEach(z => placeV(-162, z, Math.PI / 2));
