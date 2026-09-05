@@ -1,5 +1,8 @@
 /**
- * Project XIX — Villa LOD Budget  v1
+ * Project XIX — Building LOD Budget  v2
+ *
+ * (Filename kept as villa-lod-budget.js from v1 so the deployed import path
+ *  does not change. It now covers lofts as well — see KINDS below.)
  *
  * PROBLEM THIS SOLVES
  * -------------------
@@ -22,7 +25,7 @@
  * INTEGRATION (three lines in scene.js)
  * -------------------------------------
  *   import { initVillaLODBudget, updateVillaLODBudget, setVillaLODBudget }
- *     from './villa-lod-budget.js?v=71';
+ *     from './villa-lod-budget.js?v=72';
  *
  *   // after the villa ring is built, and again after loadVillaGLB /
  *   // loadVillaLowGLB resolve (villas are placed asynchronously):
@@ -63,7 +66,22 @@ const MAX_SKIP = 30;
 
 // ── STATE ────────────────────────────────────────────────────────────────────
 
-let _villas = [];              // { lod, levels[], shadowMeshes[], d2 }
+// One independent registry + budget per building kind. A kind is claimed by a
+// userData flag set where its LOD is built:
+//     isVillaGLB  -> villas, 43 of them, ringing the polo field
+//     isLoftGLB   -> lofts,  28 blocks at 26 m pitch in the south-west precinct
+//
+// They need separate budgets because they are different products. A buyer walks
+// up to their own villa and inspects it, so villas earn 2-3 hero slots. Lofts
+// are a 96-unit yield product seen from the road and cluster far more tightly
+// (26 m pitch vs the villa ring's 28 m columns / 12.88 m arc, but 28 blocks in
+// two rows rather than spread around a 274 m field) — so 1 hero slot is plenty
+// and 10 blocks land within 150 m of you on the south row.
+const KINDS = {
+  villa: { flag: 'isVillaGLB', hero: 3, maxDist: 90, shadowCutoff: 80, list: [] },
+  loft:  { flag: 'isLoftGLB',  hero: 1, maxDist: 60, shadowCutoff: 0,  list: [] },
+};
+
 let _scene = null;
 let _lastCam = new THREE.Vector3(Infinity, Infinity, Infinity);
 let _skipped = 0;
@@ -78,10 +96,12 @@ let _stats = { hero: 0, mid: 0, far: 0, shadowCasters: 0, lastSortMs: 0 };
  */
 export function initVillaLODBudget(scene) {
   _scene = scene;
-  _villas.length = 0;
+  for (const k of Object.values(KINDS)) k.list.length = 0;
 
   scene.traverse((o) => {
-    if (!o.isLOD || !o.userData.isVillaGLB) return;
+    if (!o.isLOD) return;
+    const kind = Object.values(KINDS).find((k) => o.userData[k.flag]);
+    if (!kind) return;
 
     // Stop THREE.LOD from choosing a level on its own. Without this it fights
     // us every frame: LOD.update() runs during render and overwrites whatever
@@ -95,12 +115,12 @@ export function initVillaLODBudget(scene) {
     const shadowMeshes = [];
     o.traverse((c) => { if (c.isMesh) shadowMeshes.push(c); });
 
-    _villas.push({ lod: o, levels, shadowMeshes, d2: 0 });
+    kind.list.push({ lod: o, levels, shadowMeshes, d2: 0 });
   });
 
   _lastCam.set(Infinity, Infinity, Infinity);   // force a recompute next frame
   _skipped = MAX_SKIP;
-  return _villas.length;
+  return Object.fromEntries(Object.entries(KINDS).map(([n, k]) => [n, k.list.length]));
 }
 
 /**
@@ -109,14 +129,16 @@ export function initVillaLODBudget(scene) {
  *   'medium' -> { hero: 2, shadowCutoff: 60 }
  *   'fast'   -> { hero: 0, shadowCutoff: 0 }   // mobile: never load level 0
  */
-export function setVillaLODBudget({ hero, maxDist, shadowCutoff } = {}) {
-  if (Number.isFinite(hero))         HERO_BUDGET   = Math.max(0, hero | 0);
-  if (Number.isFinite(maxDist))      HERO_MAX_DIST = maxDist;
-  if (Number.isFinite(shadowCutoff)) SHADOW_CUTOFF = shadowCutoff;
+export function setVillaLODBudget({ hero, maxDist, shadowCutoff, kind = 'villa' } = {}) {
+  const k = KINDS[kind];
+  if (!k) return;
+  if (Number.isFinite(hero))         k.hero         = Math.max(0, hero | 0);
+  if (Number.isFinite(maxDist))      k.maxDist      = maxDist;
+  if (Number.isFinite(shadowCutoff)) k.shadowCutoff = shadowCutoff;
   _skipped = MAX_SKIP;               // apply on the next frame, not the next move
 }
 
-export function getVillaLODStats() { return { ..._stats, villas: _villas.length }; }
+export function getVillaLODStats() { return { ..._stats }; }
 
 // ── PER-FRAME ────────────────────────────────────────────────────────────────
 
@@ -126,8 +148,6 @@ const _order = [];
  * Call once per frame, before renderer.render().
  */
 export function updateVillaLODBudget(camera) {
-  if (!_villas.length) return;
-
   const cam = camera.position;
   if (_skipped < MAX_SKIP && cam.distanceToSquared(_lastCam) < MOVE_EPS * MOVE_EPS) {
     _skipped++;
@@ -137,20 +157,27 @@ export function updateVillaLODBudget(camera) {
   _lastCam.copy(cam);
   _skipped = 0;
 
-  for (let i = 0; i < _villas.length; i++) {
-    _villas[i].d2 = _villas[i].lod.position.distanceToSquared(cam);
+  let hero = 0, mid = 0, far = 0, casters = 0;
+
+  // Each kind is budgeted independently — a villa in view must never spend a
+  // loft's hero slot, or standing between the two precincts would starve one.
+  for (const kindDef of Object.values(KINDS)) {
+  const items = kindDef.list;
+  if (!items.length) continue;
+
+  for (let i = 0; i < items.length; i++) {
+    items[i].d2 = items[i].lod.position.distanceToSquared(cam);
   }
 
-  // Partial selection would be faster, but 43 elements sorts in microseconds
-  // and only when you have moved 2 m, so a full sort is not worth optimising.
+  // Partial selection would be faster, but a few dozen elements sort in
+  // microseconds and only when you have moved 2 m — not worth optimising.
   _order.length = 0;
-  for (let i = 0; i < _villas.length; i++) _order.push(_villas[i]);
+  for (let i = 0; i < items.length; i++) _order.push(items[i]);
   _order.sort((a, b) => a.d2 - b.d2);
 
-  const heroMaxD2   = HERO_MAX_DIST * HERO_MAX_DIST;
-  const shadowMaxD2 = SHADOW_CUTOFF * SHADOW_CUTOFF;
-
-  let hero = 0, mid = 0, far = 0, casters = 0;
+  const HERO_BUDGET   = kindDef.hero;
+  const heroMaxD2     = kindDef.maxDist * kindDef.maxDist;
+  const shadowMaxD2   = kindDef.shadowCutoff * kindDef.shadowCutoff;
 
   for (let i = 0; i < _order.length; i++) {
     const v = _order[i];
@@ -181,6 +208,7 @@ export function updateVillaLODBudget(camera) {
       }
     }
     if (shouldCast) casters++;
+  }
   }
 
   _stats = { hero, mid, far, shadowCasters: casters, lastSortMs: performance.now() - t0 };
