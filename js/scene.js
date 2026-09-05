@@ -9,7 +9,7 @@
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
 import {
   initVillaLODBudget, updateVillaLODBudget, setVillaLODBudget, fixVillaMaterials
-} from "./villa-lod-budget.js?v=71";
+} from "./villa-lod-budget.js?v=72";
 import { GLTFLoader }  from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/GLTFLoader.js";
 import { DRACOLoader } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/DRACOLoader.js";
 import { MeshoptDecoder } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/libs/meshopt_decoder.module.js";
@@ -18,7 +18,7 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=71";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=72";
 import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
@@ -27,7 +27,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=71";
+} from "./graphics.js?v=72";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -72,7 +72,8 @@ export function setPerfMode(mode) {
   // it, so the safety net remains without the menu lying about what is possible.
   PERF_MODE = mode;
   setPerfModeGraphics(mode);
-  setVillaLODBudget(VILLA_BUDGET_BY_MODE[mode] || VILLA_BUDGET_BY_MODE.balanced);
+  setVillaLODBudget({ kind: 'villa', ...(VILLA_BUDGET_BY_MODE[mode] || VILLA_BUDGET_BY_MODE.balanced) });
+  setVillaLODBudget({ kind: 'loft',  ...(LOFT_BUDGET_BY_MODE[mode]  || LOFT_BUDGET_BY_MODE.balanced)  });
   if (!renderer) return;
   const s = PERF_SETTINGS[mode];
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, s.pixelRatio));
@@ -308,6 +309,27 @@ const APT_SCALE = 19.99342;
 
 let loftGLBScene = null, pendingLofts = [];
 const LOFT_SCALE = 28.5;
+
+// ── LOFT LOD ────────────────────────────────────────────────────────────────
+// 28 blocks at 26 m pitch in the south-west precinct. Before this they had no
+// LOD at all: every block rendered at full detail at every distance, so at
+// 1.9M tris each that was 53.2M triangles permanently resident — 5.5x the
+// entire villa ring. Walking the south row put 10 blocks inside 150 m: 19M
+// triangles in front of you at once.
+//
+// Swap is tighter than the villas' 60 m because the blocks are packed in rows
+// rather than spread round a 274 m field, and because nobody inspects a loft
+// the way a buyer inspects their own villa.
+const LOFT_LOD_SWAP = 45;
+let loftLowScene = null;
+
+// Derived at runtime, not hard-coded. loft-mesh.glb keeps its legacy 4.79208
+// scalar so the estate looks exactly as it does today; loft-low.glb is then
+// fitted to whatever world width that produced, so the two tiers cannot
+// disagree on size and the block will not visibly grow or shrink at the swap.
+// This is the trap that would otherwise bite here: the villa low model was
+// 6.04 m tall against a 6.98 m hero.
+let LOFT_TARGET_WIDTH = null;
 
 export const plotRegistry = new Map();
 export let onPlotSelected = null;
@@ -4207,14 +4229,52 @@ function loadApartmentGLB(){
 
 function loadLoftGLB(){
   makeDracoLoader().load("assets/loft-mesh.glb",gltf=>{
-    // GFA 125m² ÷ 2 floors → 9.1m wide at scale 4.79208
+    // Legacy scalar preserved deliberately — this is the size the estate is
+    // already tuned around (block pitch, hitboxes, plot overlays).
     gltf.scene.scale.setScalar(4.79208);
     applyPS4Materials(gltf.scene);
+    fixVillaMaterials(gltf.scene);   // FrontSide; a closed shell never needs DoubleSide
+    gltf.scene.traverse(c=>{ if(c.isMesh){ c.castShadow=false; c.receiveShadow=true; c.frustumCulled=true; } });
     const bbox=new THREE.Box3().setFromObject(gltf.scene);
     gltf.scene.position.y=bbox.min.y<0?-bbox.min.y:0;
+
+    // Record the world width the legacy scalar produces, so loft-low can be
+    // fitted to match it exactly rather than guessing at a target.
+    LOFT_TARGET_WIDTH = bbox.max.x - bbox.min.x;
+    console.log(`[XIX] loft hero ${LOFT_TARGET_WIDTH.toFixed(3)} m wide at scalar 4.79208`);
+
     const wrapper=new THREE.Group(); wrapper.add(gltf.scene); loftGLBScene=wrapper;
-    pendingLofts.forEach(({x,z,ry})=>placeLoftGLB(x,z,ry)); pendingLofts=[];
+    loadLoftLowGLB();
+    pendingLofts.forEach(({x,z,ry,plotKey})=>placeLoftGLB(x,z,ry,plotKey)); pendingLofts=[];
+    armVillaLODBudget();
   },null,err=>{pendingLofts.forEach(({x,z,ry})=>scene.add(_createLoftBlock(x,z,ry)));pendingLofts=[];});
+}
+
+// Loaded after the hero so LOFT_TARGET_WIDTH is known and the low tier can be
+// fitted to it. A failure here is non-fatal: placeLoftGLB simply keeps using a
+// single-level LOD, which is exactly the old behaviour.
+function loadLoftLowGLB(){
+  makeDracoLoader().load("assets/loft-low.glb",gltf=>{
+    const raw = new THREE.Box3().setFromObject(gltf.scene).getSize(new THREE.Vector3());
+    const scalar = (LOFT_TARGET_WIDTH && raw.x > 1e-6) ? (LOFT_TARGET_WIDTH / raw.x) : 4.79208;
+    gltf.scene.scale.setScalar(scalar);
+    applyPS4Materials(gltf.scene);
+    fixVillaMaterials(gltf.scene);
+    gltf.scene.traverse(c=>{ if(c.isMesh){ c.castShadow=false; c.receiveShadow=true; c.frustumCulled=true; } });
+    const bbox=new THREE.Box3().setFromObject(gltf.scene);
+    gltf.scene.position.y=bbox.min.y<0?-bbox.min.y:0;
+    const wrapper=new THREE.Group(); wrapper.add(gltf.scene); loftLowScene=wrapper;
+    console.log(`[XIX] loft low fitted: scalar ${scalar.toFixed(5)} -> ${(raw.x*scalar).toFixed(3)} m wide`);
+
+    // Retro-fit the low level onto blocks already placed with only a hero level.
+    scene.traverse(o=>{
+      if(o.isLOD && o.userData.isLoftGLB && o.levels.length===1){
+        const low=loftLowScene.clone(true); low.rotation.y=0;
+        o.addLevel(low, LOFT_LOD_SWAP);
+      }
+    });
+    armVillaLODBudget();
+  },null,()=>{ console.warn('[XIX] loft-low.glb missing — lofts stay single-level'); });
 }
 
 function placeAptGLB(x,z,ry=0,plotKey=null){
@@ -4230,8 +4290,27 @@ function placeAptGLB(x,z,ry=0,plotKey=null){
 }
 function placeLoftGLB(x,z,ry,plotKey){
   ry=ry||0; if(!loftGLBScene){pendingLofts.push({x,z,ry,plotKey});return;}
-  const clone=loftGLBScene.clone(true); clone.position.set(x,0,z); clone.rotation.y=ry; scene.add(clone);
-  if (plotKey) addPlotOverlay(x, z, ry, plotKey, clone); 
+
+  // Same shape as placeVillaGLBWithLOD. isLoftGLB is what villa-lod-budget.js
+  // scans for to give lofts their own hero budget, independent of the villas.
+  const lod = new THREE.LOD();
+  lod.position.set(x,0,z);
+  lod.rotation.y = ry;
+  lod.userData.isLoftGLB = true;
+  lod.userData.baseRotY  = ry;
+  lod.userData.plotKey   = plotKey;
+
+  const hero = loftGLBScene.clone(true); hero.rotation.y = 0;
+  lod.addLevel(hero, 0);
+
+  if (loftLowScene) {
+    const low = loftLowScene.clone(true); low.rotation.y = 0;
+    lod.addLevel(low, LOFT_LOD_SWAP);
+  }
+  // If the low tier has not loaded yet, loadLoftLowGLB() retro-fits it.
+
+  scene.add(lod);
+  if (plotKey) addPlotOverlay(x, z, ry, plotKey, lod);
 }
 
 // ─── PLOT OVERLAY ─────────────────────────────────────────────────────────────
@@ -4541,10 +4620,22 @@ const VILLA_BUDGET_BY_MODE = {
   rich:     { hero: 3, maxDist: 90, shadowCutoff: 80 },
 };
 
+// Lofts get their own, much tighter budget. They are a 96-unit yield product
+// viewed from the road, not something a buyer walks up to and inspects, and 28
+// blocks at 26 m pitch cluster far harder than the villa ring. 1 hero slot
+// takes the precinct from 53.2M triangles to about 4.5M.
+const LOFT_BUDGET_BY_MODE = {
+  fast:     { hero: 0, maxDist: 0,  shadowCutoff: 0 },
+  balanced: { hero: 1, maxDist: 45, shadowCutoff: 0 },
+  rich:     { hero: 1, maxDist: 60, shadowCutoff: 0 },
+};
+
 function armVillaLODBudget() {
-  const n = initVillaLODBudget(scene);
-  setVillaLODBudget(VILLA_BUDGET_BY_MODE[PERF_MODE] || VILLA_BUDGET_BY_MODE.balanced);
-  console.log(`[XIX] villa LOD budget armed over ${n} villas (${PERF_MODE})`);
+  const counts = initVillaLODBudget(scene);
+  const mode = PERF_MODE;
+  setVillaLODBudget({ kind: 'villa', ...(VILLA_BUDGET_BY_MODE[mode] || VILLA_BUDGET_BY_MODE.balanced) });
+  setVillaLODBudget({ kind: 'loft',  ...(LOFT_BUDGET_BY_MODE[mode]  || LOFT_BUDGET_BY_MODE.balanced)  });
+  console.log(`[XIX] LOD budget armed — ${counts.villa} villas, ${counts.loft} lofts (${mode})`);
 }
 
 // Called once per frame from app.js, before the render.
