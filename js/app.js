@@ -10,7 +10,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
-import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=70";
+import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=71";
 // villa-interior.js removed — dead file, superseded by interior.js
 import {
   initScene, getRenderer, getScene, getCamera, getClock,
@@ -22,12 +22,13 @@ import {
   enterVillaInterior, teleportVillaRoom, exitVillaInterior,
   setAudioMuted, isAudioMuted, setMixLevel, getMixLevels, getMixDefaults, resetMixLevels, getAudioStatus,
   setPlotOverlaysSuppressed,
-} from "./scene.js?v=70";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=70";
+  tickVillaLOD,
+} from "./scene.js?v=71";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=71";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
-} from "./controls.js?v=70";
+} from "./controls.js?v=71";
 import {
   initMinimap, updateMinimap,
   buildViewpointStrip, showZonePanel, hideZonePanel,
@@ -35,7 +36,7 @@ import {
   setCaption as _setCaption_raw, showEnterPrompt, hideEnterPrompt,
   showVRButton, showJoystick, hideJoystick, isMobile,
   enableAudio, updateSpatialAudio, initAudio
-} from "./ui.js?v=70";
+} from "./ui.js?v=71";
 
 window.plotRegistry = plotRegistry;
 
@@ -3496,6 +3497,10 @@ function startRenderLoop(){
     const elapsed=(performance.now()-startTime)/1000;
     const camera=getCamera();
     if (!camera) return; // scene not ready yet
+
+    // Cap how many villas render at full detail. Internally throttled — only
+    // recomputes when the camera has moved ~2 m, so this is near-free.
+    tickVillaLOD(camera);
 
     if(aerialOrbit){
       aerialAngle += AERIAL_SPEED * delta;
