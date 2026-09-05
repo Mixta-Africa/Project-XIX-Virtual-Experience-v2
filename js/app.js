@@ -10,7 +10,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
-import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=73";
+import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=76";
 // villa-interior.js removed — dead file, superseded by interior.js
 import {
   initScene, getRenderer, getScene, getCamera, getClock,
@@ -23,12 +23,12 @@ import {
   setAudioMuted, isAudioMuted, setMixLevel, getMixLevels, getMixDefaults, resetMixLevels, getAudioStatus,
   setPlotOverlaysSuppressed,
   tickVillaLOD,
-} from "./scene.js?v=73";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=73";
+} from "./scene.js?v=76";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=76";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
-} from "./controls.js?v=73";
+} from "./controls.js?v=76";
 import {
   initMinimap, updateMinimap,
   buildViewpointStrip, showZonePanel, hideZonePanel,
@@ -36,7 +36,7 @@ import {
   setCaption as _setCaption_raw, showEnterPrompt, hideEnterPrompt,
   showVRButton, showJoystick, hideJoystick, isMobile,
   enableAudio, updateSpatialAudio, initAudio
-} from "./ui.js?v=73";
+} from "./ui.js?v=76";
 
 window.plotRegistry = plotRegistry;
 
@@ -3452,6 +3452,11 @@ function startRenderLoop(){
   let   _govCooldownUntil = performance.now() + 4000; // 4s grace after load before first action
   const _TIER_ORDER = ['fast', 'balanced', 'rich'];
   const _STEP_DOWN_FPS = 32;   // sustained median below this → drop a tier
+  // Recovery. Without this the governor is one-way: a single bad window — and
+  // the 1.9M-triangle Draco decode during load reliably produces one — pinned
+  // the session to fast for good, with no way back short of a reload. The gap
+  // between 32 and 52 is deliberate hysteresis so it cannot oscillate.
+  const _STEP_UP_FPS = 52;
 
   function _governorTick(now) {
     const dt = now - _lastGovT;
@@ -3472,6 +3477,23 @@ function startRenderLoop(){
     // Median of the window
     const arr = Array.prototype.slice.call(_fpsSamples).sort((a,b)=>a-b);
     const medianFps = arr[arr.length >> 1];
+
+    // ── STEP UP ───────────────────────────────────────────────────────────
+    // Only ever up to window._xixMaxTier, the GPU-derived ceiling — recovery
+    // must never put a machine into a mode detectMobileTier() ruled out.
+    if (medianFps > _STEP_UP_FPS) {
+      const cur  = PERF_MODE || 'fast';
+      const capI = _TIER_ORDER.indexOf(window._xixMaxTier || 'balanced');
+      const idx  = _TIER_ORDER.indexOf(cur);
+      if (idx >= 0 && idx < capI) {
+        const next = _TIER_ORDER[idx + 1];
+        console.log(`[XIX] Auto quality: ${cur} → ${next} (median ${medianFps.toFixed(0)} fps, cap ${window._xixMaxTier})`);
+        if (typeof window.switchPerfMode === 'function') window.switchPerfMode(next, /*auto=*/true);
+        _govCooldownUntil = now + 6000;   // longer than the step-down cooldown
+        _fpsCount = 0; _fpsIdx = 0;
+      }
+      return;
+    }
 
     if (medianFps < _STEP_DOWN_FPS) {
       const cur = PERF_MODE || 'rich';   // live ES-module binding from scene.js
