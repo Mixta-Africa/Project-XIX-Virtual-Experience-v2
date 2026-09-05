@@ -7,14 +7,18 @@
  */
 
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
+import {
+  initVillaLODBudget, updateVillaLODBudget, setVillaLODBudget, fixVillaMaterials
+} from "./villa-lod-budget.js?v=71";
 import { GLTFLoader }  from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/GLTFLoader.js";
 import { DRACOLoader } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/DRACOLoader.js";
+import { MeshoptDecoder } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/libs/meshopt_decoder.module.js";
 import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/objects/Water.js";
 // Named exports (clone, etc.), not a single "SkeletonUtils" binding — a
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=70";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=71";
 import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
@@ -23,7 +27,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=70";
+} from "./graphics.js?v=71";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -68,6 +72,7 @@ export function setPerfMode(mode) {
   // it, so the safety net remains without the menu lying about what is possible.
   PERF_MODE = mode;
   setPerfModeGraphics(mode);
+  setVillaLODBudget(VILLA_BUDGET_BY_MODE[mode] || VILLA_BUDGET_BY_MODE.balanced);
   if (!renderer) return;
   const s = PERF_SETTINGS[mode];
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, s.pixelRatio));
@@ -105,7 +110,45 @@ let villaGLBScene = null, pendingVillas = [];
 // The model scalar below is what every villa LOD must use — see loadVillaGLB
 // and loadVillaLowGLB. They must always match.
 const VILLA_SCALE = 12.56;
-const VILLA_MODEL_SCALAR = 5.71853;   // GFA 330m² / 3 floors -> 11.4m wide
+
+// ── VILLA SIZING ────────────────────────────────────────────────────────────
+// What is LOCKED is the villa's width in METRES, not the multiplier. The old
+// constant 5.71853 was correct only for the specific GLB it was measured
+// against (raw X 1.99985 units). Swap in a model authored at any other size and
+// a fixed multiplier renders it huge or tiny.
+//
+// fitVillaScalar() measures each GLB's own bounding box and returns whatever
+// multiplier lands it on VILLA_TARGET_WIDTH, so every tier — hero, low, and any
+// future one — comes out the same size no matter how it was exported. This also
+// removes the "any future LOD level MUST apply this same scalar" trap noted in
+// loadVillaLowGLB below: they now derive it instead of copying it.
+//
+// 11.4362 m is the measured width of the shipping villa-mesh.glb and is what
+// every ring position, hedge, contact shadow, cypress and plot overlay assumes.
+// Do not change it without re-deriving the ring layout in addVillaRing().
+const VILLA_TARGET_WIDTH = 11.4362;
+const VILLA_MODEL_SCALAR = 5.71853;   // legacy fallback only — see fitVillaScalar()
+
+function fitVillaScalar(obj) {
+  // Measure at scale 1 so the raw authored size is what we read.
+  const prev = obj.scale.clone();
+  obj.scale.setScalar(1);
+  obj.updateMatrixWorld(true);
+  const size = new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3());
+  obj.scale.copy(prev);
+
+  if (!(size.x > 1e-6)) {
+    console.warn('[XIX] villa GLB has zero width — falling back to', VILLA_MODEL_SCALAR);
+    return VILLA_MODEL_SCALAR;
+  }
+  const scalar = VILLA_TARGET_WIDTH / size.x;
+  console.log(
+    `[XIX] villa raw ${size.x.toFixed(5)} x ${size.y.toFixed(5)} x ${size.z.toFixed(5)} ` +
+    `-> scalar ${scalar.toFixed(5)} -> ${VILLA_TARGET_WIDTH.toFixed(3)} x ` +
+    `${(size.y*scalar).toFixed(3)} x ${(size.z*scalar).toFixed(3)} m`
+  );
+  return scalar;
+}
 // Distance at which a villa swaps from the full 979K model to the verified
 // 97,941-tri low-poly. Villas sit ~28m apart on the ring, so at 90m you'd have
 // 6-8 of them at full detail while walking — around 7M triangles on its own.
@@ -3932,6 +3975,27 @@ function makeDracoLoader() {
   draco.setDecoderPath("https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/libs/draco/");
   const loader = new GLTFLoader();
   loader.setDRACOLoader(draco);
+
+  // ── BOTH CODECS REGISTERED ────────────────────────────────────────────────
+  // Draco and meshopt are both lossless at equal quantization — neither looks
+  // better than the other. They trade download size against decode cost:
+  //
+  //   Draco     hero 6.57 MB, but a ~800KB wasm decoder and a slow,
+  //             allocation-heavy decode. This is the codec implicated in the
+  //             villa-mesh.glb worker-contention failure noted above, and the
+  //             kind of allocation the iOS memory guard exists to avoid.
+  //   meshopt   hero 10.88 MB, a ~25KB decoder, and roughly 10x faster decode.
+  //
+  // Registering both means either export format loads, so the choice can be
+  // made per asset rather than once for the whole project — and can be A/B
+  // tested by swapping a file, with no code change.
+  //
+  // Current split: the LOW model is small enough that decode time is
+  // irrelevant, so Draco's tighter compression wins outright. The HERO model
+  // is where decode cost actually bites, so meshopt is the safer default there
+  // on anything but a fast desktop.
+  loader.setMeshoptDecoder(MeshoptDecoder);
+
   _sharedGLTFLoader = loader;
   return loader;
 }
@@ -3982,9 +4046,11 @@ function loadVillaLowGLB(){
     // at raw GLB size — about 2 units instead of 11.4m. On iPhone, where 'fast'
     // mode and camera height put nearly every villa past the 60m swap, that
     // meant almost the whole estate drew at a fraction of proper size.
-    // Any future LOD level MUST apply this same scalar.
-    gltf.scene.scale.setScalar(VILLA_MODEL_SCALAR);
+    // Derived, not copied — see fitVillaScalar(). Both tiers land on
+    // VILLA_TARGET_WIDTH regardless of how each was exported.
+    gltf.scene.scale.setScalar(fitVillaScalar(gltf.scene));
     applyPS4Materials(gltf.scene);
+    fixVillaMaterials(gltf.scene);   // FrontSide — a closed shell never needs DoubleSide
     gltf.scene.traverse(c => {
       if (c.isMesh) { c.castShadow = false; c.receiveShadow = true; c.frustumCulled = true; }
     });
@@ -4030,8 +4096,9 @@ function loadVillaGLB(){
   if (_isTabletOrIOS()) {
     console.log('[XIX] iOS/tablet: using low-poly villa at all distances (memory guard)');
     makeDracoLoader().load("assets/villa-low.glb", gltf => {
-      gltf.scene.scale.setScalar(VILLA_MODEL_SCALAR);
+      gltf.scene.scale.setScalar(fitVillaScalar(gltf.scene));
       applyPS4Materials(gltf.scene);
+      fixVillaMaterials(gltf.scene);
       gltf.scene.traverse(c => {
         if (c.isMesh) { c.castShadow = false; c.receiveShadow = true; c.frustumCulled = true; }
       });
@@ -4042,18 +4109,21 @@ function loadVillaGLB(){
       villaLowScene = w;              // same model at both levels — no swap cost
       const queue = [...pendingVillas]; pendingVillas = [];
       queue.forEach(d => placeVillaGLBWithLOD(d.x, d.z, d.ry, d.plotKey));
+      armVillaLODBudget();
       requestShadowUpdate(2);
     }, undefined, e => console.warn('[XIX] villa-low.glb (iOS path) failed:', e));
     return;
   }
 
   makeDracoLoader().load("assets/villa-mesh.glb", gltf => {
-    // GFA 330m² ÷ 3 floors → 11.4m wide at scale 5.71853
-    gltf.scene.scale.setScalar(VILLA_MODEL_SCALAR);
+    // Derived from this GLB's own bbox — a re-exported mesh of any size still
+    // lands on VILLA_TARGET_WIDTH. See fitVillaScalar().
+    gltf.scene.scale.setScalar(fitVillaScalar(gltf.scene));
     // villa-mesh.glb ships with baked PBR maps (albedo / normal / metal-rough)
     // generated from its own atlas, so applyPS4Materials must NOT overwrite them
     // with procedural substitutes. It only tunes envMap and shadow flags here.
     applyPS4Materials(gltf.scene);
+    fixVillaMaterials(gltf.scene);
     gltf.scene.traverse(c => {
       if(c.isMesh){ 
         c.castShadow = false; // Villas: receive only — casting causes shadow acne at scale
@@ -4091,6 +4161,7 @@ function loadVillaGLB(){
       placeVillaGLBWithLOD(data.x, data.z, data.ry, data.plotKey); // Insert real GLB
       requestShadowUpdate(2);  // new geometry → shadow map must be regenerated
     });
+    armVillaLODBudget();
 
   }, null, err => {
     // LOUD failure. Boxes appearing instead of the real villas means THIS ran.
@@ -4452,6 +4523,33 @@ function isInNoBuildZone(x,z){
   for(const [cx,cz,hw,hd] of NO_BUILD_ZONES) if(Math.abs(x-cx)<=hw&&Math.abs(z-cz)<=hd) return true;
   for(const {cx,cz,r} of villaFootprints) if((x-cx)*(x-cx)+(z-cz)*(z-cz)<=r*r) return true;
   return false;
+}
+
+// ── VILLA LOD BUDGET ────────────────────────────────────────────────────────
+// THREE.LOD chooses a level from distance alone, and the ring has two very
+// different spacings: 28 m on the west/east columns, 12.88 m on the north arc.
+// VILLA_LOD_SWAP = 60 was tuned against the columns, where it correctly yields
+// 0-4 full-detail villas. Nobody checked the arc — standing anywhere along it
+// puts NINE villas at level 0, which at 979K tris is 8.8M triangles and at
+// 1.9M is 17.1M. That is the walking-near-the-houses stutter.
+//
+// Capping the COUNT instead of the distance makes the load a fixed number you
+// choose, identical everywhere on the ring.
+const VILLA_BUDGET_BY_MODE = {
+  fast:     { hero: 0, maxDist: 0,  shadowCutoff: 0  },   // never level 0
+  balanced: { hero: 2, maxDist: 70, shadowCutoff: 60 },
+  rich:     { hero: 3, maxDist: 90, shadowCutoff: 80 },
+};
+
+function armVillaLODBudget() {
+  const n = initVillaLODBudget(scene);
+  setVillaLODBudget(VILLA_BUDGET_BY_MODE[PERF_MODE] || VILLA_BUDGET_BY_MODE.balanced);
+  console.log(`[XIX] villa LOD budget armed over ${n} villas (${PERF_MODE})`);
+}
+
+// Called once per frame from app.js, before the render.
+export function tickVillaLOD(camera) {
+  if (camera) updateVillaLODBudget(camera);
 }
 
 function addVillaRing(){
