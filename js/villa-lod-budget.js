@@ -25,7 +25,7 @@
  * INTEGRATION (three lines in scene.js)
  * -------------------------------------
  *   import { initVillaLODBudget, updateVillaLODBudget, setVillaLODBudget }
- *     from './villa-lod-budget.js?v=73';
+ *     from './villa-lod-budget.js?v=76';
  *
  *   // after the villa ring is built, and again after loadVillaGLB /
  *   // loadVillaLowGLB resolve (villas are placed asynchronously):
@@ -237,15 +237,33 @@ export function updateVillaLODBudget(camera) {
  * cause of buildings reading as faceted after decimation.
  */
 export function fixVillaMaterials(gltfScene) {
-  let fixed = 0;
+  let fixed = 0, softened = 0;
   gltfScene.traverse((o) => {
     if (!o.isMesh) return;
     const mats = Array.isArray(o.material) ? o.material : [o.material];
+
+    // Does this geometry actually carry tangents? Without them Three.js derives
+    // them per-fragment from screen-space derivatives, which on a photogrammetry
+    // atlas normal map reads as grain rather than relief. applyPS4Materials sets
+    // normalScale 1.15 on the assumption of real tangents and multiplies that
+    // grain. Rather than force a much larger download, back the scale off when
+    // the attribute is absent — most of the perceived noise goes with it.
+    const hasTangent = !!(o.geometry && o.geometry.attributes && o.geometry.attributes.tangent);
+
     for (const m of mats) {
       if (!m) continue;
       if (m.side !== THREE.FrontSide) { m.side = THREE.FrontSide; m.needsUpdate = true; fixed++; }
       if (m.shadowSide !== null) m.shadowSide = null;   // inherit from .side
+
+      if (!hasTangent && m.normalMap && m.normalScale && m.normalScale.x > 0.75) {
+        m.normalScale.set(0.65, 0.65);
+        m.needsUpdate = true;
+        softened++;
+      }
     }
   });
+  if (softened) {
+    console.log(`[XIX] no tangents on ${softened} material(s) — normalScale eased 1.15 -> 0.65 to stop derivative grain`);
+  }
   return fixed;
 }
