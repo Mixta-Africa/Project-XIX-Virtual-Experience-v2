@@ -25,7 +25,7 @@
  * INTEGRATION (three lines in scene.js)
  * -------------------------------------
  *   import { initVillaLODBudget, updateVillaLODBudget, setVillaLODBudget }
- *     from './villa-lod-budget.js?v=72';
+ *     from './villa-lod-budget.js?v=73';
  *
  *   // after the villa ring is built, and again after loadVillaGLB /
  *   // loadVillaLowGLB resolve (villas are placed asynchronously):
@@ -108,14 +108,20 @@ export function initVillaLODBudget(scene) {
     // visibility we set.
     o.autoUpdate = false;
 
+    // Placeholder levels (the invisible impostor scene.js adds before the real
+    // low model loads) must never be chosen as a tier — selecting one renders
+    // the building invisible. Track which indices are real.
     const levels = o.levels.map((l) => l.object);
+    const realIdx = levels
+      .map((obj, i) => (obj && obj.userData && obj.userData.isLODPlaceholder ? -1 : i))
+      .filter((i) => i >= 0);
 
     // Cache the meshes whose castShadow flag we toggle, so the per-frame path
     // never has to traverse.
     const shadowMeshes = [];
     o.traverse((c) => { if (c.isMesh) shadowMeshes.push(c); });
 
-    kind.list.push({ lod: o, levels, shadowMeshes, d2: 0 });
+    kind.list.push({ lod: o, levels, realIdx, shadowMeshes, d2: 0 });
   });
 
   _lastCam.set(Infinity, Infinity, Infinity);   // force a recompute next frame
@@ -188,10 +194,14 @@ export function updateVillaLODBudget(camera) {
     //   0 = full GLB, granted only to the nearest HERO_BUDGET within range
     //   1 = villa-low, the working tier for everything else
     //   2 = impostor, if a third level exists
+    // Only ever choose among REAL levels. If the low tier has not loaded (or
+    // failed), realIdx is just [0] and everything correctly stays on the hero
+    // rather than dropping to an invisible placeholder.
+    const real = v.realIdx && v.realIdx.length ? v.realIdx : [0];
     let want;
-    if (i < HERO_BUDGET && v.d2 <= heroMaxD2) { want = 0; hero++; }
-    else if (n > 2 && v.d2 > heroMaxD2 * 4)   { want = 2; far++; }
-    else                                       { want = Math.min(1, n - 1); mid++; }
+    if (i < HERO_BUDGET && v.d2 <= heroMaxD2) { want = real[0]; hero++; }
+    else if (real.length > 2 && v.d2 > heroMaxD2 * 4) { want = real[2]; far++; }
+    else { want = real[Math.min(1, real.length - 1)]; mid++; }
 
     for (let j = 0; j < n; j++) {
       const vis = (j === want);
