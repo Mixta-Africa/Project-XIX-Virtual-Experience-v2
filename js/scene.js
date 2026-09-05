@@ -9,7 +9,7 @@
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
 import {
   initVillaLODBudget, updateVillaLODBudget, setVillaLODBudget, fixVillaMaterials
-} from "./villa-lod-budget.js?v=73";
+} from "./villa-lod-budget.js?v=76";
 import { GLTFLoader }  from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/GLTFLoader.js";
 import { DRACOLoader } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/DRACOLoader.js";
 import { MeshoptDecoder } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/libs/meshopt_decoder.module.js";
@@ -18,7 +18,8 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=73";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=76";
+import { UNIT_SCHEDULE } from "./data.js?v=76";
 import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
@@ -27,7 +28,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=73";
+} from "./graphics.js?v=76";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -129,6 +130,52 @@ const VILLA_SCALE = 12.56;
 // Do not change it without re-deriving the ring layout in addVillaRing().
 const VILLA_TARGET_WIDTH = 11.4362;
 const VILLA_MODEL_SCALAR = 5.71853;   // legacy fallback only — see fitVillaScalar()
+
+// Reports exactly what a loaded building GLB carries, so a look regression can
+// be attributed instead of guessed at. The three things that have actually
+// caused quality drops here:
+//
+//   1. TANGENT missing. Three.js then derives tangents from screen-space
+//      derivatives. On a photogrammetry mesh with an atlas normal map that
+//      reads as grain, and applyPS4Materials multiplies it by normalScale 1.15.
+//      Blender bakes real per-vertex tangents, which is why the viewport looks
+//      right and the app does not.
+//
+//   2. A missing map. applyPS4Materials only takes its calibrated baked-asset
+//      branch when map AND normalMap AND roughnessMap are all present. Lose one
+//      and the material falls through to name matching, which cannot classify
+//      "pbr_material", and ends on the default — procedural values painted over
+//      your bake.
+//
+//   3. Texture downscaling. 1K across a whole villa is ~44 texels/m: one pixel
+//      per 2.3 cm of wall, which is the soft, waxy look up close.
+function reportVillaAsset(obj, label) {
+  let tris = 0, hasTangent = false, mats = new Set();
+  const maps = {};
+  obj.traverse(o => {
+    if (!o.isMesh || !o.geometry) return;
+    const g = o.geometry;
+    tris += (g.index ? g.index.count : (g.attributes.position ? g.attributes.position.count : 0)) / 3;
+    if (g.attributes.tangent) hasTangent = true;
+    const list = Array.isArray(o.material) ? o.material : [o.material];
+    list.forEach(m => {
+      if (!m) return;
+      mats.add(m.name || '(unnamed)');
+      ['map','normalMap','roughnessMap','metalnessMap','aoMap'].forEach(k => {
+        if (m[k] && m[k].image) maps[k] = `${m[k].image.width}x${m[k].image.height}`;
+      });
+    });
+  });
+  const baked = !!(maps.map && maps.normalMap && maps.roughnessMap);
+  console.log(
+    `[XIX] ${label}: ${Math.round(tris).toLocaleString()} tris | ` +
+    `TANGENT ${hasTangent ? 'yes' : 'NO — normals will be derivative-based'} | ` +
+    `materials [${[...mats].join(', ')}] | maps ${JSON.stringify(maps)} | ` +
+    `applyPS4Materials baked branch: ${baked ? 'YES' : 'NO — falling through to procedural default'}`
+  );
+  if (!hasTangent) console.warn(`[XIX] ${label}: no tangents. Re-export from Blender with Data > Mesh > Tangents TICKED.`);
+  if (!baked)      console.warn(`[XIX] ${label}: incomplete map set — the calibrated material branch will not run.`);
+}
 
 function fitVillaScalar(obj) {
   // Measure at scale 1 so the raw authored size is what we read.
@@ -4166,6 +4213,7 @@ function loadVillaGLB(){
   }
 
   makeDracoLoader().load("assets/villa-mesh.glb", gltf => {
+    reportVillaAsset(gltf.scene, 'villa-mesh.glb');
     // Derived from this GLB's own bbox — a re-exported mesh of any size still
     // lands on VILLA_TARGET_WIDTH. See fitVillaScalar().
     gltf.scene.scale.setScalar(fitVillaScalar(gltf.scene));
@@ -4260,6 +4308,7 @@ function loadLoftGLB(){
     // Derived from LOFT_BLOCK_WIDTH, not hard-coded — the old 4.79208 was a
     // per-unit figure applied to a per-block model.
     {
+      reportVillaAsset(gltf.scene, 'loft-mesh.glb');
       const raw = new THREE.Box3().setFromObject(gltf.scene).getSize(new THREE.Vector3());
       const scalar = raw.x > 1e-6 ? (LOFT_BLOCK_WIDTH / raw.x) : 4.79208;
       gltf.scene.scale.setScalar(scalar);
@@ -4647,8 +4696,14 @@ function isInNoBuildZone(x,z){
 //
 // Capping the COUNT instead of the distance makes the load a fixed number you
 // choose, identical everywhere on the ring.
+// Asset quality is NOT the same axis as render quality. An earlier version set
+// fast:hero=0, which meant an integrated-GPU machine never saw the detailed
+// villa even standing beside it — the whole point of shipping a 1.9M model. The
+// budget already bounds the cost to a fixed triangle count, so one hero villa
+// is affordable anywhere; what fast mode should cut is post-processing, shadow
+// resolution and draw distance, not the model you walked up to look at.
 const VILLA_BUDGET_BY_MODE = {
-  fast:     { hero: 0, maxDist: 0,  shadowCutoff: 0  },   // never level 0
+  fast:     { hero: 1, maxDist: 45, shadowCutoff: 0  },
   balanced: { hero: 2, maxDist: 70, shadowCutoff: 60 },
   rich:     { hero: 3, maxDist: 90, shadowCutoff: 80 },
 };
@@ -4658,7 +4713,7 @@ const VILLA_BUDGET_BY_MODE = {
 // blocks at 26 m pitch cluster far harder than the villa ring. 1 hero slot
 // takes the precinct from 53.2M triangles to about 4.5M.
 const LOFT_BUDGET_BY_MODE = {
-  fast:     { hero: 0, maxDist: 0,  shadowCutoff: 0 },
+  fast:     { hero: 1, maxDist: 35, shadowCutoff: 0 },
   balanced: { hero: 1, maxDist: 45, shadowCutoff: 0 },
   rich:     { hero: 1, maxDist: 60, shadowCutoff: 0 },
 };
@@ -4785,56 +4840,128 @@ function addVillaRing(){
   loadLampMeshes();     // needs _hedgeInstData, so runs after hedges
 }
 
+// ── LOFT PRECINCT ───────────────────────────────────────────────────────────
+// Transcribed from the masterplan: 20 orange rectangles in four runs, of which
+// exactly two are the wide loft-apartment buildings.
+//
+// A "module" is one loft-mesh.glb — 36 m, four 9 m bays, four units. A small
+// rectangle is 1 module; each wide one is 3 abutted modules (108 m, 12 units).
+// That is the only split that reaches UNIT_SCHEDULE's 96:
+//     18 small x 4u  +  2 wide x 12u  =  96
+//
+// The previous loops placed 28 blocks (112 units) at 26 m pitch, which only
+// looked right because the GLB was rendering 4.68 m wide instead of 36 m.
+// Correcting the scale means the rows have to occupy their true length: the
+// north-west run needs 328 m against the old 200 m, which is why it now starts
+// at x -395 rather than -310. Both runs stay inside WORLD (x -400..310).
+const LOFT_BLOCK_GAP = 8.0;
+
+// North rows sit above the perimeter road, parallel to the top edge, following
+// the same slight curve away from the field the original code used.
+const _loftNorthZ = (x) => -162 - Math.abs(x) * 0.05;
+
+const LOFT_RUNS = [
+  // 1. North-west row — 5 small then 1 wide, left to right. 32 units.
+  { name: 'north-west row', ry: Math.PI, axis: 'x', z: _loftNorthZ, blocks: [
+    { x: -377.0, modules: 1 },   // small, 4 units
+    { x: -333.0, modules: 1 },   // small, 4 units
+    { x: -289.0, modules: 1 },   // small, 4 units
+    { x: -245.0, modules: 1 },   // small, 4 units
+    { x: -201.0, modules: 1 },   // small, 4 units
+    { x: -121.0, modules: 3 },   // wide, 12 units
+  ]},
+
+  // LARGE CENTRAL GAP — the lake, the Crescent and the Garden Museum Villas.
+  // No lofts here. (An earlier pass proposed filling it; the plan says no.)
+
+  // 2. North-east row — 1 wide then 3 small. 24 units.
+  { name: 'north-east row', ry: Math.PI, axis: 'x', z: _loftNorthZ, blocks: [
+    { x: 119.0,  modules: 3 },   // wide, 12 units
+    { x: 199.0,  modules: 1 },   // small, 4 units
+    { x: 243.0,  modules: 1 },   // small, 4 units
+    { x: 287.0,  modules: 1 },   // small, 4 units
+  ]},
+
+  // 3. West strip — three vertical PAIRS plus a single below them, each block
+  //    horizontal despite the strip running north-south. Pair members sit 16 m
+  //    apart in z (11 m depth + 5 m); 40 m between pairs for the landscaped
+  //    parking compound. 28 units.
+  //    x -200 spans -218..-182: clears TRAINING (-330..-268), the apartment
+  //    blocks (-254..-236) and the west villa column (-168..-156) by 14 m.
+  { name: 'west strip', ry: 0, axis: 'z', x: -200, blocks: [
+    { z: 65,     modules: 1 },   // small, 4 units
+    { z: 49,     modules: 1 },   // small, 4 units
+    { z: 9,      modules: 1 },   // small, 4 units
+    { z: -7,     modules: 1 },   // small, 4 units
+    { z: -47,    modules: 1 },   // small, 4 units
+    { z: -63,    modules: 1 },   // small, 4 units
+    { z: -103,   modules: 1 },   // small, 4 units
+  ]},
+
+  // 4. East strip — 3 stacked beyond the paddock, inside the perimeter road.
+  //    12 units.
+  { name: 'east strip', ry: 0, axis: 'z', x: 275, blocks: [
+    { z: -50,    modules: 1 },   // small, 4 units
+    { z: -66,    modules: 1 },   // small, 4 units
+    { z: -106,   modules: 1 },   // small, 4 units
+  ]},
+];
+
 function addLoftTerraces(){
-  // SPACING: From the masterplan, loft blocks are clearly tight — nearly touching,
-  // with only a narrow road gap between them. The previous 36m pitch (= block width)
-  // gave zero gap. Reduced to 26m: ~10m gap between block edges (the access road).
-  // West column z positions: the last south block should align with the south
-  // edge of the apartment blocks (APT at z=-45, footprint ≈ 38m → south edge ≈ -64).
-  // z range revised from [-75,-45,-15,15,45,75,105] to match plan.
+  let blocks = 0, units = 0;
 
-  function placeLoftBlock(x, z, ry) {
-    placeLoftGLB(x, z, ry, null); 
-    const offsets = [-13.5, -4.5, 4.5, 13.5]; 
-    const cosR = Math.cos(ry), sinR = Math.sin(ry);
+  for (const runDef of LOFT_RUNS) {
+    for (const b of runDef.blocks) {
+      const alongX = runDef.axis === 'x';
+      const cx = alongX ? b.x : runDef.x;
+      const cz = alongX ? runDef.z(b.x) : b.z;
+      const span = b.modules * LOFT_BLOCK_WIDTH;
 
-    offsets.forEach(offsetX => {
-      const unitX = x + offsetX * cosR;
-      const unitZ = z - offsetX * sinR; 
-      const key = String(window._nextUnitId++); 
-      
-      const hitbox = new THREE.Mesh(
-        new THREE.BoxGeometry(9, 10, 16),
-        new THREE.MeshBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0, depthWrite: false, depthTest: false })
-      );
-      hitbox.position.set(unitX, 5, unitZ); 
-      hitbox.rotation.y = ry;
-      hitbox.renderOrder = 999;
-      hitbox.userData = { isPlotOverlay: true, plotKey: key };
-      hitbox.visible = false;
-      scene.add(hitbox);
-      
-      plotRegistry.set(key, { x: unitX, z: unitZ, status: 'available', overlay: hitbox, type: "2 BED LOFT TERRACE", ry: ry });
-      markPickTargetsDirty();
-    });
+      // A wide block is N modules abutted, so place N GLBs centred on the run.
+      for (let m = 0; m < b.modules; m++) {
+        const off = (m - (b.modules - 1) / 2) * LOFT_BLOCK_WIDTH;
+        const mx = cx + (alongX ? off : 0);
+        const mz = cz + (alongX ? 0 : off);
+        placeLoftGLB(mx, mz, runDef.ry, null);
+      }
+
+      // One sellable unit per 9 m bay, laid out along the block's own axis.
+      const bays = b.modules * 4;
+      const cosR = Math.cos(runDef.ry), sinR = Math.sin(runDef.ry);
+      for (let u = 0; u < bays; u++) {
+        const off = (u - (bays - 1) / 2) * (LOFT_BLOCK_WIDTH / 4);
+        const unitX = cx + off * cosR;
+        const unitZ = cz - off * sinR;
+        const key = String(window._nextUnitId++);
+
+        const hitbox = new THREE.Mesh(
+          new THREE.BoxGeometry(9, 10, 16),
+          new THREE.MeshBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0, depthWrite: false, depthTest: false })
+        );
+        hitbox.position.set(unitX, 5, unitZ);
+        hitbox.rotation.y = runDef.ry;
+        hitbox.renderOrder = 999;
+        hitbox.userData = { isPlotOverlay: true, plotKey: key };
+        hitbox.visible = false;
+        scene.add(hitbox);
+
+        plotRegistry.set(key, { x: unitX, z: unitZ, status: 'available', overlay: hitbox, type: "2 BED LOFT TERRACE", ry: runDef.ry });
+        markPickTargetsDirty();
+      }
+      blocks++; units += bays;
+      void span;
+    }
   }
 
-  // North and south horizontal rows: 26m pitch (was 36m) → tighter, matches plan
-  for(let x=-310; x<=-110; x+=26){ 
-    placeLoftBlock(x, -162-Math.abs(x)*.05, Math.PI); 
+  // Guard: the sheet sync reads 223 rows against UNIT_SCHEDULE. Any drift here
+  // mints plot keys with no row behind them, which is how the precinct ended up
+  // silently showing 112 units against a schedule of 96.
+  const expected = (UNIT_SCHEDULE.find(u => /Loft/i.test(u.type)) || {}).units;
+  if (expected && units !== expected) {
+    console.warn(`[XIX] Lofts: ${blocks} blocks -> ${units} units, but UNIT_SCHEDULE says ${expected}`);
+  } else {
+    console.log(`[XIX] Lofts: ${blocks} blocks, ${units} units, matches UNIT_SCHEDULE`);
   }
-  for(let x=95; x<=310; x+=26){ 
-    placeLoftBlock(x, -162-Math.abs(x)*.05, Math.PI); 
-  }
-  
-  // West vertical column: z range chosen so the southernmost block aligns with
-  // the south edge of APT-BLOCK-1 (centred z=-45, approx south edge z≈-66).
-  // 26m pitch from z=62 stepping south: 62, 36, 10, -16, -42, -68
-  // That puts the last block at z=-68, aligning with apartment block south face.
-  [62, 36, 10, -16, -42, -68].forEach(z => { placeLoftBlock(-200, z, 0); });
-
-  // North-east corner column: aligned with north row's last block (x=275)
-  [-165, -145, -125, -105, -85].forEach(z => { placeLoftBlock(275, z, 0); });
 }
 
 function addWestCompound() {
