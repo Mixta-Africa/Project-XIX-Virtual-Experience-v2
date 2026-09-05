@@ -1485,6 +1485,15 @@ export function tickGrass(camera) {
 let _palmMeshA = null, _palmMeshB = null, _palmCount = 0, _palmPos = null, _palmScale = null;
 let _palmHeight = null;   // per-palm height, so tickPalms stops flattening the variation
 
+// Every material that shows the palm sprite — colour AND shadow-depth, for both
+// crossed meshes. The sprite loads asynchronously, and a MeshStandardMaterial
+// reads material.map rather than a uniform, so the swap has to reach all of
+// them. Missing that is what produced "Texture marked for update but no image
+// data found" once per material per frame: the placeholder was disposed while
+// four materials still pointed at it.
+const _palmMats = [];
+let _palmTex = null;
+
 // ── FOLIAGE WIND ────────────────────────────────────────────────────────────
 // Shared by the palms (billboard cards) and the instanced trees (real
 // geometry). Injected into a normal lit material with onBeforeCompile rather
@@ -1630,9 +1639,14 @@ export function buildPalmInstances(scene, palmDefs) {
       t.colorSpace = THREE.SRGBColorSpace;
       t.generateMipmaps = true;
       t.minFilter = THREE.LinearMipmapLinearFilter;
+      _palmTex = t;
       if (window._xixPalmUniforms) {
-        window._xixPalmUniforms.uPalmTex.value = t;   // swap the uniform, not .image
+        window._xixPalmUniforms.uPalmTex.value = t;
       }
+      // Reach every material built before the sprite arrived. needsUpdate is
+      // required: swapping .map changes the shader's defines.
+      _palmMats.forEach(m => { m.map = t; m.needsUpdate = true; });
+      // Only safe to dispose once nothing references it any more.
       palmTexPlaceholder.dispose();
     },
     undefined,
@@ -1691,7 +1705,10 @@ export function buildPalmInstances(scene, palmDefs) {
   function makePalmMesh(rotY) {
     const geo = new THREE.PlaneGeometry(1, 1, 1, 4); // 4 vertical segments for smooth sway
     const mat = new THREE.MeshStandardMaterial({
-      map: palmUniforms.uPalmTex.value,
+      // _palmTex if the sprite already landed, otherwise the transparent
+      // placeholder — which alphaTest discards entirely, so palms are invisible
+      // rather than solid green rectangles until it does.
+      map: _palmTex || palmUniforms.uPalmTex.value,
       alphaTest: 0.35,
       transparent: false,
       side: THREE.DoubleSide,
@@ -1699,6 +1716,7 @@ export function buildPalmInstances(scene, palmDefs) {
       metalness: 0.0,
     });
     const depthMat = applyFoliageWind(mat, { mode: 'uv' });
+    _palmMats.push(mat, depthMat);
 
     const mesh = new THREE.InstancedMesh(geo, mat, _palmCount);
     mesh.frustumCulled = false;
