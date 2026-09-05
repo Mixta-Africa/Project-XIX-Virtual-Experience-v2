@@ -10,7 +10,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
-import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=81";
+import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=82";
 // villa-interior.js removed — dead file, superseded by interior.js
 import {
   initScene, getRenderer, getScene, getCamera, getClock,
@@ -23,12 +23,12 @@ import {
   setAudioMuted, isAudioMuted, setMixLevel, getMixLevels, getMixDefaults, resetMixLevels, getAudioStatus,
   setPlotOverlaysSuppressed,
   tickVillaLOD,
-} from "./scene.js?v=81";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=81";
+} from "./scene.js?v=82";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=82";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
-} from "./controls.js?v=81";
+} from "./controls.js?v=82";
 import {
   initMinimap, updateMinimap,
   buildViewpointStrip, showZonePanel, hideZonePanel,
@@ -36,7 +36,7 @@ import {
   setCaption as _setCaption_raw, showEnterPrompt, hideEnterPrompt,
   showVRButton, showJoystick, hideJoystick, isMobile,
   enableAudio, updateSpatialAudio, initAudio
-} from "./ui.js?v=81";
+} from "./ui.js?v=82";
 
 window.plotRegistry = plotRegistry;
 
@@ -163,6 +163,10 @@ const DAY_CYCLE_DURATION = 5 * 60; // 5 minutes real-time per full day loop
 let   _dayAutoRun  = true;   
 let   _dayPauseEnd = 0;      
 let   _lastDayApplied = '';  
+// Pinned. The Weather dropdown was removed from index.html — it was a novelty
+// on a sales tool, and "rain" set fogMult 5.0 / sunMult 0.1, which made the
+// estate look worse than any real Lagos afternoon. applyWeather() is kept and
+// still exported so it can be driven from the console or restored later.
 let   _currentWeather = 'clear';
 
 function tickDayCycle(elapsed) {
