@@ -533,7 +533,6 @@
            underlying state is pinned to "clear" in app.js — fog, sun
            intensity, palm wind and the wet-road shader all still read
            _currentWeather, so the plumbing stays, only the UI is gone. -->
-      </div>
 
       <!-- Quality -->
       <div class="topbar-dropdown" tabindex="0">
@@ -819,14 +818,14 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 
-<script type="module" src="js/app.js?v=82"></script>
+<script type="module" src="js/app.js?v=83"></script>
 
 <!-- Interior walkthrough is now built directly into the main scene by app.js -->
 <!-- (window.stepInsideVilla, scene.js: enterVillaInterior/teleportVillaRoom/exitVillaInterior) -->
 <!-- interior.js is now a pure geometry factory only — no separate scene/camera/renderer. -->
 
 <script type="module">
-import { openProductPanel, closeProductPanel, resizePanelViewer } from "./js/product-panel.js?v=82";
+import { openProductPanel, closeProductPanel, resizePanelViewer } from "./js/product-panel.js?v=83";
 window.__moduleReady = window.__moduleReady || {};
 window.__moduleReady.showProductPanel = openProductPanel;
 window.__moduleReady.closeProductPanel = closeProductPanel;
