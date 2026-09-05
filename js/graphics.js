@@ -203,6 +203,40 @@ export function setInteriorDOF(active, focusDistance = 3.5) {
   }
 }
 
+// ── IBL INTENSITY ───────────────────────────────────────────────────────────
+// The authored, time-of-day environment brightness. applyHDRITimeModulation()
+// owns this value; the perf tier only ever applies a FACTOR to it.
+//
+// THE BUG THIS REPLACES
+//   setPerfModeGraphics used to read scene.environmentIntensity, multiply it,
+//   and write it back:
+//       const base = _scene.environmentIntensity || 1.0;
+//       ... : base * 0.85;          // fast
+//   Rich and Balanced survived that only because their Math.min clamps (2.0 and
+//   1.4) saturate. Fast had no floor, so every call multiplied the environment
+//   light by 0.85 AGAIN:  1.00 -> 0.85 -> 0.72 -> 0.61 -> 0.52 ...
+//   The function runs on boot, on GPU tier detection, on every mode change and
+//   formerly on every governor step. On a machine that detects as integrated
+//   and pins to fast, the scene decayed toward black.
+//
+// Fast is now 1.0, not 0.85. It BYPASSES the composer (see renderFrame), so it
+// has no bloom lifting highlights — reducing its ambient on top of that was
+// taking light away from the tier that already had the least.
+let _envIntensityBase = 1.0;
+
+const ENV_INTENSITY_BY_MODE = { fast: 1.00, balanced: 1.10, rich: 1.35 };
+
+function _applyEnvIntensity() {
+  if (!_scene || _scene.environmentIntensity === undefined) return;
+  const factor = ENV_INTENSITY_BY_MODE[_perfMode] || 1.0;
+  _scene.environmentIntensity = Math.min(_envIntensityBase * factor, 2.0);
+}
+
+export function setEnvIntensityBase(v) {
+  _envIntensityBase = Number(v) || 1.0;
+  _applyEnvIntensity();
+}
+
 export function setPerfModeGraphics(mode) {
   _perfMode = mode;
 
@@ -295,16 +329,9 @@ export function setPerfModeGraphics(mode) {
     }
   }
 
-  // ── IBL strength: Rich gets fuller environment lighting ─────────────────
-  if (_scene && _scene.environmentIntensity !== undefined) {
-    const base = _scene.environmentIntensity || 1.0;
-    // The new PBR mesh carries a proper metallic-roughness map, so IBL
-    // variations actually read as material differences now rather than as
-    // uniform brightening. Push the ceiling up.
-    _scene.environmentIntensity = mode === 'rich'     ? Math.min(base * 1.35, 2.0)
-                                : mode === 'balanced' ? Math.min(base * 1.10, 1.4)
-                                : base * 0.85;
-  }
+  // ── IBL strength ────────────────────────────────────────────────────────
+  // Always derived from the authored base, never from the current value.
+  _applyEnvIntensity();
 
   // Retunes uniforms in place on already-compiled programs. Only the
   // triplanar toggle changes the cache key, so fast <-> balanced is the sole
@@ -339,6 +366,18 @@ export function resizeComposer(w, h) {
 //   window.setExposure(0.62)   default; lower = deeper blacks, less washed out
 //   window.setBloom(0.10)      default; lower = less highlight lift
 if (typeof window !== 'undefined') {
+  window.getLighting = function () {
+    const o = {
+      mode: _perfMode,
+      envBase: _envIntensityBase,
+      envFactor: ENV_INTENSITY_BY_MODE[_perfMode] || 1.0,
+      envActive: _scene ? _scene.environmentIntensity : null,
+      exposure: _renderer ? _renderer.toneMappingExposure : null,
+      composer: _perfMode !== 'fast',
+    };
+    console.table(o);
+    return o;
+  };
   window.setExposure = function (v) {
     if (!_renderer) return;
     _renderer.toneMappingExposure = Number(v);
@@ -469,7 +508,8 @@ export function loadHDRI(renderer, scene, onLoaded) {
         // Apply to scene — this single assignment makes EVERY PBR material
         // in the scene pick up the HDRI reflections automatically
         scene.environment            = _hdriEnvMap;
-        scene.environmentIntensity   = HDRI_TIME_MODULATION.afternoon.envInt;
+        _envIntensityBase            = HDRI_TIME_MODULATION.afternoon.envInt;
+        scene.environmentIntensity   = _envIntensityBase;
         scene.backgroundBlurriness   = 0.0; // Sky shader is the background, not the HDRI
 
         console.log('[XIX] HDRI loaded and baked —', HDRI_PATH);
@@ -498,7 +538,11 @@ export function applyHDRITimeModulation(timeName, scene) {
   // scene.environmentIntensity scales ALL IBL in the scene uniformly
   // Supported in Three.js r163+
   if (scene.environmentIntensity !== undefined) {
-    scene.environmentIntensity = mod.envInt;
+    // This is the authored value for the time of day. Record it as the base and
+    // let the perf tier apply its factor — writing it directly would drop the
+    // tier adjustment until the next mode change.
+    _envIntensityBase = mod.envInt;
+    _applyEnvIntensity();
   } else {
     // Fallback for older Three.js: traverse and set envMapIntensity per material
     scene.traverse(obj => {
