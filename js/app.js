@@ -10,7 +10,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
-import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=76";
+import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=77";
 // villa-interior.js removed — dead file, superseded by interior.js
 import {
   initScene, getRenderer, getScene, getCamera, getClock,
@@ -23,12 +23,12 @@ import {
   setAudioMuted, isAudioMuted, setMixLevel, getMixLevels, getMixDefaults, resetMixLevels, getAudioStatus,
   setPlotOverlaysSuppressed,
   tickVillaLOD,
-} from "./scene.js?v=76";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=76";
+} from "./scene.js?v=77";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=77";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
-} from "./controls.js?v=76";
+} from "./controls.js?v=77";
 import {
   initMinimap, updateMinimap,
   buildViewpointStrip, showZonePanel, hideZonePanel,
@@ -36,7 +36,7 @@ import {
   setCaption as _setCaption_raw, showEnterPrompt, hideEnterPrompt,
   showVRButton, showJoystick, hideJoystick, isMobile,
   enableAudio, updateSpatialAudio, initAudio
-} from "./ui.js?v=76";
+} from "./ui.js?v=77";
 
 window.plotRegistry = plotRegistry;
 
@@ -1915,6 +1915,24 @@ const TOUR_STOPS = [
 
 window.__tourActive = false;
 let _tourIdx = 0, _tourRAF = null, _tourTimer = null, _tourFadeEl = null, _tourCardEl = null;
+let _tourPan = null;
+
+// Stepped once per frame from frame(), after updateControls(). Linear on
+// purpose — easing a reveal pan makes it feel like it is starting and stopping,
+// where a constant rate reads as a locked-off camera move.
+function tickTourPan() {
+  if (!window.__tourActive || !_tourPan) return;
+  const p = _tourPan;
+  const t = Math.min(1, (performance.now() - p.t0) / p.hold);
+  setView(
+    [ p.from[0] + (p.to[0]-p.from[0])*t,
+      p.from[1] + (p.to[1]-p.from[1])*t,
+      p.from[2] + (p.to[2]-p.from[2])*t ],
+    p.yaw + (p.panTo - p.yaw) * t,
+    p.pitch
+  );
+  if (t >= 1) _tourPan = null;
+}
 
 function _tourFade() {
   if (_tourFadeEl) return _tourFadeEl;
@@ -1962,20 +1980,24 @@ function _tourRunStop(i) {
   fade.style.opacity = '0';
   _tourShowCard(stop);
 
-  const t0 = performance.now();
-  const from = stop.pos, to = stop.dolly || stop.pos;
-  // Linear on purpose. Easing a reveal pan makes it feel like it is starting
-  // and stopping; a constant rate reads as a locked-off camera move.
-  (function pan(now) {
-    if (!window.__tourActive) return;
-    const t = Math.min(1, (now - t0) / stop.hold);
-    setView(
-      [ from[0] + (to[0]-from[0])*t, from[1] + (to[1]-from[1])*t, from[2] + (to[2]-from[2])*t ],
-      stop.yaw + (stop.panTo - stop.yaw) * t,
-      stop.pitch
-    );
-    if (t < 1) _tourRAF = requestAnimationFrame(pan);
-  })(t0);
+  // The pan used to run on its OWN requestAnimationFrame calling setView each
+  // frame. That is what made the camera shake:
+  //   • setView() snaps BOTH targetYaw and currentYaw (it exists to kill the
+  //     sweep on teleport), so per-frame calls bypass the exponential decay
+  //     smoothing in controls.js completely;
+  //   • updateControls() was still active in the MAIN loop writing
+  //     camera.rotation.y from its own state, so two callbacks in two separate
+  //     rAFs wrote the camera every frame with no guaranteed ordering.
+  //
+  // Now the pan is state only, stepped once per frame from frame() after
+  // updateControls, and controls are deactivated for the duration — one writer,
+  // fixed ordering, no jitter.
+  _tourPan = {
+    t0: performance.now(),
+    from: stop.pos,
+    to: stop.dolly || stop.pos,
+    yaw: stop.yaw, panTo: stop.panTo, pitch: stop.pitch, hold: stop.hold,
+  };
 
   // Fade out just before the pan ends, so the cut lands on black.
   _tourTimer = setTimeout(() => {
@@ -1999,6 +2021,10 @@ window.startTour = function() {
   if (aerialOrbit) toggleAerial(document.getElementById('btn-aerial'));
   if (document.pointerLockElement) document.exitPointerLock();
 
+  // Hand the camera over completely. While active, updateControls() returns
+  // early, so tickTourPan() is the only thing writing camera transform.
+  if (typeof deactivate === 'function') deactivate();
+
   // Hide the interface — the tour is the film, not the tool.
   document.body.classList.add('tour-running');
   const btn = document.getElementById('btn-tour');
@@ -2019,6 +2045,8 @@ window.startTour = function() {
 window.__tourStop = function() {
   if (!window.__tourActive) return;
   window.__tourActive = false;
+  _tourPan = null;
+  if (typeof activate === 'function') activate();   // hand the camera back
   if (_tourRAF)   cancelAnimationFrame(_tourRAF);
   if (_tourTimer) clearTimeout(_tourTimer);
   _tourRAF = null; _tourTimer = null;
@@ -3328,6 +3356,58 @@ window.resumeMainRenderLoop = function() {
 // Brief, non-intrusive toast shown when the governor auto-drops quality, so the
 // visual change isn't mysterious. Auto-dismisses; reuses one element.
 let _qualityNoteEl = null, _qualityNoteTimer = null;
+// ── QUALITY SUGGESTION PROMPT ───────────────────────────────────────────────
+// The governor used to switch quality by itself. Two problems with that: the
+// picture changed under you with no way to refuse, and because step-down had no
+// recovery path a single bad window — reliably produced by the 1.9M-triangle
+// decode during load — pinned the whole session to fast.
+//
+// It now only ASKS. One prompt at a time, dismissible, and "Not now" suppresses
+// further suggestions for the rest of the session so it can never nag.
+let _qualityPromptEl = null;
+let _qualitySuggestionsMuted = false;
+
+function _suggestQualityChange(tier, reason) {
+  if (_qualitySuggestionsMuted) return;
+  if (_qualityPromptEl && _qualityPromptEl.isConnected) return;   // one at a time
+
+  const label = tier.charAt(0).toUpperCase() + tier.slice(1);
+  const el = document.createElement('div');
+  el.style.cssText =
+    'position:fixed;bottom:96px;left:50%;transform:translateX(-50%) translateY(8px);' +
+    'background:rgba(10,20,12,0.94);color:#e8e4d9;padding:14px 18px;border-radius:10px;' +
+    'font-family:Inter,sans-serif;font-size:13px;z-index:9999;' +
+    'border:1px solid rgba(201,168,76,0.4);box-shadow:0 8px 28px rgba(0,0,0,0.45);' +
+    'opacity:0;transition:opacity .3s,transform .3s;max-width:min(92vw,420px);';
+  el.innerHTML =
+    `<div style="margin-bottom:4px;color:#c9a84c;font-weight:600;">Switch to ${label} mode?</div>` +
+    `<div style="opacity:.75;margin-bottom:11px;line-height:1.4;">${reason}</div>` +
+    `<div style="display:flex;gap:8px;justify-content:flex-end;">` +
+      `<button data-a="no"  style="background:none;border:1px solid rgba(232,228,217,0.25);color:#e8e4d9;padding:6px 14px;border-radius:6px;font:inherit;cursor:pointer;">Not now</button>` +
+      `<button data-a="yes" style="background:#c9a84c;border:1px solid #c9a84c;color:#0a140c;padding:6px 16px;border-radius:6px;font:inherit;font-weight:600;cursor:pointer;">Yes</button>` +
+    `</div>`;
+  (document.getElementById('world-overlay') || document.body).appendChild(el);
+  requestAnimationFrame(() => { el.style.opacity = '1'; el.style.transform = 'translateX(-50%) translateY(0)'; });
+  _qualityPromptEl = el;
+
+  const close = () => {
+    el.style.opacity = '0';
+    setTimeout(() => el.remove(), 320);
+    _qualityPromptEl = null;
+  };
+  el.querySelector('[data-a="yes"]').onclick = () => {
+    if (typeof window.switchPerfMode === 'function') window.switchPerfMode(tier, true);
+    close();
+  };
+  el.querySelector('[data-a="no"]').onclick = () => {
+    // Asked once and declined — the answer does not change three minutes later.
+    _qualitySuggestionsMuted = true;
+    console.log('[XIX] Quality suggestions muted for this session');
+    close();
+  };
+  // No auto-dismiss: a prompt that vanishes mid-read is worse than none.
+}
+
 function _showQualityNote(tier) {
   const label = tier.charAt(0).toUpperCase() + tier.slice(1);
   if (!_qualityNoteEl) {
@@ -3487,9 +3567,9 @@ function startRenderLoop(){
       const idx  = _TIER_ORDER.indexOf(cur);
       if (idx >= 0 && idx < capI) {
         const next = _TIER_ORDER[idx + 1];
-        console.log(`[XIX] Auto quality: ${cur} → ${next} (median ${medianFps.toFixed(0)} fps, cap ${window._xixMaxTier})`);
-        if (typeof window.switchPerfMode === 'function') window.switchPerfMode(next, /*auto=*/true);
-        _govCooldownUntil = now + 6000;   // longer than the step-down cooldown
+        console.log(`[XIX] Quality suggestion: ${cur} → ${next} (median ${medianFps.toFixed(0)} fps, cap ${window._xixMaxTier})`);
+        _suggestQualityChange(next, `Running smoothly at ${medianFps.toFixed(0)} fps.`);
+        _govCooldownUntil = now + 30000;
         _fpsCount = 0; _fpsIdx = 0;
       }
       return;
@@ -3502,7 +3582,7 @@ function startRenderLoop(){
         const next = _TIER_ORDER[idx - 1];
         const gpu = window._xixGPUTier ? ` [GPU: ${window._xixGPUTier}]` : '';
         console.warn(`[XIX] Auto quality: ${cur} → ${next} (median ${medianFps.toFixed(0)} fps)${gpu}`);
-        if (typeof window.switchPerfMode === 'function') window.switchPerfMode(next, /*auto=*/true);
+        _suggestQualityChange(next, `Frame rate is dropping (${medianFps.toFixed(0)} fps).`);
         _govCooldownUntil = now + 3500;   // let it settle before considering another drop
         // Reset the window so the new tier is measured fresh
         _fpsCount = 0; _fpsIdx = 0;
@@ -3523,6 +3603,7 @@ function startRenderLoop(){
     // Cap how many villas render at full detail. Internally throttled — only
     // recomputes when the camera has moved ~2 m, so this is near-free.
     tickVillaLOD(camera);
+    tickTourPan();      // must run after updateControls — see tickTourPan()
 
     if(aerialOrbit){
       aerialAngle += AERIAL_SPEED * delta;
