@@ -374,9 +374,19 @@ const LOFT_LOD_SWAP = 45;
 // at roughly the width of a single apartment — 4.683 m on the current export,
 // about the height of a horse, which is exactly how it looked.
 //
-// 36 m is what the rest of the code already assumes: the unit hitboxes sit at
-// offsets [-13.5,-4.5,4.5,13.5], i.e. four bays at 9 m centres.
-const LOFT_BLOCK_WIDTH = 36.0;
+// The first fix (36 m) was itself wrong: it was back-derived from the unit
+// hitboxes' own offsets [-13.5,-4.5,4.5,13.5] (four bays at 9 m centres), and
+// those offsets were written while the block was still rendering at 4.68 m —
+// a bad number inherited from a bad number.
+//
+// The authority is GFA, not the hitboxes:
+//   4 units x 125 m² = 500 m² / 2 floors = 250 m² footprint per block
+// A 4.3 m frontage x 14.6 m deep bay gives 62.8 m² per floor, 125.6 m² over
+// two floors — matching the unit brief — and four bays abutted gives a
+// 17.2 m wide, 14.6 m deep block (250.4 m² footprint). That is a proper
+// terrace typology; 36 m wide was over four times the true footprint.
+const LOFT_BLOCK_WIDTH = 17.2;
+const LOFT_BLOCK_DEPTH = 14.6;
 let loftLowScene = null;
 
 // Derived at runtime, not hard-coded. loft-mesh.glb keeps its legacy 4.79208
@@ -4844,16 +4854,23 @@ function addVillaRing(){
 // Transcribed from the masterplan: 20 orange rectangles in four runs, of which
 // exactly two are the wide loft-apartment buildings.
 //
-// A "module" is one loft-mesh.glb — 36 m, four 9 m bays, four units. A small
-// rectangle is 1 module; each wide one is 3 abutted modules (108 m, 12 units).
-// That is the only split that reaches UNIT_SCHEDULE's 96:
+// A "module" is one loft-mesh.glb — 17.2 m, four 4.3 m bays, four units. A
+// small rectangle is 1 module; each wide one is 3 abutted modules (51.6 m,
+// 12 units). That is the only split that reaches UNIT_SCHEDULE's 96:
 //     18 small x 4u  +  2 wide x 12u  =  96
 //
 // The previous loops placed 28 blocks (112 units) at 26 m pitch, which only
-// looked right because the GLB was rendering 4.68 m wide instead of 36 m.
-// Correcting the scale means the rows have to occupy their true length: the
-// north-west run needs 328 m against the old 200 m, which is why it now starts
-// at x -395 rather than -310. Both runs stay inside WORLD (x -400..310).
+// looked right because the GLB was rendering 4.68 m wide instead of its true
+// 17.2 m. An intermediate fix mis-derived 36 m from the unit hitboxes'
+// own (equally wrong) offsets before the GFA math below corrected it.
+//
+// NOTE: the x positions below were placed for the 36 m-wide misreading, at a
+// 44 m pitch (36 m block + 8 m gap). At the true 17.2 m width they still fit
+// inside WORLD without overlapping, but the rows now read as loosely spaced
+// rather than as abutted terraces — the pitch was never revisited against the
+// corrected width. Tighten each run's x/z spacing to ~(17.2 + LOFT_BLOCK_GAP)
+// if a continuous terrace look matters more than preserving these exact plot
+// coordinates.
 const LOFT_BLOCK_GAP = 8.0;
 
 // North rows sit above the perimeter road, parallel to the top edge, following
@@ -4925,7 +4942,7 @@ function addLoftTerraces(){
         placeLoftGLB(mx, mz, runDef.ry, null);
       }
 
-      // One sellable unit per 9 m bay, laid out along the block's own axis.
+      // One sellable unit per 4.3 m bay, laid out along the block's own axis.
       const bays = b.modules * 4;
       const cosR = Math.cos(runDef.ry), sinR = Math.sin(runDef.ry);
       for (let u = 0; u < bays; u++) {
@@ -4934,8 +4951,12 @@ function addLoftTerraces(){
         const unitZ = cz - off * sinR;
         const key = String(window._nextUnitId++);
 
+        // Hitbox footprint now matches the GFA-derived bay: 4.3 m frontage
+        // (LOFT_BLOCK_WIDTH / 4) x 14.6 m deep (LOFT_BLOCK_DEPTH). It was
+        // hardcoded at 9 x 16 — the same wrong 9 m bay the block width itself
+        // was mistakenly back-derived from.
         const hitbox = new THREE.Mesh(
-          new THREE.BoxGeometry(9, 10, 16),
+          new THREE.BoxGeometry(LOFT_BLOCK_WIDTH / 4, 10, LOFT_BLOCK_DEPTH),
           new THREE.MeshBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0, depthWrite: false, depthTest: false })
         );
         hitbox.position.set(unitX, 5, unitZ);
@@ -5072,14 +5093,16 @@ function _createVillaFallback(){
 
 function _createLoftBlock(x,z,ry){
   const g=new THREE.Group(); g.position.set(x,0,z); g.rotation.y=ry;
-  const TW=40;
+  // Matches LOFT_BLOCK_WIDTH/LOFT_BLOCK_DEPTH so a loft-mesh.glb load failure
+  // falls back to the same corrected footprint rather than the old 40 x 11 box.
+  const TW=LOFT_BLOCK_WIDTH, TD=LOFT_BLOCK_DEPTH;
   // Explicit colours — no texture dependency, no blue fallback
   const stoneBase = new THREE.MeshStandardMaterial({color:0x9a8a78,roughness:.92,metalness:0});
   const renderBody = new THREE.MeshStandardMaterial({color:0xE8E0D0,roughness:.85,metalness:0});
   const timberRoof = new THREE.MeshStandardMaterial({color:0x7a6848,roughness:.70,metalness:0});
-  g.add(box(TW,3.2,11,stoneBase,[0,1.6,0]));
-  g.add(box(TW,3.2,11,renderBody,[0,4.85,0]));
-  g.add(box(TW+.4,.4,11.4,timberRoof,[0,6.65,0],0,false)); return g;
+  g.add(box(TW,3.2,TD,stoneBase,[0,1.6,0]));
+  g.add(box(TW,3.2,TD,renderBody,[0,4.85,0]));
+  g.add(box(TW+.4,.4,TD+.4,timberRoof,[0,6.65,0],0,false)); return g;
 }
 
 function _createFlatBlock(x,z){
