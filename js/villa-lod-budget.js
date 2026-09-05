@@ -25,7 +25,7 @@
  * INTEGRATION (three lines in scene.js)
  * -------------------------------------
  *   import { initVillaLODBudget, updateVillaLODBudget, setVillaLODBudget }
- *     from './villa-lod-budget.js?v=82';
+ *     from './villa-lod-budget.js?v=83';
  *
  *   // after the villa ring is built, and again after loadVillaGLB /
  *   // loadVillaLowGLB resolve (villas are placed asynchronously):
