@@ -339,6 +339,10 @@ function initGLBViewer(product) {
     // Reuse module-level dracoLoader singleton — never new GLTFLoader() here
     const loader = new GLTFLoader();
     loader.setDRACOLoader(dracoLoader);
+    // Product GLBs exported with meshopt compression fail here otherwise:
+    // "setMeshoptDecoder must be called before loading compressed files".
+    // scene.js registers the decoder on the shared loader and publishes it.
+    if (window.__xixMeshoptDecoder) loader.setMeshoptDecoder(window.__xixMeshoptDecoder);
     loader.load(
       product.glb,
       gltf => {
