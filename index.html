@@ -529,17 +529,10 @@
         </div>
       </div>
 
-      <!-- Weather -->
-      <div class="topbar-dropdown" tabindex="0">
-        <button class="world-btn" aria-haspopup="true" aria-label="Weather">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>
-          <span class="world-btn-label">Weather</span>
-        </button>
-        <div class="topbar-dropdown-menu">
-          <button class="wx-btn wx-weather-btn active" data-weather="clear"  onclick="applyWeather('clear')"><svg class="wx-ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4.2"/><line x1="12" y1="1.5" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22.5"/><line x1="1.5" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22.5" y2="12"/><line x1="4.6" y1="4.6" x2="6.4" y2="6.4"/><line x1="17.6" y1="17.6" x2="19.4" y2="19.4"/><line x1="19.4" y1="4.6" x2="17.6" y2="6.4"/><line x1="6.4" y1="17.6" x2="4.6" y2="19.4"/></svg><span>Clear</span></button>
-          <button class="wx-btn wx-weather-btn"        data-weather="cloudy" onclick="applyWeather('cloudy')"><svg class="wx-ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8.5" r="3"/><line x1="8" y1="2.5" x2="8" y2="4"/><line x1="2.5" y1="8.5" x2="4" y2="8.5"/><line x1="4.1" y1="4.6" x2="5.1" y2="5.6"/><path d="M18.5 19H9a4 4 0 0 1 0-8 5.2 5.2 0 0 1 10 1.2 3.4 3.4 0 0 1-.5 6.8z"/></svg><span>Cloudy</span></button>
-          <button class="wx-btn wx-weather-btn"        data-weather="rain"   onclick="applyWeather('rain')"><svg class="wx-ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15h-1a4.6 4.6 0 1 0-8.7-2.4A3.3 3.3 0 0 0 8.5 15"/><line x1="8" y1="18" x2="7" y2="21"/><line x1="12.5" y1="18" x2="11.5" y2="21"/><line x1="17" y1="18" x2="16" y2="21"/></svg><span>Rain</span></button>
-        </div>
+      <!-- Weather control removed: redundant for a sales walkthrough. The
+           underlying state is pinned to "clear" in app.js — fog, sun
+           intensity, palm wind and the wet-road shader all still read
+           _currentWeather, so the plumbing stays, only the UI is gone. -->
       </div>
 
       <!-- Quality -->
@@ -826,14 +819,14 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 
-<script type="module" src="js/app.js?v=81"></script>
+<script type="module" src="js/app.js?v=82"></script>
 
 <!-- Interior walkthrough is now built directly into the main scene by app.js -->
 <!-- (window.stepInsideVilla, scene.js: enterVillaInterior/teleportVillaRoom/exitVillaInterior) -->
 <!-- interior.js is now a pure geometry factory only — no separate scene/camera/renderer. -->
 
 <script type="module">
-import { openProductPanel, closeProductPanel, resizePanelViewer } from "./js/product-panel.js?v=81";
+import { openProductPanel, closeProductPanel, resizePanelViewer } from "./js/product-panel.js?v=82";
 window.__moduleReady = window.__moduleReady || {};
 window.__moduleReady.showProductPanel = openProductPanel;
 window.__moduleReady.closeProductPanel = closeProductPanel;
