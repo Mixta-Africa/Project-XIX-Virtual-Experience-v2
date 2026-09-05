@@ -9,7 +9,7 @@
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
 import {
   initVillaLODBudget, updateVillaLODBudget, setVillaLODBudget, fixVillaMaterials
-} from "./villa-lod-budget.js?v=79";
+} from "./villa-lod-budget.js?v=81";
 import { GLTFLoader }  from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/GLTFLoader.js";
 import { DRACOLoader } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/DRACOLoader.js";
 import { MeshoptDecoder } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/libs/meshopt_decoder.module.js";
@@ -18,17 +18,17 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=79";
-import { UNIT_SCHEDULE } from "./data.js?v=79";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=81";
+import { UNIT_SCHEDULE } from "./data.js?v=81";
 import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
-  buildPalmInstances, tickPalms,
+  buildPalmInstances, tickPalms, applyFoliageWind,
   setPerfModeGraphics, setBloomForTime, setSkyForTime, createAtmosphericSky,
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=79";
+} from "./graphics.js?v=81";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -1828,7 +1828,7 @@ function buildInstancedCypress(positions) {
   // Flip this back to true the moment a real assets/tree-mesh.glb exists: with
   // hero instances in front of them, cones do their original job of massing out
   // the far canopy at almost no cost.
-  const TREE_CONE_FALLBACK = false;
+  const TREE_CONE_FALLBACK = true;   // re-enabled: assets/tree-mesh.glb is back at 9.5k tris
 
   const coneList = TREE_CONE_FALLBACK ? _treePositions.slice(CAP) : [];
   if (!TREE_CONE_FALLBACK && _treePositions.length > CAP) {
@@ -1885,7 +1885,13 @@ function buildInstancedCypress(positions) {
     if (_envMapRef) mat.envMap = _envMapRef;
     if (mat.sheen !== undefined) { mat.sheen = 0.35; mat.sheenColor = new THREE.Color(0x8fc060); }
 
+    // Same wind treatment as the palms, but anchored by HEIGHT rather than uv.y
+    // — this is real geometry, so the trunk must stay planted while the canopy
+    // moves. Geometry is normalised to 9 m above, hence height: 9.
+    const treeDepth = applyFoliageWind(mat, { mode: 'height', height: 9.0, amp: 0.55 });
+
     const trees = new THREE.InstancedMesh(geo, mat, heroList.length);
+    trees.customDepthMaterial = treeDepth;
     heroList.forEach((p, i) => {
       _dummy.position.set(p[0], p[1], p[2]);   // geometry base already at y=0
       // Yaw is now purely for placement variety — the geometry itself has no
