@@ -1483,6 +1483,78 @@ export function tickGrass(camera) {
 
 // ─── INSTANCED PALMS ──────────────────────────────────────────────────────────
 let _palmMeshA = null, _palmMeshB = null, _palmCount = 0, _palmPos = null, _palmScale = null;
+let _palmHeight = null;   // per-palm height, so tickPalms stops flattening the variation
+
+// ── FOLIAGE WIND ────────────────────────────────────────────────────────────
+// Shared by the palms (billboard cards) and the instanced trees (real
+// geometry). Injected into a normal lit material with onBeforeCompile rather
+// than replacing it, so foliage keeps HDRI lighting, sun, fog and shadow
+// receiving instead of the flat unlit look the palms used to have.
+//
+// Two anchoring modes, because the two cases differ:
+//   'uv'      billboard cards — uv.y is 0 at the base, 1 at the crown.
+//   'height'  real geometry   — use the vertex's own height above the base,
+//             normalised by opts.height, so a trunk stays planted while the
+//             canopy moves. Using uv.y on a 3D tree would bend it by texture
+//             coordinate, which has nothing to do with which end is up.
+//
+// PAIR IT WITH A DEPTH MATERIAL. three.js swaps your material for a plain depth
+// shader when rendering the shadow map, so without the same injection there the
+// shadow is cast by the UNDISPLACED mesh and detaches from the tree as it sways.
+// applyFoliageWind() returns a matching MeshDepthMaterial for exactly that.
+const _windUniforms = { uTime: { value: 0 }, uWindStr: { value: 0.65 } };
+
+export function applyFoliageWind(material, opts = {}) {
+  const mode   = opts.mode   || 'uv';
+  const height = opts.height || 1.0;
+  const amp    = opts.amp    !== undefined ? opts.amp : 1.0;
+  const key    = `xix-wind-${mode}-${height}-${amp}`;
+
+  const inject = (shader) => {
+    shader.uniforms.uTime    = _windUniforms.uTime;
+    shader.uniforms.uWindStr = _windUniforms.uWindStr;
+    const factor = mode === 'height'
+      ? `clamp(transformed.y / ${height.toFixed(3)}, 0.0, 1.0)`
+      : `uv.y`;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+        uniform float uTime;
+        uniform float uWindStr;`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        {
+          #ifdef USE_INSTANCING
+            vec4 _iw = instanceMatrix[3];
+            float _isx = max(length(instanceMatrix[0].xyz), 0.001);
+          #else
+            vec4 _iw = modelMatrix[3];
+            float _isx = 1.0;
+          #endif
+          float _seed = fract(_iw.x * 0.137 + _iw.z * 0.241) * 6.2831;
+          float _lean = sin(uTime * 0.95 + _seed) * 0.12
+                      + sin(uTime * 1.4  + _seed * 1.7) * 0.05;
+          float _f = ${factor};
+          _lean *= _f * _f * uWindStr * ${amp.toFixed(3)};
+          transformed.x += _lean / _isx;
+          transformed.z += _lean * 0.4 / _isx;
+        }`);
+  };
+
+  material.onBeforeCompile = inject;
+  material.customProgramCacheKey = () => key;
+  material.needsUpdate = true;
+
+  const depth = new THREE.MeshDepthMaterial({
+    depthPacking: THREE.RGBADepthPacking,
+    map: material.map || null,
+    alphaTest: material.alphaTest || 0,
+    side: material.side,
+  });
+  depth.onBeforeCompile = inject;
+  depth.customProgramCacheKey = () => key + '-depth';
+  return depth;
+}
+
+export function tickFoliageWind(dt) { _windUniforms.uTime.value += (dt || 0.016); }
 
 // Palm wind time uniform — updated from tickPalms
 let _palmWindTime = 0.0;
@@ -1492,10 +1564,14 @@ export function buildPalmInstances(scene, palmDefs) {
   _palmCount = palmDefs.length;
   _palmPos   = new Float32Array(_palmCount * 3);
   _palmScale = new Float32Array(_palmCount);
+  _palmHeight = new Float32Array(_palmCount);
 
   // GPU wind vertex shader — each palm sways with unique phase from gl_InstanceID
   // Top of billboard leans with sine wave; bottom is anchored. Cheap GPU-only.
-  const palmVert = /* glsl */`
+  // DEAD — kept only as the record of what the palms used to be. The sway now
+  // lives in _injectPalmWind() below, hooked into MeshStandardMaterial so the
+  // palms get real lighting, fog and shadows. Do not reinstate these.
+  const _deadPalmVert = /* glsl */`
     uniform float uTime;
     uniform float uWindStr;  // 0 = calm, 1 = gusty
     varying vec2 vUv;
@@ -1516,7 +1592,7 @@ export function buildPalmInstances(scene, palmDefs) {
       gl_Position = projectionMatrix * viewMatrix * worldPos;
     }
   `;
-  const palmFrag = /* glsl */`
+  const _deadPalmFrag = /* glsl */`
     uniform sampler2D uPalmTex;
     uniform vec3 uSunColor;
     varying vec2 vUv;
@@ -1571,24 +1647,71 @@ export function buildPalmInstances(scene, palmDefs) {
   };
   window._xixPalmUniforms = palmUniforms;
 
+  // ── WIND, INJECTED INTO A REAL LIT MATERIAL ───────────────────────────────
+  // The palms used to run a bespoke ShaderMaterial whose fragment stage was:
+  //     gl_FragColor = vec4(tex.rgb * uSunColor * mix(0.68,1.0,vUv.y), tex.a);
+  // — a texture times a fixed top-to-bottom ramp. No environment light, no
+  // directional sun, no fog, no shadows. Everything else on the estate is lit
+  // by the HDRI, so the palms read as cardboard pasted onto the scene.
+  //
+  // Now the sway is INJECTED into MeshStandardMaterial instead, which brings
+  // real lighting, fog and shadow receiving for free. Two details matter:
+  //
+  //   alphaTest, not transparent. A cutout writes depth, so palms sort against
+  //   each other and against the world correctly, and — critically — they can
+  //   cast shadows at all. The old transparent + depthWrite:false could not.
+  //
+  //   customDepthMaterial. When three.js renders the shadow map it discards
+  //   your material and substitutes a plain depth shader that knows nothing
+  //   about the wind displacement or the alpha cutout, so a palm would cast the
+  //   shadow of a solid, motionless rectangle. Handing it a depth material with
+  //   the SAME injection gives a frond-shaped shadow that sways with the tree.
+  const _unusedPalmInject = (shader) => {
+    shader.uniforms.uTime    = palmUniforms.uTime;      // shared object refs, so
+    shader.uniforms.uWindStr = palmUniforms.uWindStr;   // tickPalms still drives them
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+        uniform float uTime;
+        uniform float uWindStr;`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        {
+          // Seed from the instance's world position so no two palms share a phase.
+          vec4 _iw = instanceMatrix[3];
+          float _seed = fract(_iw.x * 0.137 + _iw.z * 0.241) * 6.2831;
+          float _lean = sin(uTime * 0.95 + _seed) * 0.12
+                      + sin(uTime * 1.4  + _seed * 1.7) * 0.05;
+          // Quadratic in uv.y: anchored at the base, most movement in the crown.
+          _lean *= uv.y * uv.y * uWindStr;
+          // transformed is object space and the instance is scaled to the palm's
+          // width, so divide it out to keep the lean in metres as before.
+          transformed.x += _lean / max(length(instanceMatrix[0].xyz), 0.001);
+        }`);
+  };
+
   function makePalmMesh(rotY) {
     const geo = new THREE.PlaneGeometry(1, 1, 1, 4); // 4 vertical segments for smooth sway
-    const mat = new THREE.ShaderMaterial({
-      vertexShader: palmVert,
-      fragmentShader: palmFrag,
-      uniforms: palmUniforms,
-      transparent: true,
-      depthWrite: false,
+    const mat = new THREE.MeshStandardMaterial({
+      map: palmUniforms.uPalmTex.value,
+      alphaTest: 0.35,
+      transparent: false,
       side: THREE.DoubleSide,
+      roughness: 0.88,
+      metalness: 0.0,
     });
+    const depthMat = applyFoliageWind(mat, { mode: 'uv' });
+
     const mesh = new THREE.InstancedMesh(geo, mat, _palmCount);
     mesh.frustumCulled = false;
-    mesh.renderOrder = 1;
+    mesh.customDepthMaterial = depthMat;
+
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
 
     palmDefs.forEach((p, i) => {
       _palmPos[i*3] = p.x; _palmPos[i*3+1] = p.y; _palmPos[i*3+2] = p.z;
       _palmScale[i] = p.scale || 1;
       const h = (13 + p.randH) * p.scale, w = h * 0.5;
+      _palmHeight[i] = h;   // remembered — tickPalms used to recompute it as 13*s
       _dummy.position.set(p.x, p.y + h/2, p.z);
       _dummy.scale.set(w, h, 1);
       _dummy.rotation.set(0, rotY, 0);
@@ -1610,6 +1733,7 @@ export function tickPalms(camera) {
   _palmWindTime += 0.016;
   if (window._xixPalmUniforms) {
     window._xixPalmUniforms.uTime.value = _palmWindTime;
+    _windUniforms.uTime.value = _palmWindTime;   // trees share this clock
     // Sync sun colour from scene state
     if (window._xixSunGlintIntensity !== undefined) {
       // Use glint as proxy for time of day — not ideal but zero extra cost
@@ -1620,7 +1744,9 @@ export function tickPalms(camera) {
   const cx = camera.position.x, cz = camera.position.z;
   for (let i = 0; i < _palmCount; i++) {
     const px = _palmPos[i*3], py = _palmPos[i*3+1], pz = _palmPos[i*3+2];
-    const s = _palmScale[i], h = 13 * s, w = h * 0.5;
+    // Was `h = 13 * s`, which threw away the 0-5 m random variation applied at
+    // build and made all 62 palms exactly the same height from frame one.
+    const h = _palmHeight[i], w = h * 0.5;
     const rot = Math.atan2(cx - px, cz - pz);
     _dummy.position.set(px, py + h/2, pz);
     _dummy.scale.set(w, h, 1);
