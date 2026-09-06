@@ -10,7 +10,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.m
  *  - Villas dropdown: wired and styled — works on click
  */
 
-import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=83";
+import { VIEWPOINTS, ZONES, WORLD } from "./data.js?v=87";
 // villa-interior.js removed — dead file, superseded by interior.js
 import {
   initScene, getRenderer, getScene, getCamera, getClock,
@@ -23,12 +23,13 @@ import {
   setAudioMuted, isAudioMuted, setMixLevel, getMixLevels, getMixDefaults, resetMixLevels, getAudioStatus,
   setPlotOverlaysSuppressed,
   tickVillaLOD,
-} from "./scene.js?v=83";
-import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=83";
+  tickCloudLayer,
+} from "./scene.js?v=87";
+import { initPostProcessing, resizeComposer, renderFrame, setBloomForTime, setPerfModeGraphics, setInteriorDOF, setWeatherBloomModifier, setFieldWetness } from "./graphics.js?v=87";
 import {
   initControls, activate, deactivate, setView, updateControls, getYaw,
   requestGyro, enterVR, setYOwner
-} from "./controls.js?v=83";
+} from "./controls.js?v=87";
 import {
   initMinimap, updateMinimap,
   buildViewpointStrip, showZonePanel, hideZonePanel,
@@ -36,7 +37,7 @@ import {
   setCaption as _setCaption_raw, showEnterPrompt, hideEnterPrompt,
   showVRButton, showJoystick, hideJoystick, isMobile,
   enableAudio, updateSpatialAudio, initAudio
-} from "./ui.js?v=83";
+} from "./ui.js?v=87";
 
 window.plotRegistry = plotRegistry;
 
@@ -3357,17 +3358,19 @@ window.resumeMainRenderLoop = function() {
   if (!animFrameId) startRenderLoop();
 };
 
-// Brief, non-intrusive toast shown when the governor auto-drops quality, so the
-// visual change isn't mysterious. Auto-dismisses; reuses one element.
-let _qualityNoteEl = null, _qualityNoteTimer = null;
 // ── QUALITY SUGGESTION PROMPT ───────────────────────────────────────────────
 // The governor used to switch quality by itself. Two problems with that: the
 // picture changed under you with no way to refuse, and because step-down had no
 // recovery path a single bad window — reliably produced by the 1.9M-triangle
 // decode during load — pinned the whole session to fast.
 //
-// It now only ASKS. One prompt at a time, dismissible, and "Not now" suppresses
-// further suggestions for the rest of the session so it can never nag.
+// There was also a toast here, "Graphics set to X for smoother performance".
+// It survived the change to prompting and became a lie: it appeared alongside a
+// prompt ASKING whether to switch, announcing a switch that had not happened.
+// Removed with the auto-switching it described.
+//
+// One prompt at a time, no auto-dismiss (a prompt that vanishes mid-read is
+// worse than none), and "Not now" mutes suggestions for the rest of the session.
 let _qualityPromptEl = null;
 let _qualitySuggestionsMuted = false;
 
@@ -3409,20 +3412,6 @@ function _suggestQualityChange(tier, reason) {
     console.log('[XIX] Quality suggestions muted for this session');
     close();
   };
-  // No auto-dismiss: a prompt that vanishes mid-read is worse than none.
-}
-
-function _showQualityNote(tier) {
-  const label = tier.charAt(0).toUpperCase() + tier.slice(1);
-  if (!_qualityNoteEl) {
-    _qualityNoteEl = document.createElement('div');
-    _qualityNoteEl.style.cssText = 'position:fixed;bottom:88px;left:50%;transform:translateX(-50%);background:rgba(10,20,12,0.9);color:#c9a84c;padding:9px 16px;border-radius:8px;font-family:Inter,sans-serif;font-size:12.5px;z-index:9998;border:1px solid rgba(201,168,76,0.35);pointer-events:none;transition:opacity 0.4s;opacity:0;';
-    (document.getElementById('world-overlay') || document.body).appendChild(_qualityNoteEl);
-  }
-  _qualityNoteEl.textContent = `Graphics set to ${label} for smoother performance`;
-  _qualityNoteEl.style.opacity = '1';
-  if (_qualityNoteTimer) clearTimeout(_qualityNoteTimer);
-  _qualityNoteTimer = setTimeout(() => { if (_qualityNoteEl) _qualityNoteEl.style.opacity = '0'; }, 3200);
 }
 
 
@@ -3587,11 +3576,12 @@ function startRenderLoop(){
         const gpu = window._xixGPUTier ? ` [GPU: ${window._xixGPUTier}]` : '';
         console.warn(`[XIX] Auto quality: ${cur} → ${next} (median ${medianFps.toFixed(0)} fps)${gpu}`);
         _suggestQualityChange(next, `Frame rate is dropping (${medianFps.toFixed(0)} fps).`);
-        _govCooldownUntil = now + 3500;   // let it settle before considering another drop
+        // 30s, matching the step-up side. At the old 3500 the prompt could
+        // reappear every few seconds while the frame rate stayed low, which is
+        // nagging rather than suggesting.
+        _govCooldownUntil = now + 30000;
         // Reset the window so the new tier is measured fresh
         _fpsCount = 0; _fpsIdx = 0;
-        // Brief on-screen note so the drop isn't mysterious
-        _showQualityNote(next);
       }
     }
   }
@@ -3608,6 +3598,7 @@ function startRenderLoop(){
     // recomputes when the camera has moved ~2 m, so this is near-free.
     tickVillaLOD(camera);
     tickTourPan();      // must run after updateControls — see tickTourPan()
+    tickCloudLayer(delta, camera);
 
     if(aerialOrbit){
       aerialAngle += AERIAL_SPEED * delta;
