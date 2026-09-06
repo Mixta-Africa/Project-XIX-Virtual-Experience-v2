@@ -9,7 +9,7 @@
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
 import {
   initVillaLODBudget, updateVillaLODBudget, setVillaLODBudget, fixVillaMaterials
-} from "./villa-lod-budget.js?v=86";
+} from "./villa-lod-budget.js?v=87";
 import { GLTFLoader }  from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/GLTFLoader.js";
 import { DRACOLoader } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/DRACOLoader.js";
 import { MeshoptDecoder } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/libs/meshopt_decoder.module.js";
@@ -18,8 +18,9 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=86";
-import { UNIT_SCHEDULE } from "./data.js?v=86";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=87";
+import { UNIT_SCHEDULE } from "./data.js?v=87";
+import { createCloudLayer, setCloudsForTime, tickClouds, setCloudQuality } from "./clouds.js?v=87";
 import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
@@ -28,7 +29,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=86";
+} from "./graphics.js?v=87";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -73,6 +74,7 @@ export function setPerfMode(mode) {
   // it, so the safety net remains without the menu lying about what is possible.
   PERF_MODE = mode;
   setPerfModeGraphics(mode);
+  setCloudQuality(_clouds, mode);
   setVillaLODBudget({ kind: 'villa', ...(VILLA_BUDGET_BY_MODE[mode] || VILLA_BUDGET_BY_MODE.balanced) });
   setVillaLODBudget({ kind: 'loft',  ...(LOFT_BUDGET_BY_MODE[mode]  || LOFT_BUDGET_BY_MODE.balanced)  });
   if (!renderer) return;
@@ -401,6 +403,7 @@ export const plotRegistry = new Map();
 export let onPlotSelected = null;
 
 let _skyUniforms = null, _skyObj = null, _skySun = null;
+let _clouds = null;
 
 // ─── HORSE + RIDER (player) ───────────────────────────────────────────────────
 export const RIDER_EYE_HEIGHT = 3.1;
@@ -2612,6 +2615,11 @@ export function initScene(canvas) {
   const { skyObj, sun, skyUniforms } = createAtmosphericSky(scene, renderer);
   _skyObj = skyObj; _skySun = sun; _skyUniforms = skyUniforms;
   window._xixSkyObj = skyObj;
+  // Clouds sit between the Sky dome and the world. Preetham gives a clean
+  // gradient and nothing else, which is the clearest tell that a scene is
+  // real-time rather than rendered — and Lagos afternoons are not clean.
+  _clouds = createCloudLayer(scene, PERF_MODE);
+
   setSkyForTime(_skyUniforms, _skySun, sunLight, 'afternoon');
 
   // ── HDRI IBL — async, non-blocking ──────────────────────────────────────
@@ -2727,6 +2735,11 @@ export function updateSkyForTime(timeName) {
       night:     0x0a1420,   // deep blue, not black
     };
     scene.fog.color.set(fogColors[timeName] || 0xb8ccd6);
+
+    // Hand the same haze to the clouds so they recede into the identical
+    // atmosphere the ground does. Without this the layer floats in front of the
+    // sky with a hard seam at the horizon.
+    setCloudsForTime(_clouds, timeName, _skySun, scene.fog.color, scene.fog.density);
   }
   // Soundscape follows the light: crossfade to this time's ambience bed.
   window._currentTimeName = timeName;
@@ -4771,6 +4784,11 @@ function armVillaLODBudget() {
 }
 
 // Called once per frame from app.js, before the render.
+// Called once per frame from app.js. The layer follows the camera in XZ so it
+// is effectively infinite; Y stays fixed so parallax against the ground still
+// reads as you move.
+export function tickCloudLayer(delta, camera) { tickClouds(_clouds, delta, camera); }
+
 export function tickVillaLOD(camera) {
   if (camera) updateVillaLODBudget(camera);
 }
