@@ -3,7 +3,12 @@
  * Minimap, loading screen, viewpoint strip, zone info panel, spatial audio stubs.
  */
 
-import { WORLD, VIEWPOINTS, ZONES } from "./data.js";
+// Versioned to match app.js and scene.js. Unversioned, "./data.js" and
+// "./data.js?v=N" are DIFFERENT module specifiers, so the browser loaded two
+// separate instances of WORLD, VIEWPOINTS and ZONES — one for this file, one
+// for everyone else. Harmless while nothing mutated them, and a silent bug the
+// moment anything did.
+import { WORLD, VIEWPOINTS, ZONES } from "./data.js?v=89";
 // app.js imports initAudio/enableAudio/updateSpatialAudio from THIS file,
 // not from scene.js — a real system (filtered noise for wind, envelope
 // bursts for birds/hooves, a synthesized neigh, all routed through one
@@ -12,7 +17,7 @@ import { WORLD, VIEWPOINTS, ZONES } from "./data.js";
 import { initAudio as _sceneInitAudio, enableAudio as _sceneEnableAudio,
          updateSpatialAudio as _sceneUpdateSpatialAudio,
          setAudioMuted as _sceneSetAudioMuted,
-         isAudioMuted as _sceneIsAudioMuted } from "./scene.js?v=87";
+         isAudioMuted as _sceneIsAudioMuted } from "./scene.js?v=89";
 
 //           LOADING SCREEN                                                                                                                                                                                  
 
