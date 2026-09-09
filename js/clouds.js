@@ -33,7 +33,7 @@
  *
  * USAGE
  *   import { createCloudLayer, setCloudsForTime, tickClouds, setCloudQuality }
- *     from './clouds.js?v=87';
+ *     from './clouds.js?v=89';
  *
  *   _clouds = createCloudLayer(scene);              // after createAtmosphericSky
  *   setCloudsForTime(_clouds, 'afternoon', sunVec); // in updateSkyForTime
