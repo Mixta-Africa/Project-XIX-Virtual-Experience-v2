@@ -9,7 +9,7 @@
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js";
 import {
   initVillaLODBudget, updateVillaLODBudget, setVillaLODBudget, fixVillaMaterials
-} from "./villa-lod-budget.js?v=87";
+} from "./villa-lod-budget.js?v=89";
 import { GLTFLoader }  from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/GLTFLoader.js";
 import { DRACOLoader } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/loaders/DRACOLoader.js";
 import { MeshoptDecoder } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/libs/meshopt_decoder.module.js";
@@ -18,9 +18,10 @@ import { Water } from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/o
 // named-import guess that doesn't match the module's real exports throws a
 // hard SyntaxError at link time, before any code runs at all.
 import * as SkeletonUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/SkeletonUtils.js";
-import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=87";
-import { UNIT_SCHEDULE } from "./data.js?v=87";
-import { createCloudLayer, setCloudsForTime, tickClouds, setCloudQuality } from "./clouds.js?v=87";
+import { INTERIORS, buildVillaRoomGroup } from "./interior.js?v=89";
+import { UNIT_SCHEDULE } from "./data.js?v=89";
+import { createCloudLayer, setCloudsForTime, tickClouds, setCloudQuality } from "./clouds.js?v=89";
+import { createGrass, tickGrass2, setGrassQuality } from "./grass.js?v=89";
 import * as BufferGeometryUtils from "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   PBR, createWaterMat, addGrassField, commitGrass, tickGrass, tickWater,
@@ -29,7 +30,7 @@ import {
   buildEnvMapFromSky, scheduleEnvMapRefresh, applyPS4Materials,
   loadHDRI, applyHDRITimeModulation,
   MAT_GRASS_FIELD, MAT_GLASS, MAT_GLASS_WARM, MAT_WHITE_TRIM, MAT_GOLD, MAT_DARK_METAL,
-} from "./graphics.js?v=87";
+} from "./graphics.js?v=89";
 
 // ─── PERFORMANCE MODE ─────────────────────────────────────────────────────────
 export let PERF_MODE = 'fast';
@@ -75,6 +76,7 @@ export function setPerfMode(mode) {
   PERF_MODE = mode;
   setPerfModeGraphics(mode);
   setCloudQuality(_clouds, mode);
+  _grass = setGrassQuality(_grass, mode);
   setVillaLODBudget({ kind: 'villa', ...(VILLA_BUDGET_BY_MODE[mode] || VILLA_BUDGET_BY_MODE.balanced) });
   setVillaLODBudget({ kind: 'loft',  ...(LOFT_BUDGET_BY_MODE[mode]  || LOFT_BUDGET_BY_MODE.balanced)  });
   if (!renderer) return;
@@ -404,6 +406,7 @@ export let onPlotSelected = null;
 
 let _skyUniforms = null, _skyObj = null, _skySun = null;
 let _clouds = null;
+let _grass = null;
 
 // ─── HORSE + RIDER (player) ───────────────────────────────────────────────────
 export const RIDER_EYE_HEIGHT = 3.1;
@@ -2167,11 +2170,22 @@ function addEstateSignage() {
   sigCtx.fillText('PROJECT XIX', 256, 48);
   const sigTex = new THREE.CanvasTexture(sigCanvas);
   sigTex.colorSpace = THREE.SRGBColorSpace;
-  const signMesh = new THREE.Mesh(
-    new THREE.PlaneGeometry(10, 1.9),
-    new THREE.MeshBasicMaterial({ map: sigTex, side: THREE.DoubleSide })
-  );
-  signMesh.position.set(0, 5.5, 217.9); scene.add(signMesh);
+  // Two planes back to back, not one DoubleSide plane. A single plane shows the
+  // SAME texture on both faces, so from behind the lettering reads mirrored —
+  // "XIX TƆƐႱOЯP" — and the gate is seen from inside the estate far more often
+  // than from the road. Each plane now faces outward with FrontSide, so both
+  // approaches read correctly.
+  const signMat = new THREE.MeshBasicMaterial({ map: sigTex, side: THREE.FrontSide });
+  const signGeo = new THREE.PlaneGeometry(10, 1.9);
+
+  const signSouth = new THREE.Mesh(signGeo, signMat);   // faces +Z, the arrival road
+  signSouth.position.set(0, 5.5, 217.95);
+  scene.add(signSouth);
+
+  const signNorth = new THREE.Mesh(signGeo, signMat);   // faces -Z, into the estate
+  signNorth.position.set(0, 5.5, 217.85);
+  signNorth.rotation.y = Math.PI;
+  scene.add(signNorth);
 
   const signs = [
     { label:'CLUBHOUSE ▶',  pos:[-20, 0, 190], ry:0 },
@@ -2619,6 +2633,11 @@ export function initScene(canvas) {
   // gradient and nothing else, which is the clearest tell that a scene is
   // real-time rather than rendered — and Lagos afternoons are not clean.
   _clouds = createCloudLayer(scene, PERF_MODE);
+
+  // Replaces the billboard grass bypassed at addGround(). Crossed quads in a
+  // camera-following pool, so the safety zones and verges stop reading as flat
+  // colour beside the shaded pitch.
+  _grass = createGrass(scene, PERF_MODE);
 
   setSkyForTime(_skyUniforms, _skySun, sunLight, 'afternoon');
 
@@ -3227,10 +3246,18 @@ const MATS = {
   // highlight was lit by the sun — it dimmed in shadow and almost disappeared
   // at night, exactly when a highlight most needs to read. Unlit gives the same
   // brightness at any time of day and is cheaper to shade.
-  // depthTest:false + renderOrder 999 means it always draws OVER the building,
-  // so the highlight is never hidden by the roof at aerial angles.
-  plotAvail:  () => new THREE.MeshBasicMaterial({color:0x2bff88,transparent:true,opacity:0,depthWrite:false,depthTest:false,side:THREE.DoubleSide}),
-  plotReserved:()=> new THREE.MeshBasicMaterial({color:0xff4444,transparent:true,opacity:0,depthWrite:false,depthTest:false,side:THREE.DoubleSide}),
+  // WAS depthTest:false + renderOrder 999, so the box drew over everything
+  // regardless of distance. Standing near a sold plot, an 11 m red volume
+  // painted across a third of the screen and hid the estate behind it.
+  //
+  // depthTest is now ON and side is FrontSide. Three things follow:
+  //   • correctly occluded by other buildings, so it reads as a volume in the
+  //     world instead of a sticker on the lens;
+  //   • walking INTO the box culls every face, so it can never fill the frame;
+  //   • from above, the box is 11 m tall against a 6.98 m villa, so its top
+  //     face still clears the roof — which is what depthTest:false was for.
+  plotAvail:  () => new THREE.MeshBasicMaterial({color:0x2bff88,transparent:true,opacity:0,depthWrite:false,depthTest:true,side:THREE.FrontSide}),
+  plotReserved:()=> new THREE.MeshBasicMaterial({color:0xff4444,transparent:true,opacity:0,depthWrite:false,depthTest:true,side:THREE.FrontSide}),
 };
 
 function addGround() {
@@ -3972,12 +3999,29 @@ function addLake() {
   //      half width x = +-70   (was +-80)
   //  That returns roughly 9-10 m of bank between the water and the villa
   //  footprints, where the old geometry left 3.
+  // ── MOVED SOUTH 12 m ──────────────────────────────────────────────────────
+  // The water used to run z -99 to -117.5. Measured against the masterplan it
+  // belongs at -91 to -105 — twelve metres further south — and that error is
+  // why the villa arc could never find a bank.
+  //
+  // The old comment above claimed "9-10 m of bank between the water and the
+  // villa footprints". It measured to the villa CENTRE, not its footprint. With
+  // footprints accounted for, 9 of the 11 arc villas were standing IN the lake,
+  // and had been since the arc was placed. Sampled at 11 points along the far
+  // boundary, the minimum bank is now +6.2 m everywhere.
+  //
+  // near edge  z = -91     flush with the safety zone, as the plan draws it
+  // far  edge  z = -105 at centre, -100 at x = +/-70
+  // depth      14 m at centre        (plan measures 17 m; the arc takes 3)
+  //
+  // The middle control point is NOT a point on the curve — 100/110/100 yields a
+  // far edge of 105, not 110. Change these and re-check against ARC_BASE_Z.
   const shape = new THREE.Shape();
-  shape.moveTo(-65, 99);
-  shape.lineTo(65, 99);
-  shape.quadraticCurveTo(74, 99, 70, 107);
-  shape.quadraticCurveTo(0, 128, -70, 107);
-  shape.quadraticCurveTo(-74, 99, -65, 99);
+  shape.moveTo(-65, 91);
+  shape.lineTo(65, 91);
+  shape.quadraticCurveTo(74, 91, 70, 100);
+  shape.quadraticCurveTo(0, 110, -70, 100);
+  shape.quadraticCurveTo(-74, 91, -65, 91);
   const waterGeo = new THREE.ShapeGeometry(shape, 80);
 
   // Procedural water normal map — low-frequency overlapping swells.
@@ -4232,7 +4276,14 @@ function loadVillaLowGLB(){
         n++;
       }
     });
-    console.log(`[XIX] Villa low-LOD ready (97,941 tris) — attached to ${n} villas, swaps at ${VILLA_LOD_SWAP}m`);
+    // The retro-fit only reaches villas that ALREADY exist. villa-low is a
+    // tenth the size of the hero model and usually resolves first, so there
+    // are none yet and this logged "attached to 0" as though the low tier had
+    // failed. It had not: placeVillaGLBWithLOD adds the level itself for every
+    // villa placed afterwards. Say which path actually did the work.
+    console.log(n > 0
+      ? `[XIX] Villa low-LOD ready \u2014 retro-fitted to ${n} existing villas, swaps at ${VILLA_LOD_SWAP}m`
+      : `[XIX] Villa low-LOD ready \u2014 cached before the hero model; villas attach it as they are placed, swaps at ${VILLA_LOD_SWAP}m`);
     window._xixVillaLowActive = true;
     requestShadowUpdate(2);
   }, undefined, e => console.warn('[XIX] villa-low.glb failed:', e));
@@ -4472,10 +4523,14 @@ function addPlotOverlay(x,z,ry,plotKey,villaClone){
 function addPlotOverlayCustom(x,z,ry,plotKey,villaClone,w,d,h){
   const mat=MATS.plotAvail();
   const height = h || 11;                       // typical villa mass
-  const overlay=new THREE.Mesh(new THREE.BoxGeometry(w*0.72, height, d*0.72), mat);
+  // 1.06 not 0.72: at 0.72 the box sat INSIDE the building footprint, so with
+  // depth testing on it would be hidden by the walls. Slightly larger than the
+  // unit means it is always visible from outside and still clears its
+  // neighbours (villa 11.44 m wide on a 14.1 m arc pitch leaves a 2.0 m gap).
+  const overlay=new THREE.Mesh(new THREE.BoxGeometry(w*1.06, height, d*1.06), mat);
   overlay.position.set(x, height/2, z);
   overlay.rotation.y = ry || 0;                 // follow the unit's orientation
-  overlay.renderOrder = 999;   // draw after opaque geometry regardless of depth
+  overlay.renderOrder = 5;     // after opaque, but depth-tested like everything else
   overlay.userData.plotKey=plotKey; overlay.userData.isPlotOverlay=true; overlay.userData.villaClone=villaClone;
   scene.add(overlay);
 
@@ -4787,7 +4842,10 @@ function armVillaLODBudget() {
 // Called once per frame from app.js. The layer follows the camera in XZ so it
 // is effectively infinite; Y stays fixed so parallax against the ground still
 // reads as you move.
-export function tickCloudLayer(delta, camera) { tickClouds(_clouds, delta, camera); }
+export function tickCloudLayer(delta, camera) {
+  tickClouds(_clouds, delta, camera);
+  tickGrass2(_grass, camera);   // internally throttled — only re-scatters every 6 m
+}
 
 export function tickVillaLOD(camera) {
   if (camera) updateVillaLODBudget(camera);
